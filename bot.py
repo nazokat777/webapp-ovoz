@@ -71,6 +71,69 @@ bot_app = None
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
+# ── ADMIN & LIMIT KONFIGURATSIYASI ─────────────────────────────────────────
+# Admin Telegram username (kichik harf, @ siz)
+ADMIN_USERNAMES = {"nazokat_571"}
+# Bepul foydalanuvchi uchun oylik O'zbek STT limiti (daqiqa)
+FREE_MINUTES_PER_MONTH = 5
+# Foydalanuvchi xarajatlarini saqlash {user_id: jami_soniya}
+# Eslatma: bot qayta ishga tushganda tiklanadi (ephemeral). Database keyin qo'shiladi.
+user_uzbek_usage = {}
+# Admin /test buyrug'i bilan yoqadigan rejim — Muxlisa chaqirilmaydi (test uchun)
+TEST_MODE = {"on": False}
+# Muxlisa tarifi (so'm/daqiqa) — statistika uchun
+MUXLISA_PRICE_PER_MIN = 500
+
+
+def is_admin(update):
+    """Foydalanuvchi adminmi tekshiradi (username asosida)."""
+    if not update or not getattr(update, "effective_user", None):
+        return False
+    uname = (update.effective_user.username or "").lower()
+    return uname in ADMIN_USERNAMES
+
+
+def get_user_usage_sec(user_id):
+    return user_uzbek_usage.get(user_id, 0)
+
+
+def add_user_usage(user_id, seconds):
+    if seconds and seconds > 0:
+        user_uzbek_usage[user_id] = user_uzbek_usage.get(user_id, 0) + seconds
+
+
+async def can_process_uzbek(update, duration_seconds=0):
+    """O'zbek STT limitini tekshiradi. Adminda har doim True."""
+    if is_admin(update):
+        return True
+    user_id = update.effective_user.id
+    used = get_user_usage_sec(user_id)
+    limit = FREE_MINUTES_PER_MONTH * 60
+    if used >= limit:
+        await update.message.reply_text(
+            f"⚠️ *Bepul limit tugadi!*\n\n"
+            f"📊 Ishlatilgan: {used/60:.1f} / {FREE_MINUTES_PER_MONTH} daqiqa\n\n"
+            f"♾️ *Cheksiz bepul ishlaydi:*\n"
+            f"• 🇷🇺🇬🇧 Rus / Ingliz audiolar\n"
+            f"• 📄 PDF → Audio\n"
+            f"• 📝 Matn → Ovoz\n\n"
+            f"💎 Premium tarif uchun: @Nazokat_571",
+            parse_mode="Markdown"
+        )
+        return False
+    if duration_seconds > 0 and used + duration_seconds > limit:
+        rem = max(0, limit - used) / 60
+        await update.message.reply_text(
+            f"⚠️ *Bu audio limitga sig'maydi!*\n\n"
+            f"📊 Ishlatilgan: {used/60:.1f} / {FREE_MINUTES_PER_MONTH} daqiqa\n"
+            f"⏳ Bu audio: {duration_seconds/60:.1f} daqiqa\n"
+            f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
+            f"💎 Premium tarif: @Nazokat_571",
+            parse_mode="Markdown"
+        )
+        return False
+    return True
+
 URL_PATTERN = re.compile(r'https?://\S+')
 
 
@@ -600,7 +663,23 @@ def make_progress_cb(loop, msg, base_label="🎙 Tanilmoqda"):
 
 
 async def process_local_audio(update, context, file_path, duration=0, language="uz"):
+    # O'zbek STT — pulli, limit tekshirish
+    if language == "uz":
+        if not await can_process_uzbek(update, duration):
+            return
+
     est = f"{duration // 60} daqiqa {duration % 60} soniya" if duration else "noma'lum"
+
+    # Admin test rejimi — Muxlisa chaqirilmaydi
+    if language == "uz" and is_admin(update) and TEST_MODE["on"]:
+        await update.message.reply_text(
+            f"🧪 *TEST REJIMI* — Muxlisa chaqirilmadi (pul ketmadi)\n⏱ {est}",
+            parse_mode="Markdown"
+        )
+        msg = await update.message.reply_text("Test natijasi tayyorlanyapti...")
+        await send_result(update, msg, "[TEST REJIMI] Bu sahta natija. Muxlisa balansidan pul yechilmadi. /test buyrug'i bilan o'chirib qo'ying.")
+        return
+
     msg = await update.message.reply_text(
         f"🎙 Tanilmoqda...\n⏱ Davomiyligi: {est}\n\nBiroz sabr qiling..."
     )
@@ -609,13 +688,31 @@ async def process_local_audio(update, context, file_path, duration=0, language="
         cb = make_progress_cb(loop, msg)
         text = await asyncio.to_thread(transcribe, file_path, cb, language)
         await send_result(update, msg, text)
+        if language == "uz" and not is_admin(update) and duration > 0:
+            add_user_usage(update.effective_user.id, duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
 
 
 async def process_file(update, context, file_id, suffix, duration=0, language="uz"):
+    # O'zbek STT — pulli, limit tekshirish
+    if language == "uz":
+        if not await can_process_uzbek(update, duration):
+            return
+
     est = f"{duration // 60} daqiqa {duration % 60} soniya" if duration else "noma'lum"
+
+    # Admin test rejimi — Muxlisa chaqirilmaydi
+    if language == "uz" and is_admin(update) and TEST_MODE["on"]:
+        await update.message.reply_text(
+            f"🧪 *TEST REJIMI* — Muxlisa chaqirilmadi (pul ketmadi)\n⏱ {est}",
+            parse_mode="Markdown"
+        )
+        msg = await update.message.reply_text("Test natijasi tayyorlanyapti...")
+        await send_result(update, msg, "[TEST REJIMI] Bu sahta natija. Muxlisa balansidan pul yechilmadi. /test buyrug'i bilan o'chirib qo'ying.")
+        return
+
     msg = await update.message.reply_text(
         f"🎙 Tanilmoqda...\n⏱ Davomiyligi: {est}\n\nBiroz sabr qiling..."
     )
@@ -630,6 +727,8 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
         cb = make_progress_cb(loop, msg)
         text = await asyncio.to_thread(transcribe, tmp_path, cb, language)
         await send_result(update, msg, text)
+        if language == "uz" and not is_admin(update) and duration > 0:
+            add_user_usage(update.effective_user.id, duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
@@ -640,18 +739,63 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
 
 
 async def process_url(update, context, url, language="uz"):
+    # O'zbek STT — pulli, limit tekshirish (URL uchun davomiyligi noma'lum, faqat hech qancha qoldimi tekshiramiz)
+    if language == "uz":
+        if not await can_process_uzbek(update, 0):
+            return
+
+    # Admin test rejimi — yuklash ham, transcribe ham yo'q
+    if language == "uz" and is_admin(update) and TEST_MODE["on"]:
+        await update.message.reply_text(
+            f"🧪 *TEST REJIMI* — Video yuklanmadi, Muxlisa chaqirilmadi (pul ketmadi)",
+            parse_mode="Markdown"
+        )
+        msg = await update.message.reply_text("Test natijasi tayyorlanyapti...")
+        await send_result(update, msg, "[TEST REJIMI] Bu sahta natija. URL yuklanmadi, Muxlisa chaqirilmadi.")
+        return
+
     msg = await update.message.reply_text(
         f"📥 Video yuklanmoqda...\n🔗 {url[:50]}\n\nBiroz sabr qiling..."
     )
     audio_path = None
+    actual_duration = 0
     try:
         audio_path = await asyncio.to_thread(download_audio_from_url, url)
+        # Yuklangan audio davomiyligini aniqlash (limitni tekshirish va hisoblash uchun)
+        try:
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
+                capture_output=True, text=True, timeout=10
+            )
+            actual_duration = int(float(probe.stdout.strip())) if probe.stdout.strip() else 0
+        except Exception:
+            actual_duration = 0
+
+        # Limit qaytadan tekshirish (real davomiyligi bilan)
+        if language == "uz" and not is_admin(update) and actual_duration > 0:
+            used = get_user_usage_sec(update.effective_user.id)
+            limit = FREE_MINUTES_PER_MONTH * 60
+            if used + actual_duration > limit:
+                rem = max(0, limit - used) / 60
+                await msg.edit_text(
+                    f"⚠️ *Bu video limitga sig'maydi!*\n\n"
+                    f"📊 Ishlatilgan: {used/60:.1f} / {FREE_MINUTES_PER_MONTH} daqiqa\n"
+                    f"⏳ Bu video: {actual_duration/60:.1f} daqiqa\n"
+                    f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
+                    f"💎 Premium: @Nazokat_571",
+                    parse_mode="Markdown"
+                )
+                return
+
         await msg.edit_text("✅ Yuklanidi! 🎙 Matn tanilmoqda...")
 
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
         text = await asyncio.to_thread(transcribe, audio_path, cb, language)
         await send_result(update, msg, text)
+        if language == "uz" and not is_admin(update) and actual_duration > 0:
+            add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"URL xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
@@ -794,6 +938,96 @@ def _chat_lang(context, update):
     except Exception:
         pass
     return user_lang(update)
+
+
+async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User uchun: o'z balansi. Admin uchun: panel."""
+    if is_admin(update):
+        total_users = len(user_uzbek_usage)
+        total_sec = sum(user_uzbek_usage.values())
+        total_cost = int(total_sec / 60 * MUXLISA_PRICE_PER_MIN)
+        test_status = "✅ YONIQ" if TEST_MODE["on"] else "❌ O'CHIQ"
+        await update.message.reply_text(
+            f"👑 *ADMIN PANEL* — @{update.effective_user.username}\n\n"
+            f"🧪 Test rejimi: *{test_status}*\n"
+            f"👥 Foydalanuvchilar: {total_users}\n"
+            f"⏱ Jami O'zbek STT: {total_sec/60:.1f} daqiqa\n"
+            f"💰 Jami xarajat: ~{total_cost:,} so'm\n\n"
+            f"*Buyruqlar:*\n"
+            f"• /test — test rejimini yoqish/o'chirish\n"
+            f"• /stats — barcha userlar statistikasi\n"
+            f"• /reset — limitlarni tiklash",
+            parse_mode="Markdown"
+        )
+        return
+
+    user_id = update.effective_user.id
+    used = get_user_usage_sec(user_id)
+    limit = FREE_MINUTES_PER_MONTH * 60
+    rem = max(0, limit - used) / 60
+    await update.message.reply_text(
+        f"📊 *Sizning hisobingiz*\n\n"
+        f"🌸 Tarif: *Bepul* ({FREE_MINUTES_PER_MONTH} daqiqa/oy)\n"
+        f"⏱ Ishlatilgan: {used/60:.1f} daqiqa\n"
+        f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
+        f"♾️ *Cheksiz bepul:*\n"
+        f"• 🇷🇺🇬🇧 Rus / Ingliz audiolar\n"
+        f"• 📄 PDF → Audio\n"
+        f"• 📝 Matn → Ovoz\n\n"
+        f"💎 Premium tarif: @Nazokat_571",
+        parse_mode="Markdown"
+    )
+
+
+async def test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: test rejimini yoqish/o'chirish."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    TEST_MODE["on"] = not TEST_MODE["on"]
+    if TEST_MODE["on"]:
+        await update.message.reply_text(
+            "🧪 *Test rejimi YONIQ ✅*\n\n"
+            "Endi O'zbek audiolar Muxlisa ga yuborilmaydi — pul ketmaydi.\n"
+            "Bot sahta natija qaytaradi.\n\n"
+            "O'chirish uchun: /test",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text(
+            "🧪 *Test rejimi O'CHIQ ❌*\n\n"
+            "Endi haqiqiy Muxlisa STT ishlaydi (balansdan pul yechiladi).",
+            parse_mode="Markdown"
+        )
+
+
+async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: barcha userlar statistikasi."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    if not user_uzbek_usage:
+        await update.message.reply_text("📊 Hozircha foydalanuvchilar STT ishlatmagan.")
+        return
+    lines = ["📊 *Foydalanuvchi statistikasi:*\n"]
+    sorted_users = sorted(user_uzbek_usage.items(), key=lambda x: x[1], reverse=True)
+    for user_id, sec in sorted_users[:20]:
+        cost = int(sec / 60 * MUXLISA_PRICE_PER_MIN)
+        lines.append(f"• `{user_id}` — {sec/60:.1f} daq (~{cost:,} so'm)")
+    total_sec = sum(user_uzbek_usage.values())
+    total_cost = int(total_sec / 60 * MUXLISA_PRICE_PER_MIN)
+    lines.append(f"\n*Jami:* {total_sec/60:.1f} daqiqa = ~{total_cost:,} so'm")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: barcha foydalanuvchi limitlarini tiklash."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    n = len(user_uzbek_usage)
+    user_uzbek_usage.clear()
+    await update.message.reply_text(f"✅ {n} ta foydalanuvchining limiti tiklandi.")
 
 
 async def lang_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1190,9 +1424,10 @@ def main():
     async def _setup_commands(application):
         try:
             await application.bot.set_my_commands([
-                BotCommand("start", "Botni ishga tushirish / Запустить бот"),
-                BotCommand("lang",  "Til tanlash: uz / ru / en"),
-                BotCommand("help",  "Yordam / Помощь"),
+                BotCommand("start",   "Botni ishga tushirish / Запустить бот"),
+                BotCommand("balance", "Mening balansim / Мой баланс"),
+                BotCommand("lang",    "Til tanlash: uz / ru / en"),
+                BotCommand("help",    "Yordam / Помощь"),
             ])
             await application.bot.set_chat_menu_button()
             try:
@@ -1223,6 +1458,10 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
     app.add_handler(CommandHandler("lang", lang_command))
+    app.add_handler(CommandHandler("balance", balance_cmd))
+    app.add_handler(CommandHandler("test", test_cmd))
+    app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.AUDIO, handle_audio))
