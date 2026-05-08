@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>SesTon — Audio → Matn</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@400;700;900&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d0b1a;
+    --surface: #16122a;
+    --surface2: #1e1935;
+    --purple: #7c5af6;
+    --purple-light: #a78bfa;
+    --pink: #e040a0;
+    --cyan: #00d4c8;
+    --text: #f0eeff;
+    --text2: rgba(240,238,255,0.55);
+    --text3: rgba(240,238,255,0.25);
+    --border: rgba(255,255,255,0.08);
+    --border2: rgba(124,90,246,0.3);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  button {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+    outline: none;
+  }
+
+  body {
+    font-family: 'Manrope', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── BG BLOBS ── */
+  .blobs {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden;
+  }
+  .blob {
+    position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0;
+    animation: blobIn 1.2s ease forwards;
+  }
+  .b1 { width: 350px; height: 350px; background: #5b3af7; top: -100px; right: -80px; animation-delay: 0.1s; }
+  .b2 { width: 250px; height: 250px; background: #b0237c; bottom: 120px; left: -70px; animation-delay: 0.3s; }
+  .b3 { width: 180px; height: 180px; background: #0891b2; top: 45%; left: 55%; animation-delay: 0.5s; }
+  @keyframes blobIn { to { opacity: 0.18; } }
+
+  /* ── LAYOUT ── */
+  .app {
+    position: relative; z-index: 1;
+    max-width: 480px; margin: 0 auto;
+    padding: 0 16px 40px;
+    animation: fadeUp 0.6s ease;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── HEADER ── */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 0 14px;
+  }
+  .logo { display: flex; align-items: center; gap: 11px; }
+  .logo-icon {
+    width: 42px; height: 42px; border-radius: 13px;
+    background: linear-gradient(135deg, var(--purple), var(--pink));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; box-shadow: 0 4px 20px rgba(124,90,246,0.4);
+  }
+  .logo-name {
+    font-family: 'Unbounded', sans-serif;
+    font-size: 18px; font-weight: 900; letter-spacing: -0.5px;
+    background: linear-gradient(135deg, var(--purple-light), var(--pink));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .logo-tag { font-size: 10px; color: var(--text3); letter-spacing: 0.6px; text-transform: uppercase; margin-top: 1px; }
+  .online-badge {
+    display: flex; align-items: center; gap: 6px;
+    background: rgba(0,212,200,0.1); border: 1px solid rgba(0,212,200,0.25);
+    border-radius: 20px; padding: 6px 13px;
+  }
+  .online-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--cyan); box-shadow: 0 0 8px var(--cyan);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.35;} }
+  .online-text { font-size: 11px; color: var(--cyan); font-weight: 600; }
+
+  /* ── HERO BANNER ── */
+  .hero {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 22px;
+    padding: 24px 22px;
+    margin-bottom: 20px;
+    position: relative; overflow: hidden;
+  }
+  .hero::before {
+    content: '';
+    position: absolute; top: 0; right: 0;
+    width: 200px; height: 200px;
+    background: radial-gradient(circle, rgba(124,90,246,0.25) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero-wave { font-size: 44px; margin-bottom: 12px; display: block; animation: wave 2s infinite; }
+  @keyframes wave { 0%,100%{transform:rotate(0deg);} 25%{transform:rotate(-10deg);} 75%{transform:rotate(10deg);} }
+  .hero-title {
+    font-family: 'Unbounded', sans-serif;
+    font-size: 21px; font-weight: 900; line-height: 1.25;
+    margin-bottom: 8px;
+  }
+  .hero-title em { font-style: italic; color: var(--purple-light); }
+  .hero-desc { font-size: 13px; color: var(--text2); line-height: 1.6; }
+
+  /* ── SECTION LABEL ── */
+  .section-label {
+    font-size: 10px; font-weight: 700; letter-spacing: 1.2px;
+    text-transform: uppercase; color: var(--text3);
+    padding: 4px 0 10px;
+  }
+
+  /* ── TYPE CARDS GRID ── */
+  .type-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .type-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 18px 16px;
+    cursor: pointer;
+    transition: transform 0.18s, border-color 0.18s, background 0.18s;
+    position: relative; overflow: hidden;
+  }
+  .type-card:active { transform: scale(0.96); }
+  .type-card:hover { border-color: var(--border2); background: var(--surface2); }
+  .type-card.selected {
+    border-color: var(--purple);
+    background: rgba(124,90,246,0.12);
+    box-shadow: 0 0 0 1px var(--purple) inset;
+  }
+  .card-glow {
+    position: absolute; top: 0; right: 0;
+    width: 70px; height: 70px; border-radius: 0 18px 0 50px;
+    opacity: 0.12;
+  }
+  .type-card:nth-child(1) .card-glow { background: #7c5af6; }
+  .type-card:nth-child(2) .card-glow { background: #0891b2; }
+  .type-card:nth-child(3) .card-glow { background: #d97706; }
+  .type-card:nth-child(4) .card-glow { background: #059669; }
+  .card-emoji { font-size: 30px; margin-bottom: 10px; display: block; }
+  .card-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+  .card-sub { font-size: 11px; color: var(--text2); line-height: 1.4; margin-bottom: 10px; }
+  .card-pill {
+    display: inline-block; padding: 3px 9px;
+    border-radius: 20px; font-size: 10px; font-weight: 700;
+    letter-spacing: 0.3px;
+  }
+  .pill-purple { background: rgba(124,90,246,0.2); color: #c4b5fd; border: 1px solid rgba(124,90,246,0.3); }
+  .pill-cyan   { background: rgba(8,145,178,0.15); color: #67e8f9; border: 1px solid rgba(8,145,178,0.25); }
+  .pill-amber  { background: rgba(217,119,6,0.15);  color: #fcd34d; border: 1px solid rgba(217,119,6,0.25); }
+  .pill-green  { background: rgba(5,150,105,0.15);  color: #6ee7b7; border: 1px solid rgba(5,150,105,0.25); }
+
+  /* ── UPLOAD ZONE ── */
+  .upload-zone {
+    background: var(--surface);
+    border: 2px dashed rgba(124,90,246,0.35);
+    border-radius: 20px;
+    padding: 30px 20px;
+    text-align: center;
+    margin-bottom: 20px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    position: relative;
+  }
+  .upload-zone:hover { border-color: var(--purple); background: rgba(124,90,246,0.06); }
+  .upload-zone.dragover { border-color: var(--cyan); background: rgba(0,212,200,0.06); }
+  .upload-icon { font-size: 40px; margin-bottom: 10px; display: block; }
+  .upload-title { font-size: 15px; font-weight: 700; margin-bottom: 5px; }
+  .upload-hint { font-size: 12px; color: var(--text2); line-height: 1.5; }
+  .upload-hint span { color: var(--purple-light); font-weight: 600; }
+  #fileInput { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+
+  /* ── URL INPUT ── */
+  .url-zone {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 16px;
+    margin-bottom: 20px;
+    display: none;
+  }
+  .record-btn {
+    width: 100%;
+    margin: 0 0 20px;
+    background: linear-gradient(135deg, var(--purple), var(--pink));
+    border: none;
+    border-radius: 16px;
+    padding: 14px 16px;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 6px 24px rgba(124,90,246,0.3);
+    transition: transform 0.15s, box-shadow 0.15s;
+    min-height: 48px;
+    display: block;
+    font-family: 'Manrope', sans-serif;
+    letter-spacing: -0.2px;
+  }
+  .record-btn:active, .record-btn:hover {
+    transform: scale(0.97);
+    box-shadow: 0 3px 12px rgba(124,90,246,0.2);
+  }
+  .url-zone.visible { display: block; }
+  .url-label { font-size: 11px; color: var(--text2); margin-bottom: 8px; font-weight: 600; }
+  .url-row { display: flex; gap: 8px; }
+  .url-input {
+    flex: 1; background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+    border-radius: 12px; padding: 11px 14px;
+    color: var(--text); font-size: 13px; font-family: 'Manrope', sans-serif;
+    outline: none; transition: border-color 0.2s;
+  }
+  .url-input:focus { border-color: var(--purple); }
+  .url-input::placeholder { color: var(--text3); }
+  .url-btn {
+    background: linear-gradient(135deg, var(--purple), var(--pink));
+    border: none; border-radius: 12px; padding: 11px 16px;
+    color: #fff; font-size: 13px; font-weight: 700; cursor: pointer;
+    white-space: nowrap;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Manrope', sans-serif;
+  }
+  .url-btn:active, .url-btn:hover {
+    opacity: 0.9;
+    transform: scale(0.98);
+  }
+  .copy-btn {
+    background: rgba(0,212,200,0.15); border: 1px solid rgba(0,212,200,0.3);
+    border-radius: 8px; padding: 8px 12px;
+    color: var(--cyan); font-size: 11px; font-weight: 700; cursor: pointer;
+    min-height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Manrope', sans-serif;
+  }
+  .copy-btn:active, .copy-btn:hover {
+    opacity: 0.8;
+  }
+  .result-text {
+    font-size: 14px; line-height: 1.7; color: var(--text);
+    background: rgba(0,0,0,0.2); border-radius: 12px; padding: 14px;
+    max-height: 200px; overflow-y: auto;
+    font-family: 'Manrope', sans-serif;
+  }
+
+  /* ── PROCESSING ── */
+  .processing {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 20px; padding: 24px;
+    text-align: center; margin-bottom: 20px;
+    display: none;
+  }
+  .processing.visible { display: block; }
+  .wave-bars {
+    display: flex; align-items: center; justify-content: center;
+    gap: 5px; margin-bottom: 14px;
+  }
+  .bar {
+    width: 5px; border-radius: 3px;
+    background: linear-gradient(to top, var(--purple), var(--pink));
+    animation: barAnim 1s ease infinite;
+  }
+  .bar:nth-child(1){height:20px;animation-delay:0s;}
+  .bar:nth-child(2){height:35px;animation-delay:0.15s;}
+  .bar:nth-child(3){height:50px;animation-delay:0.3s;}
+  .bar:nth-child(4){height:35px;animation-delay:0.45s;}
+  .bar:nth-child(5){height:20px;animation-delay:0.6s;}
+  @keyframes barAnim {
+    0%,100%{transform:scaleY(0.4);opacity:0.5;}
+    50%{transform:scaleY(1);opacity:1;}
+  }
+  .proc-text { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .proc-sub { font-size: 12px; color: var(--text2); }
+
+  /* ── MAIN BUTTON ── */
+  .main-btn {
+    width: 100%; padding: 17px;
+    background: linear-gradient(135deg, var(--purple) 0%, var(--pink) 100%);
+    border: none; border-radius: 16px;
+    color: #fff; font-size: 15px; font-weight: 800;
+    font-family: 'Manrope', sans-serif;
+    cursor: pointer; margin-bottom: 10px;
+    box-shadow: 0 6px 28px rgba(124,90,246,0.4);
+    transition: transform 0.15s, box-shadow 0.15s;
+    letter-spacing: -0.2px;
+    min-height: 52px;
+    display: block;
+  }
+  .main-btn:active, .main-btn:hover { 
+    transform: scale(0.97); 
+    box-shadow: 0 2px 12px rgba(124,90,246,0.3); 
+  }
+  .main-btn-sub { text-align: center; font-size: 11px; color: var(--text3); margin-bottom: 20px; }
+
+  /* ── RESULT ── */
+  .result-area {
+    display: none;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: 18px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+  .result-area.visible { display: block; }
+  .result-head {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .result-title { font-size: 14px; font-weight: 700; }
+
+  /* ── STATS ── */
+  .stats {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;
+    margin-bottom: 20px;
+  }
+  .stat {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 8px; text-align: center;
+  }
+  .stat-num {
+    font-family: 'Unbounded', sans-serif;
+    font-size: 16px; font-weight: 900; color: var(--purple-light);
+  }
+  .stat-label { font-size: 10px; color: var(--text2); margin-top: 4px; letter-spacing: 0.4px; text-transform: uppercase; }
+
+  /* ── HOW IT WORKS ── */
+  .how {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 18px; padding: 16px; margin-bottom: 20px;
+  }
+  .how-head { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+  .step { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 8px; }
+  .step:last-child { margin-bottom: 0; }
+  .step-n {
+    flex-shrink: 0;
+    width: 22px; height: 22px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--purple), var(--pink));
+    color: #fff; font-size: 11px; font-weight: 800;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .step-txt { font-size: 12px; color: var(--text2); line-height: 1.5; padding-top: 2px; }
+  .step-txt strong { color: var(--text); font-weight: 700; }
+
+  /* ── FOOTER ── */
+  .footer { text-align: center; font-size: 11px; color: var(--text3); padding-top: 4px; }
+  .footer span { color: var(--purple-light); }
+</style>
+</head>
+<body>
+
+<div class="blobs">
+  <div class="blob b1"></div>
+  <div class="blob b2"></div>
+  <div class="blob b3"></div>
+</div>
+
+<div class="app">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="logo">
+      <div class="logo-icon">🎙</div>
+      <div>
+        <div class="logo-name">SesTon</div>
+        <div class="logo-tag">Audio → Matn xizmati</div>
+      </div>
+    </div>
+    <div class="online-badge">
+      <div class="online-dot"></div>
+      <div class="online-text">Faol</div>
+    </div>
+  </div>
+
+  <!-- HERO -->
+  <div class="hero">
+    <span class="hero-wave">🎧</span>
+    <div class="hero-title">Ovozni <em>matnga</em><br>aylantirish</div>
+    <div class="hero-desc">Audio, video, ovozli xabar yoki YouTube havolasini yuboring — biz qolganini qilamiz</div>
+  </div>
+
+  <!-- TYPE SELECT -->
+  <div class="section-label">Fayl turini tanlang</div>
+  <div class="type-grid">
+    <div class="type-card selected" onclick="selectType(this,'file')" data-type="file">
+      <div class="card-glow"></div>
+      <span class="card-emoji">🎤</span>
+      <div class="card-title">Ovoz / Audio</div>
+      <div class="card-sub">MP3, WAV, OGG, FLAC va boshqa formatlar</div>
+      <span class="card-pill pill-purple">20+ format</span>
+    </div>
+    <div class="type-card" onclick="selectType(this,'video')" data-type="video">
+      <div class="card-glow"></div>
+      <span class="card-emoji">🎬</span>
+      <div class="card-title">Video fayl</div>
+      <div class="card-sub">MP4, MKV, AVI, dumaloq video xabarlar</div>
+      <span class="card-pill pill-cyan">Har qanday</span>
+    </div>
+    <div class="type-card" onclick="selectType(this,'youtube')" data-type="youtube">
+      <div class="card-glow"></div>
+      <span class="card-emoji">▶️</span>
+      <div class="card-title">YouTube / TikTok</div>
+      <div class="card-sub">Havola yuboring — yuklab olinadi</div>
+      <span class="card-pill pill-amber">Avtomatik</span>
+    </div>
+    <div class="type-card" onclick="selectType(this,'voice')" data-type="voice">
+      <div class="card-glow"></div>
+      <span class="card-emoji">💬</span>
+      <div class="card-title">Ovozli xabar</div>
+      <div class="card-sub">Telegram ovozli xabarlarini to'g'ridan matnga</div>
+      <span class="card-pill pill-green">Tez ishlaydi</span>
+    </div>
+  </div>
+
+  <!-- UPLOAD ZONE -->
+  <div class="upload-zone" id="uploadZone">
+    <input type="file" id="fileInput" accept="audio/*,video/*" onchange="handleFile(this)">
+    <span class="upload-icon">📁</span>
+    <div class="upload-title">Fayl yuklash</div>
+    <div class="upload-hint">Bosing yoki sudrang<br><span>Audio yoki video faylni tanlang</span></div>
+  </div>
+  <button class="record-btn" id="recordBtn" onclick="toggleRecording()" type="button">🎙 Mikrofonga yozish</button>
+
+  <!-- URL ZONE -->
+  <div class="url-zone" id="urlZone">
+    <div class="url-label">YouTube, TikTok yoki boshqa video havolasi</div>
+    <div class="url-row">
+      <input class="url-input" id="urlInput" type="url" placeholder="https://youtube.com/watch?v=...">
+      <button class="url-btn" onclick="handleUrl()">→ Yuborish</button>
+    </div>
+  </div>
+
+  <!-- PROCESSING -->
+  <div class="processing" id="processing">
+    <div class="wave-bars">
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+      <div class="bar"></div>
+    </div>
+    <div class="proc-text">Tanilmoqda...</div>
+    <div class="proc-sub">Biroz sabr qiling, ovoz tahlil qilinmoqda</div>
+  </div>
+
+  <!-- RESULT -->
+  <div class="result-area" id="resultArea">
+    <div class="result-head">
+      <div class="result-title">✅ Matn tayyor!</div>
+      <button class="copy-btn" onclick="copyText()">Nusxa</button>
+    </div>
+    <div class="result-text" id="resultText"></div>
+  </div>
+
+  <!-- STATS -->
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-num">8daq</div>
+      <div class="stat-label">Blok hajmi</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">UZ</div>
+      <div class="stat-label">Til</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">99%</div>
+      <div class="stat-label">Aniqlik</div>
+    </div>
+  </div>
+
+  <!-- HOW IT WORKS -->
+  <div class="how">
+    <div class="how-head">Qanday ishlaydi?</div>
+    <div class="step">
+      <div class="step-n">1</div>
+      <div class="step-txt"><strong>Fayl yoki havola</strong> tanlang yuqoridan</div>
+    </div>
+    <div class="step">
+      <div class="step-n">2</div>
+      <div class="step-txt">Bot <strong>audio ajratadi</strong> va Muxlisa AI ga yuboradi</div>
+    </div>
+    <div class="step">
+      <div class="step-n">3</div>
+      <div class="step-txt"><strong>Matn tayyor</strong> — nusxa oling yoki saqlang!</div>
+    </div>
+  </div>
+
+  <!-- MAIN BUTTON -->
+  <button class="main-btn" onclick="sendToBot()">🚀 &nbsp;Botga yuborish</button>
+  <div class="main-btn-sub">Fayl Telegram orqali yuklanadi va qayta ishlanadi</div>
+
+  <!-- FOOTER -->
+  <div class="footer">@SesTonBot &nbsp;·&nbsp; <span>Muxlisa AI</span> texnologiyasi bilan ishlaydi</div>
+
+</div>
+
+<script>
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) {
+    tg.ready();
+    tg.expand();
+    tg.setHeaderColor('#0d0b1a');
+    tg.setBackgroundColor('#0d0b1a');
+  }
+
+  let currentType = 'file';
+  let selectedFile = null;
+  let resultTextContent = '';
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let streamRef = null;
+  let recordTimeout = null;
+  const MAX_RECORDING_MS = 12000;
+
+  function updateRecordingUI(recording) {
+    const btn = document.getElementById('recordBtn');
+    const hint = document.querySelector('.upload-hint');
+    if (recording) {
+      btn.textContent = '■ To‘xtatish';
+      hint.innerHTML = '<span>Yozilmoqda... Tugmani bosing yoki 12 soniyadan keyin avtomatik to‘xtaydi</span>';
+    } else {
+      btn.textContent = '🎙 Mikrofonga yozish';
+      hint.innerHTML = '<span>Ovoz yozildi. Botga yuborilmoqda...</span>';
+    }
+  }
+
+  async function toggleRecording() {
+    if (!tg) {
+      alert('Iltimos Telegram Web App ichida oching.');
+      return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder) {
+      alert('Sizning brauzeringizda MediaRecorder qo‘llab-quvvatlanmaydi.');
+      return;
+    }
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      mediaRecorder.stop();
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef = stream;
+      recordedChunks = [];
+
+      const supportedTypes = [
+        'audio/webm;codecs=opus',
+        'audio/ogg;codecs=opus',
+        'audio/webm',
+        'audio/ogg'
+      ];
+      let mimeType = '';
+      for (const type of supportedTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          mimeType = type;
+          break;
+        }
+      }
+      if (mimeType) {
+        mediaRecorder = new MediaRecorder(stream, { mimeType });
+      } else {
+        mediaRecorder = new MediaRecorder(stream);
+      }
+
+      mediaRecorder.ondataavailable = event => {
+        if (event.data && event.data.size) {
+          recordedChunks.push(event.data);
+        }
+      };
+      mediaRecorder.onerror = event => {
+        alert('Yozuv xatosi: ' + (event.error?.message || 'noma’lum xato'));
+      };
+      mediaRecorder.onstop = async () => {
+        if (recordTimeout) {
+          clearTimeout(recordTimeout);
+          recordTimeout = null;
+        }
+        updateRecordingUI(false);
+        if (!recordedChunks.length) {
+          alert('Ovoz yozilmadi. Iltimos qayta urinib ko‘ring.');
+          if (streamRef) {
+            streamRef.getTracks().forEach(track => track.stop());
+            streamRef = null;
+          }
+          return;
+        }
+        const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const dataUrl = reader.result;
+          if (!dataUrl) {
+            alert('Ovozni o‘qib bo‘lmadi.');
+            return;
+          }
+          sendWebAppVoice(dataUrl);
+        };
+        reader.readAsDataURL(blob);
+        if (streamRef) {
+          streamRef.getTracks().forEach(track => track.stop());
+          streamRef = null;
+        }
+      };
+      mediaRecorder.start();
+      recordTimeout = setTimeout(() => {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+        }
+      }, MAX_RECORDING_MS);
+      updateRecordingUI(true);
+    } catch (err) {
+      alert('Mikrofonni ishlatib bo‘lmadi: ' + (err.message || err));
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+      }
+      if (recordTimeout) {
+        clearTimeout(recordTimeout);
+        recordTimeout = null;
+      }
+      if (streamRef) {
+        streamRef.getTracks().forEach(track => track.stop());
+        streamRef = null;
+      }
+    }
+  }
+
+  function sendWebAppVoice(dataUrl) {
+    showProcessing();
+    const userId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
+    if (!tg || !userId) {
+      hideProcessing();
+      alert('Telegram Web App foydalanuvchi ma&#39;lumoti olinmadi. Iltimos chatni yangilang va qayta urinib ko&#39;ring.');
+      return;
+    }
+    const payload = {
+      user_id: userId,
+      audio: dataUrl,
+      format: dataUrl.split(',')[0].split(':')[1].split(';')[0] || 'audio/webm'
+    };
+    console.log('Ovozni HTTP orqali yuborilmoqda. User:', payload.user_id, 'Size:', payload.audio.length);
+
+    fetch(window.location.origin + '/audio', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(async r => {
+      const json = await r.json();
+      if (!r.ok) {
+        throw new Error(json.error || 'Server xatosi');
+      }
+      hideProcessing();
+      alert('Ovoz yuborildi. Bot matni chatga qaytadi.');
+      console.log(json);
+    })
+    .catch(err => {
+      hideProcessing();
+      alert('Yuborishda xato: ' + (err.message || err));
+      console.error(err);
+    });
+  }
+
+  function selectType(el, type) {
+    document.querySelectorAll('.type-card').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
+    currentType = type;
+
+    const uploadZone = document.getElementById('uploadZone');
+    const urlZone = document.getElementById('urlZone');
+
+    if (type === 'youtube') {
+      uploadZone.style.display = 'none';
+      urlZone.classList.add('visible');
+    } else {
+      uploadZone.style.display = '';
+      urlZone.classList.remove('visible');
+      const fileInput = document.getElementById('fileInput');
+      if (type === 'video') {
+        fileInput.accept = 'video/*';
+      } else {
+        fileInput.accept = 'audio/*,video/*';
+      }
+    }
+    hideResult();
+  }
+
+  function handleFile(input) {
+    if (input.files && input.files[0]) {
+      selectedFile = input.files[0];
+      const zone = document.getElementById('uploadZone');
+      zone.querySelector('.upload-icon').textContent = '✅';
+      zone.querySelector('.upload-title').textContent = selectedFile.name;
+      zone.querySelector('.upload-hint').innerHTML = '<span>Fayl tanlandi. "Botga yuborish" tugmasini bosing</span>';
+    }
+  }
+
+  function handleUrl() {
+    const url = document.getElementById('urlInput').value.trim();
+    if (!url) return;
+    sendToBot(url);
+  }
+
+  async function sendToBot(url) {
+    const userId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
+
+    if (currentType === 'youtube') {
+      const link = url || document.getElementById('urlInput').value.trim();
+      if (!link) {
+        alert('Iltimos video havolasini kiriting.');
+        return;
+      }
+      if (!/^https?:\/\//i.test(link)) {
+        alert('Havola http:// yoki https:// bilan boshlanishi kerak.');
+        return;
+      }
+      showProcessing();
+
+      // 1) tg.sendData — faqat KeyboardButton orqali ochilgan WebApp'da ishlaydi
+      let sent = false;
+      if (tg && typeof tg.sendData === 'function') {
+        try {
+          tg.sendData(JSON.stringify({ type: 'url', url: link }));
+          sent = true;
+          setTimeout(() => { try { tg.close(); } catch (e) {} }, 250);
+          return;
+        } catch (e) {
+          console.warn('tg.sendData ishlamadi, HTTP ga o\'tilyapti:', e);
+        }
+      }
+
+      // 2) HTTP fallback
+      if (!userId) {
+        hideProcessing();
+        alert('Foydalanuvchi ID olinmadi. Iltimos botda /start bosing va Web ilovani qayta oching.');
+        return;
+      }
+      try {
+        const r = await fetch(window.location.origin + '/url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_id: userId, url: link })
+        });
+        const json = await r.json();
+        if (!r.ok) throw new Error(json.error || 'Server xato');
+        hideProcessing();
+        alert('Havola qabul qilindi. Bot natijani chatga yuboradi.');
+      } catch (err) {
+        hideProcessing();
+        alert('Yuborishda xato: ' + (err.message || err));
+        console.error(err);
+      }
+      return;
+    }
+
+    // Fayl turi (audio/video)
+    if (!selectedFile) {
+      alert('Iltimos avval fayl tanlang!');
+      return;
+    }
+    if (!userId) {
+      alert('Foydalanuvchi ID olinmadi. Iltimos botda /start bosing va Web ilovani qayta oching.');
+      return;
+    }
+    showProcessing();
+    try {
+      const formData = new FormData();
+      formData.append('user_id', String(userId));
+      formData.append('file', selectedFile, selectedFile.name);
+      const r = await fetch(window.location.origin + '/upload', {
+        method: 'POST',
+        body: formData
+      });
+      const json = await r.json();
+      if (!r.ok) throw new Error(json.error || 'Server xato');
+      hideProcessing();
+      alert('Fayl qabul qilindi. Bot matnni chatga yuboradi.');
+    } catch (err) {
+      hideProcessing();
+      alert('Yuborishda xato: ' + (err.message || err));
+      console.error(err);
+    }
+  }
+
+  function showProcessing() {
+    document.getElementById('processing').classList.add('visible');
+    document.getElementById('resultArea').classList.remove('visible');
+  }
+
+  function hideProcessing() {
+    document.getElementById('processing').classList.remove('visible');
+  }
+
+  function showResult(text) {
+    resultTextContent = text;
+    document.getElementById('processing').classList.remove('visible');
+    document.getElementById('resultText').textContent = text;
+    document.getElementById('resultArea').classList.add('visible');
+  }
+
+  function hideResult() {
+    document.getElementById('resultArea').classList.remove('visible');
+    document.getElementById('processing').classList.remove('visible');
+  }
+
+  function copyText() {
+    navigator.clipboard.writeText(resultTextContent).then(() => {
+      const btn = document.querySelector('.copy-btn');
+      btn.textContent = '✅ Nusxalandi';
+      setTimeout(() => { btn.textContent = 'Nusxa'; }, 2000);
+    });
+  }
+
+  const zone = document.getElementById('uploadZone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      selectedFile = file;
+      zone.querySelector('.upload-icon').textContent = '✅';
+      zone.querySelector('.upload-title').textContent = file.name;
+      zone.querySelector('.upload-hint').innerHTML = '<span>Fayl tanlandi!</span>';
+    }
+  });
+</script>
+</body>
+</html>
