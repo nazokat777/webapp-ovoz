@@ -533,21 +533,34 @@
   }
 
   function getTelegramUserId() {
-    if (!tg) return null;
-    const id1 = tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
-    if (id1) return id1;
-    // initData qatorini o'zimiz parse qilamiz (Menu Button hollarida ba'zan kerak)
-    const initData = tg.initData || '';
-    if (!initData) return null;
+    // 1) Telegram WebApp normal yo'l
+    if (tg) {
+      const id1 = tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
+      if (id1) return id1;
+      // initData qatorini parse qilamiz
+      const initData = tg.initData || '';
+      if (initData) {
+        try {
+          const params = new URLSearchParams(initData);
+          const userStr = params.get('user');
+          if (userStr) {
+            const userObj = JSON.parse(userStr);
+            if (userObj && userObj.id) return userObj.id;
+          }
+        } catch (e) {
+          console.error('initData parse xatosi', e);
+        }
+      }
+    }
+    // 2) URL'dagi ?user=<chat_id> fallback (iMe Messenger va boshqa fork'lar uchun)
     try {
-      const params = new URLSearchParams(initData);
-      const userStr = params.get('user');
-      if (userStr) {
-        const userObj = JSON.parse(userStr);
-        if (userObj && userObj.id) return userObj.id;
+      const urlParams = new URLSearchParams(window.location.search);
+      const userParam = urlParams.get('user');
+      if (userParam && /^\d+$/.test(userParam)) {
+        return parseInt(userParam, 10);
       }
     } catch (e) {
-      console.error('initData parse xatosi', e);
+      console.error('URL user parse xatosi', e);
     }
     return null;
   }
