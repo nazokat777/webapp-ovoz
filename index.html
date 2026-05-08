@@ -396,8 +396,9 @@
   .card-glow {
     position: absolute; top: 0; right: 0;
     width: 110px; height: 110px; border-radius: 0 22px 0 60%;
-    opacity: 0.5; filter: blur(20px);
+    opacity: 0.22; filter: blur(24px);
     pointer-events: none;
+    z-index: 0;
   }
   .type-card:nth-child(1) .card-glow { background: var(--pink-300); }
   .type-card:nth-child(2) .card-glow { background: var(--pink-200); }
@@ -428,55 +429,78 @@
   .card-icon svg { width: 24px; height: 24px; filter: drop-shadow(0 1px 2px rgba(190, 24, 93, 0.25)); }
   .card-icon svg * { stroke: #fff; }
 
-  /* Vinyl record — pink */
+  /* Aylanuvchi sakura — vinyl o'rniga (kreativ) */
   .vinyl {
     position: relative;
-    width: 60px; height: 60px;
+    width: 64px; height: 64px;
     margin-bottom: 14px;
-    border-radius: 50%;
-    animation: vinyl-spin 4s linear infinite;
-    background:
-      radial-gradient(circle at 50% 50%, #ec4899 0%, #be185d 60%, #831843 100%);
-    box-shadow:
-      0 0 0 1.5px rgba(236, 72, 153, 0.5),
-      0 8px 22px rgba(236, 72, 153, 0.45),
-      inset 0 1px 0 rgba(255,255,255,0.25);
-  }
-  .vinyl::before {
-    content: ''; position: absolute; inset: 4px;
-    border-radius: 50%;
-    background:
-      repeating-radial-gradient(circle at center,
-        transparent 0px, transparent 2px,
-        rgba(255,255,255,0.08) 2px, rgba(255,255,255,0.08) 2.6px);
-  }
-  .vinyl-label {
-    position: absolute; inset: 30%; border-radius: 50%;
-    background: linear-gradient(135deg, #FFE4EC 0%, #FFCCE0 50%, #f9a8d4 100%);
-    box-shadow:
-      inset 0 0 8px rgba(190, 24, 93, 0.25),
-      inset 0 1px 0 rgba(255,255,255,0.7);
     display: flex; align-items: center; justify-content: center;
+    isolation: isolate;
+  }
+  /* Halo glow (orqada) */
+  .vinyl::before {
+    content: ''; position: absolute; inset: -6px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(252,165,207,0.55), rgba(255,228,236,0.3) 50%, transparent 70%);
+    filter: blur(8px);
+    animation: vinyl-pulse 3s ease-in-out infinite;
+    z-index: -1;
+  }
+  /* Tashqi gulli halqa (sekin aylanadi) */
+  .vinyl::after {
+    content: ''; position: absolute; inset: 0;
+    border-radius: 50%;
+    background:
+      conic-gradient(from 0deg,
+        rgba(255,204,224,0.6),
+        rgba(252,165,207,0.4),
+        rgba(255,228,236,0.7),
+        rgba(252,165,207,0.4),
+        rgba(255,204,224,0.6));
+    animation: vinyl-spin 12s linear infinite;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+  }
+  /* Aylanuvchi katta sakura SVG */
+  .vinyl-flower {
+    position: absolute; inset: 4px;
+    width: calc(100% - 8px); height: calc(100% - 8px);
     z-index: 2;
+    animation: vinyl-spin 6s linear infinite;
+    filter: drop-shadow(0 2px 6px rgba(236, 72, 153, 0.5));
   }
-  .vinyl-label::after {
-    content: ''; width: 5px; height: 5px; border-radius: 50%;
-    background: #831843;
+  .vinyl-flower svg { width: 100%; height: 100%; }
+  /* Markaziy oltin nuqta (statik) */
+  .vinyl-label {
+    position: absolute;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #fde68a 0%, #fbbf24 60%, #b45309 100%);
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.7), inset 0 1px 0 rgba(255,255,255,0.5);
+    z-index: 4;
+    animation: vinyl-pulse 2s ease-in-out infinite;
   }
+  /* Sheen effect (kichik aylanish) */
   .vinyl-sheen {
     position: absolute; inset: 0; border-radius: 50%;
-    background: linear-gradient(135deg, transparent 35%, rgba(255,255,255,0.32) 50%, transparent 65%);
-    animation: vinyl-sheen 6s linear infinite;
+    background: linear-gradient(135deg, transparent 38%, rgba(255,255,255,0.4) 50%, transparent 62%);
+    animation: vinyl-spin 9s linear infinite reverse;
     pointer-events: none;
     z-index: 3;
   }
   @keyframes vinyl-spin { to { transform: rotate(360deg); } }
-  @keyframes vinyl-sheen { 0% { transform: rotate(0deg); } 100% { transform: rotate(-360deg); } }
-  .type-card.selected .vinyl {
-    box-shadow:
-      0 0 0 2px rgba(236, 72, 153, 0.85),
-      0 12px 28px rgba(236, 72, 153, 0.5),
-      inset 0 1px 0 rgba(255,255,255,0.25);
+  @keyframes vinyl-pulse {
+    0%, 100% { opacity: 0.85; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.12); }
+  }
+  .type-card.selected .vinyl::after {
+    animation-duration: 6s;
+  }
+  .type-card.selected .vinyl-flower {
+    animation-duration: 3s;
+    filter: drop-shadow(0 4px 12px rgba(236, 72, 153, 0.8));
+  }
+  .type-card.selected .vinyl::before {
+    background: radial-gradient(circle, rgba(252,165,207,0.85), rgba(255,228,236,0.5) 50%, transparent 70%);
   }
 
   .card-title { font-size: 14px; font-weight: 800; margin-bottom: 5px; letter-spacing: -0.3px; transition: color 0.28s; color: var(--text); }
@@ -950,13 +974,13 @@
   .deco-flower {
     position: absolute;
     pointer-events: none;
-    z-index: 1;
-    filter: drop-shadow(0 2px 6px rgba(236, 72, 153, 0.35));
+    z-index: 4;
+    filter: drop-shadow(0 2px 6px rgba(236, 72, 153, 0.45));
     animation: flower-sway 4s ease-in-out infinite;
   }
-  .deco-flower.sm { width: 22px; height: 22px; }
-  .deco-flower.md { width: 32px; height: 32px; }
-  .deco-flower.lg { width: 48px; height: 48px; }
+  .deco-flower.sm { width: 26px; height: 26px; }
+  .deco-flower.md { width: 38px; height: 38px; }
+  .deco-flower.lg { width: 56px; height: 56px; }
 
   @keyframes flower-sway {
     0%, 100% { transform: rotate(-6deg) scale(1); }
@@ -1128,8 +1152,9 @@
     <div class="type-grid">
       <div class="type-card selected" onclick="selectType(this,'file')" data-type="file">
         <div class="card-glow"></div>
-        <svg class="deco-flower sm in-tr faded" style="animation-delay:0.2s"><use href="#sakura"/></svg>
+        <svg class="deco-flower sm in-bl faded" style="animation-delay:0.2s"><use href="#sakura"/></svg>
         <div class="vinyl">
+          <div class="vinyl-flower"><svg viewBox="0 0 40 40"><use href="#sakura"/></svg></div>
           <div class="vinyl-label"></div>
           <div class="vinyl-sheen"></div>
         </div>
