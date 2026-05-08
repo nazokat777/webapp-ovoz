@@ -810,14 +810,19 @@ async def process_url(update, context, url, language="uz"):
     actual_duration = 0
     try:
         audio_path = await asyncio.to_thread(download_audio_from_url, url)
-        # Yuklangan audio davomiyligini aniqlash (limitni tekshirish va hisoblash uchun)
+        # Yuklangan audio davomiyligini aniqlash (event loop'ni bloklamaslik uchun thread'da)
+        def _probe_duration(path):
+            try:
+                p = subprocess.run(
+                    ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                     "-of", "default=noprint_wrappers=1:nokey=1", path],
+                    capture_output=True, text=True, timeout=10
+                )
+                return int(float(p.stdout.strip())) if p.stdout.strip() else 0
+            except Exception:
+                return 0
         try:
-            probe = subprocess.run(
-                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                 "-of", "default=noprint_wrappers=1:nokey=1", audio_path],
-                capture_output=True, text=True, timeout=10
-            )
-            actual_duration = int(float(probe.stdout.strip())) if probe.stdout.strip() else 0
+            actual_duration = await asyncio.to_thread(_probe_duration, audio_path)
         except Exception:
             actual_duration = 0
 
@@ -1709,6 +1714,19 @@ def main():
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(CommandHandler("grant", grant_cmd))
     app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
+
+    # Global error handler — barcha qaydqilinmagan xatolarni log + userga xabar
+    async def _error_handler(update, context):
+        err = context.error
+        logging.error(f"Handler xatosi: {err}", exc_info=err)
+        try:
+            if update and getattr(update, "effective_message", None):
+                await update.effective_message.reply_text(
+                    f"❌ Xato yuz berdi: {str(err)[:300]}\n\nQayta urinib ko'ring."
+                )
+        except Exception:
+            pass
+    app.add_error_handler(_error_handler)
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.AUDIO, handle_audio))
