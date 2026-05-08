@@ -444,7 +444,7 @@ def detect_lang(text):
 
 
 def extract_pdf_text(pdf_path):
-    """PDF faylidan matn ajratib oladi."""
+    """PDF faylidan matn ajratib oladi (bot sarlavhalari, fayl nomi tozalanadi)."""
     try:
         reader = pypdf.PdfReader(pdf_path)
         parts = []
@@ -452,9 +452,26 @@ def extract_pdf_text(pdf_path):
             t = page.extract_text() or ""
             if t.strip():
                 parts.append(t.strip())
-        return "\n\n".join(parts)
+        full = "\n\n".join(parts)
+        return _clean_pdf_text(full)
     except Exception as e:
         raise Exception(f"PDF o'qib bo'lmadi: {e}")
+
+
+def _clean_pdf_text(text):
+    """Bot yaratgan PDF sarlavhalari va fayl metadata sini tozalash."""
+    if not text:
+        return text
+    lines = text.split("\n")
+    # Bot sarlavhalari ('MNSM — Matn', 'SesTon — Matn', va h.k.) olib tashlash
+    cleaned = []
+    skip_keywords = ("mnsm", "seston", "— matn", "—matn", "matn:", "📝", "📎", "🔊")
+    for ln in lines:
+        s = ln.strip()
+        if not cleaned and (not s or any(kw in s.lower() for kw in skip_keywords)):
+            continue  # boshlanishidagi sarlavhalarni tashlab ketish
+        cleaned.append(ln)
+    return "\n".join(cleaned).strip()
 
 
 def make_tts(text, lang=None):
@@ -748,8 +765,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def process_pdf_to_voice(update, context, file_id):
-    """PDF dan matn ajratib, uni ovozga aylantirib yuboradi."""
-    msg = await update.message.reply_text("📄 PDF qabul qilindi. Matn ajratilmoqda...")
+    """PDF dan matn ajratib, faqat ovozga aylantirib yuboradi (matn ko'rsatilmaydi)."""
+    msg = await update.message.reply_text("📄 PDF qabul qilindi. Ovozga aylantirilmoqda...")
     tmp_path = None
     try:
         file = await context.bot.get_file(file_id)
@@ -762,14 +779,6 @@ async def process_pdf_to_voice(update, context, file_id):
             await msg.edit_text("❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).")
             return
 
-        # Avval matnni ham yuboraman (qisqa bo'lsa)
-        if len(text) <= 4000:
-            await update.message.reply_text(f"📝 PDF matni:\n\n{text}")
-        else:
-            await update.message.reply_text(f"📝 PDF matni (qisqartirilgan):\n\n{text[:3900]}...")
-
-        # Endi audio
-        await msg.edit_text("🔊 Ovozga aylantirilmoqda...")
         tts_path = await asyncio.to_thread(make_tts, text)
         if tts_path:
             try:
@@ -888,20 +897,13 @@ def _send_text_and_pdf(user_id, text):
 
 
 def process_pdf_for_user(user_id, pdf_path):
-    """WebApp orqali yuborilgan PDF dan matn ajratib, audio sifatida qaytaradi."""
+    """PDF dan matn ajratib, faqat audio sifatida qaytaradi (matn ko'rsatilmaydi)."""
     try:
-        telegram_send_message(user_id, "📄 PDF qabul qilindi. Matn ajratilmoqda...")
+        telegram_send_message(user_id, "📄 PDF qabul qilindi. Ovozga aylantirilmoqda...")
         text = extract_pdf_text(pdf_path)
         if not text or not text.strip():
             telegram_send_message(user_id, "❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).")
             return
-        # Matn xabar
-        if len(text) <= 4000:
-            telegram_send_message(user_id, f"📝 PDF matni:\n\n{text}")
-        else:
-            telegram_send_message(user_id, f"📝 PDF matni (qisqartirilgan):\n\n{text[:3900]}...")
-        # Audio
-        telegram_send_message(user_id, "🔊 Ovozga aylantirilmoqda...")
         tts_path = make_tts(text)
         if tts_path:
             try:
