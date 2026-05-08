@@ -532,6 +532,35 @@
     tg.setBackgroundColor('#0d0b1a');
   }
 
+  function getTelegramUserId() {
+    if (!tg) return null;
+    const id1 = tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
+    if (id1) return id1;
+    // initData qatorini o'zimiz parse qilamiz (Menu Button hollarida ba'zan kerak)
+    const initData = tg.initData || '';
+    if (!initData) return null;
+    try {
+      const params = new URLSearchParams(initData);
+      const userStr = params.get('user');
+      if (userStr) {
+        const userObj = JSON.parse(userStr);
+        if (userObj && userObj.id) return userObj.id;
+      }
+    } catch (e) {
+      console.error('initData parse xatosi', e);
+    }
+    return null;
+  }
+
+  function userIdMissingMessage() {
+    const platform = (tg && tg.platform) || 'noma\'lum';
+    const v = (tg && tg.version) || '?';
+    const hasInit = !!(tg && tg.initData);
+    return 'Foydalanuvchi ID olinmadi.\n\n' +
+      'Iltimos botda /start yuboring va paydo bo\'lgan klaviatura tugmasi (🎙 Web ilovani ochish) orqali Web ilovani qayta oching.\n\n' +
+      '[debug: platform=' + platform + ', v=' + v + ', initData=' + (hasInit ? 'bor' : 'yo\'q') + ']';
+  }
+
   let currentType = 'file';
   let selectedFile = null;
   let resultTextContent = '';
@@ -653,10 +682,10 @@
 
   function sendWebAppVoice(dataUrl) {
     showProcessing();
-    const userId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
+    const userId = getTelegramUserId();
     if (!tg || !userId) {
       hideProcessing();
-      alert('Telegram Web App foydalanuvchi ma&#39;lumoti olinmadi. Iltimos chatni yangilang va qayta urinib ko&#39;ring.');
+      alert(userIdMissingMessage());
       return;
     }
     const payload = {
@@ -728,7 +757,7 @@
   }
 
   async function sendToBot(url) {
-    const userId = tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
+    const userId = getTelegramUserId();
 
     if (currentType === 'youtube') {
       const link = url || document.getElementById('urlInput').value.trim();
@@ -758,7 +787,7 @@
       // 2) HTTP fallback
       if (!userId) {
         hideProcessing();
-        alert('Foydalanuvchi ID olinmadi. Iltimos botda /start bosing va Web ilovani qayta oching.');
+        alert(userIdMissingMessage());
         return;
       }
       try {
@@ -785,7 +814,7 @@
       return;
     }
     if (!userId) {
-      alert('Foydalanuvchi ID olinmadi. Iltimos botda /start bosing va Web ilovani qayta oching.');
+      alert(userIdMissingMessage());
       return;
     }
     showProcessing();
