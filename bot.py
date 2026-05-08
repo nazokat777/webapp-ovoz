@@ -20,12 +20,12 @@ import asyncio
 import threading
 from telegram import (
     Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo, BotCommand,
-    MenuButtonWebApp,
+    MenuButtonWebApp, InlineKeyboardButton, InlineKeyboardMarkup,
 )
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from telegram.ext import (
-    Application, CommandHandler, MessageHandler,
+    Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     filters, ContextTypes,
 )
 from aiohttp import web
@@ -51,6 +51,11 @@ _sr_recognizer = sr.Recognizer()
 
 BOT_TOKEN   = os.getenv("BOT_TOKEN", "8502384684:AAETKbx4YBtiQ9W7PRTWUeVumwwnG-lH9R8")
 MUXLISA_KEY = os.getenv("MUXLISA_KEY", "UYaezERZPBO7pkJj4wzttq5eV90cGdFrI8XxGyCl")
+
+# To'lov ma'lumotlari (Railway env variable orqali kiritiladi — kodga qo'yilmaydi!)
+PAYMENT_CARD = os.getenv("PAYMENT_CARD", "")
+PAYMENT_CARD_HOLDER = os.getenv("PAYMENT_CARD_HOLDER", "")
+ADMIN_CONTACT = os.getenv("ADMIN_CONTACT", "@Nazokat_571")
 
 # Web App URL — ngrok yoki o'z serveringiz URL'ini kiriting
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://botch-engaging-mustang.ngrok-free.dev")
@@ -91,6 +96,8 @@ user_tariffs = {}
 TEST_MODE = {"on": False}
 # Muxlisa tarifi (so'm/daqiqa) — statistika uchun
 MUXLISA_PRICE_PER_MIN = 500
+# Admin chat_id (avtomatik saqlanadi admin botga xabar yuborganda) — to'lov xabarnomasi uchun
+ADMIN_CHAT_ID = {"id": None}
 
 
 def is_admin(update):
@@ -98,7 +105,11 @@ def is_admin(update):
     if not update or not getattr(update, "effective_user", None):
         return False
     uname = (update.effective_user.username or "").lower()
-    return uname in ADMIN_USERNAMES
+    if uname in ADMIN_USERNAMES:
+        # Admin chat_id'ini eslab qolamiz — to'lov xabarnomalari uchun
+        ADMIN_CHAT_ID["id"] = update.effective_user.id
+        return True
+    return False
 
 
 def get_user_tariff(user_id):
@@ -1088,8 +1099,119 @@ async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def tariflar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Hammaga: tariflar ro'yxati."""
-    await update.message.reply_text(format_tariffs_text(), parse_mode="Markdown")
+    """Hammaga: tariflar ro'yxati + sotib olish tugmasi."""
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💎 Tarifni sotib olish", callback_data="buy:menu")]
+    ])
+    await update.message.reply_text(
+        format_tariffs_text(),
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+
+
+async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Tarif sotib olish menyusi."""
+    await _show_buy_menu(update.message)
+
+
+async def _show_buy_menu(message_obj):
+    """Tarif tugmalari ko'rsatadi (chat message yoki callback edit uchun)."""
+    paid = [(k, t) for k, t in TARIFFS.items() if t["price"] > 0]
+    buttons = []
+    for key, t in paid:
+        hrs = t["minutes"] // 60
+        label = f"{t['name']} • {hrs} soat • {t['price']:,} so'm"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
+    text = (
+        "💎 *Tarifni tanlang*\n\n"
+        "Tanlagan tarifingizdan keyin to'lov ma'lumotlari ko'rinadi:\n"
+        "• Karta raqami\n"
+        "• To'lov miqdori\n"
+        "• Adminga chek yuborish ko'rsatmasi\n\n"
+        "🔒 Tarif chek tasdiqlanganidan keyin faollashadi."
+    )
+    if hasattr(message_obj, "edit_message_text"):
+        await message_obj.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
+    else:
+        await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
+
+
+async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User tarif tugmasini bosganida — to'lov ma'lumotlarini ko'rsatish + adminga xabar."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+
+    if query.data == "buy:menu":
+        await _show_buy_menu(query)
+        return
+
+    if not query.data.startswith("buy:"):
+        return
+    tariff_key = query.data.split(":", 1)[1]
+    if tariff_key not in TARIFFS or TARIFFS[tariff_key]["price"] == 0:
+        await query.edit_message_text("❌ Bu tarif sotuvga qo'yilmagan.")
+        return
+
+    t = TARIFFS[tariff_key]
+    user = query.from_user
+
+    # To'lov ma'lumotlari
+    card = PAYMENT_CARD or "_(admin sozlamagan — env: PAYMENT_CARD)_"
+    holder = PAYMENT_CARD_HOLDER or "_(env: PAYMENT_CARD_HOLDER)_"
+
+    text = (
+        f"💳 *To'lov ma'lumotlari*\n\n"
+        f"🌸 Tarif: *{t['name']}*\n"
+        f"⏱ Limit: *{t['minutes']} daqiqa/oy* ({t['minutes']//60} soat)\n"
+        f"💰 To'lov miqdori: *{t['price']:,} so'm*\n\n"
+        f"━━━━━━━━━━━━━━━━━\n"
+        f"📋 *Karta raqami:*\n`{card}`\n"
+        f"👤 *Egasi:* {holder}\n"
+        f"━━━━━━━━━━━━━━━━━\n\n"
+        f"💸 *To'lov usullari:*\n"
+        f"✅ Payme — kartaga o'tkazma\n"
+        f"✅ Click — kartaga o'tkazma\n"
+        f"✅ Paynet — kartaga o'tkazma\n"
+        f"✅ Humo / Uzcard — to'g'ridan to'g'ri\n"
+        f"✅ Boshqa bank — kartaga o'tkazma\n\n"
+        f"📸 *To'lov qilgandan keyin:*\n"
+        f"1. Chek (screenshot) oling\n"
+        f"2. {ADMIN_CONTACT} ga yuboring\n"
+        f"3. ID'ingizni ham yozing: `{user.id}`\n"
+        f"4. Admin 1-5 daqiqa ichida tarifni faollashtiradi\n\n"
+        f"🆔 Sizning ID'ingiz: `{user.id}`"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("⬅️ Boshqa tarif", callback_data="buy:menu")],
+        [InlineKeyboardButton(f"💬 Adminga yozish — {ADMIN_CONTACT}", url=f"https://t.me/{ADMIN_CONTACT.lstrip('@')}")]
+    ])
+    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
+
+    # Adminga xabar yuborish
+    if ADMIN_CHAT_ID["id"]:
+        username = f"@{user.username}" if user.username else (user.first_name or "noma'lum")
+        try:
+            await context.bot.send_message(
+                chat_id=ADMIN_CHAT_ID["id"],
+                text=(
+                    f"🔔 *Yangi to'lov so'rovi!*\n\n"
+                    f"👤 Foydalanuvchi: {username}\n"
+                    f"🆔 ID: `{user.id}`\n"
+                    f"🌸 Tarif: *{t['name']}*\n"
+                    f"💰 Miqdori: *{t['price']:,} so'm*\n\n"
+                    f"⏳ User chek yuborishini kuting.\n"
+                    f"Chek kelganidan keyin tarifini faollashtirish:\n"
+                    f"`/grant {user.id} {tariff_key}`"
+                ),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logging.warning(f"Admin xabarnomasi yuborilmadi: {e}")
+    else:
+        logging.warning("ADMIN_CHAT_ID hali saqlanmagan — admin botga /start yubormagan.")
 
 
 async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1546,6 +1668,7 @@ def main():
                 BotCommand("start",    "Botni ishga tushirish"),
                 BotCommand("balance",  "Mening balansim"),
                 BotCommand("tariflar", "Tariflar ro'yxati"),
+                BotCommand("buy",      "Tarif sotib olish"),
                 BotCommand("lang",     "Til tanlash: uz / ru / en"),
                 BotCommand("help",     "Yordam"),
             ])
@@ -1580,10 +1703,12 @@ def main():
     app.add_handler(CommandHandler("lang", lang_command))
     app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CommandHandler("tariflar", tariflar_cmd))
+    app.add_handler(CommandHandler("buy", buy_cmd))
     app.add_handler(CommandHandler("test", test_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(CommandHandler("grant", grant_cmd))
+    app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.AUDIO, handle_audio))
