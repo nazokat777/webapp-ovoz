@@ -54,7 +54,8 @@ MUXLISA_KEY = os.getenv("MUXLISA_KEY", "UYaezERZPBO7pkJj4wzttq5eV90cGdFrI8XxGyCl
 
 # Web App URL — ngrok yoki o'z serveringiz URL'ini kiriting
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://botch-engaging-mustang.ngrok-free.dev")
-HTTP_PORT  = int(os.getenv("HTTP_PORT", 8000))
+# Railway/Heroku PORT env, lokal sinov uchun HTTP_PORT yoki default 8000
+HTTP_PORT  = int(os.getenv("PORT") or os.getenv("HTTP_PORT") or 8000)
 
 MUXLISA_URL   = "https://service.muxlisa.uz/api/v2/stt"
 # Muxlisa cheklovi: 60 sek. CHUNK_SECONDS = 50 sek (xavfsizlik bufer).

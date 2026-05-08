@@ -1,0 +1,17 @@
+[phases.setup]
+nixPkgs = ['python311', 'ffmpeg-headless']
+
+[phases.install]
+cmds = [
+  'python -m venv --copies /opt/venv',
+  '. /opt/venv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt',
+]
+
+[phases.build]
+cmds = ['echo "build done"']
+
+[start]
+cmd = '. /opt/venv/bin/activate && python bot.py'
+
+[variables]
+PYTHONUNBUFFERED = "1"
