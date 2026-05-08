@@ -883,11 +883,72 @@
     100% { transform: translateY(110vh) rotate(720deg); opacity: 0; }
   }
 
+  /* ── DECORATIVE SAKURA FLOWERS ── */
+  .deco-flower {
+    position: absolute;
+    pointer-events: none;
+    z-index: 1;
+    filter: drop-shadow(0 2px 6px rgba(236, 72, 153, 0.35));
+    animation: flower-sway 4s ease-in-out infinite;
+  }
+  .deco-flower.sm { width: 22px; height: 22px; }
+  .deco-flower.md { width: 32px; height: 32px; }
+  .deco-flower.lg { width: 48px; height: 48px; }
+
+  @keyframes flower-sway {
+    0%, 100% { transform: rotate(-6deg) scale(1); }
+    50% { transform: rotate(8deg) scale(1.06); }
+  }
+  @keyframes flower-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .deco-flower.tl { top: -8px; left: -10px; }
+  .deco-flower.tr { top: -10px; right: -8px; }
+  .deco-flower.bl { bottom: -10px; left: -8px; }
+  .deco-flower.br { bottom: -8px; right: -10px; }
+
+  /* Inside-card flowers (no negative offset) */
+  .deco-flower.in-tr { top: 8px; right: 8px; }
+  .deco-flower.in-br { bottom: 8px; right: 8px; }
+  .deco-flower.in-bl { bottom: 8px; left: 8px; }
+
+  /* Soft transparency for inside flowers */
+  .deco-flower.faded { opacity: 0.45; }
+
+  /* Branch decorations */
+  .deco-branch {
+    position: absolute;
+    pointer-events: none;
+    z-index: 0;
+    width: 130px; height: 60px;
+    opacity: 0.55;
+  }
+  .deco-branch.tl { top: -16px; left: -20px; transform: rotate(-12deg); }
+  .deco-branch.tr { top: -16px; right: -20px; transform: rotate(192deg); }
+  .deco-branch.br { bottom: -10px; right: -10px; transform: rotate(178deg); }
+  .deco-branch.bl { bottom: -10px; left: -10px; transform: rotate(8deg); }
+
+  /* Section divider with flower */
+  .flower-divider {
+    display: flex; align-items: center; gap: 12px;
+    margin: 14px 0 18px;
+    color: var(--pink-300);
+  }
+  .flower-divider::before,
+  .flower-divider::after {
+    content: ''; flex: 1; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(236, 72, 153, 0.3), transparent);
+  }
+  .flower-divider svg { width: 26px; height: 26px; animation: flower-spin 12s linear infinite; }
+
   @media (max-width: 380px) {
     .hero-title { font-size: 26px; }
     .type-card { padding: 18px 14px; }
     .card-icon, .vinyl { width: 46px; height: 46px; }
     .logo-name { font-size: 20px; letter-spacing: 3px; }
+    .deco-flower.lg { width: 36px; height: 36px; }
+    .deco-branch { width: 100px; height: 48px; }
   }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.001s !important; transition-duration: 0.001s !important; }
@@ -920,6 +981,46 @@
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round" fill="none"/>
       <path d="M14 2v6h6M9 14h6M9 18h6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
     </symbol>
+
+    <!-- Sakura flower (5 petals + golden center) -->
+    <symbol id="sakura" viewBox="0 0 40 40">
+      <defs>
+        <radialGradient id="sgrad" cx="50%" cy="50%" r="50%">
+          <stop offset="0%" stop-color="#FFE4EC"/>
+          <stop offset="60%" stop-color="#FFCCE0"/>
+          <stop offset="100%" stop-color="#f9a8d4"/>
+        </radialGradient>
+      </defs>
+      <g transform="translate(20 20)">
+        <g fill="url(#sgrad)" stroke="#ec4899" stroke-width="0.4" stroke-opacity="0.5">
+          <path d="M0,-12 C-3,-9 -4,-5 0,-2 C4,-5 3,-9 0,-12 Z" transform="rotate(0)"/>
+          <path d="M0,-12 C-3,-9 -4,-5 0,-2 C4,-5 3,-9 0,-12 Z" transform="rotate(72)"/>
+          <path d="M0,-12 C-3,-9 -4,-5 0,-2 C4,-5 3,-9 0,-12 Z" transform="rotate(144)"/>
+          <path d="M0,-12 C-3,-9 -4,-5 0,-2 C4,-5 3,-9 0,-12 Z" transform="rotate(216)"/>
+          <path d="M0,-12 C-3,-9 -4,-5 0,-2 C4,-5 3,-9 0,-12 Z" transform="rotate(288)"/>
+        </g>
+        <circle cx="0" cy="0" r="2.5" fill="#fbbf24"/>
+        <g fill="#f59e0b" opacity="0.7">
+          <circle cx="0" cy="-4.5" r="0.8"/>
+          <circle cx="4.3" cy="-1.4" r="0.8"/>
+          <circle cx="2.6" cy="3.6" r="0.8"/>
+          <circle cx="-2.6" cy="3.6" r="0.8"/>
+          <circle cx="-4.3" cy="-1.4" r="0.8"/>
+        </g>
+      </g>
+    </symbol>
+
+    <!-- Sakura branch (decorative) -->
+    <symbol id="sakura-branch" viewBox="0 0 120 60">
+      <path d="M0,40 Q30,20 60,30 T120,15" stroke="#7c4a3a" stroke-width="1.5" fill="none" opacity="0.5" stroke-linecap="round"/>
+      <path d="M30,28 Q35,20 42,22" stroke="#7c4a3a" stroke-width="1" fill="none" opacity="0.4"/>
+      <path d="M75,22 Q80,16 88,18" stroke="#7c4a3a" stroke-width="1" fill="none" opacity="0.4"/>
+      <use href="#sakura" x="-10" y="32" width="22" height="22"/>
+      <use href="#sakura" x="20" y="14" width="18" height="18"/>
+      <use href="#sakura" x="48" y="22" width="20" height="20"/>
+      <use href="#sakura" x="78" y="10" width="16" height="16"/>
+      <use href="#sakura" x="100" y="6" width="18" height="18"/>
+    </symbol>
   </defs>
 </svg>
 
@@ -940,6 +1041,10 @@
   </div>
 
   <div class="hero reveal">
+    <svg class="deco-branch tl"><use href="#sakura-branch"/></svg>
+    <svg class="deco-branch br"><use href="#sakura-branch"/></svg>
+    <svg class="deco-flower lg tr" style="animation-delay:0.5s"><use href="#sakura"/></svg>
+    <svg class="deco-flower md bl" style="animation-delay:1.2s"><use href="#sakura"/></svg>
     <div class="hero-content">
       <div class="hero-badge">Artificial Intelligence Solutions</div>
       <div class="hero-title">Ovozni <em>matnga</em><br>aylantirish</div>
@@ -948,10 +1053,15 @@
   </div>
 
   <div class="reveal">
-    <div class="section-label">Fayl turini tanlang</div>
+    <div class="flower-divider">
+      <svg><use href="#sakura"/></svg>
+      <span style="font-family:'Manrope',sans-serif;font-size:11px;font-weight:800;letter-spacing:2px;text-transform:uppercase;color:var(--pink-600);">Fayl turini tanlang</span>
+      <svg><use href="#sakura"/></svg>
+    </div>
     <div class="type-grid">
       <div class="type-card selected" onclick="selectType(this,'file')" data-type="file">
         <div class="card-glow"></div>
+        <svg class="deco-flower sm in-tr faded" style="animation-delay:0.2s"><use href="#sakura"/></svg>
         <div class="vinyl">
           <div class="vinyl-label"></div>
           <div class="vinyl-sheen"></div>
@@ -962,6 +1072,7 @@
       </div>
       <div class="type-card" onclick="selectType(this,'video')" data-type="video">
         <div class="card-glow"></div>
+        <svg class="deco-flower sm in-tr faded" style="animation-delay:0.7s"><use href="#sakura"/></svg>
         <div class="card-icon icon-rose"><svg><use href="#i-video"/></svg></div>
         <div class="card-title">Video fayl</div>
         <div class="card-sub">MP4, MKV, AVI, dumaloq video xabarlar</div>
@@ -969,6 +1080,7 @@
       </div>
       <div class="type-card" onclick="selectType(this,'youtube')" data-type="youtube">
         <div class="card-glow"></div>
+        <svg class="deco-flower sm in-tr faded" style="animation-delay:1.0s"><use href="#sakura"/></svg>
         <div class="card-icon icon-peach"><svg><use href="#i-link"/></svg></div>
         <div class="card-title">YouTube / Instagram</div>
         <div class="card-sub">YouTube, TikTok, Instagram havolalari</div>
@@ -976,6 +1088,7 @@
       </div>
       <div class="type-card" onclick="selectType(this,'pdf')" data-type="pdf">
         <div class="card-glow"></div>
+        <svg class="deco-flower sm in-tr faded" style="animation-delay:1.5s"><use href="#sakura"/></svg>
         <div class="card-icon icon-blossom"><svg><use href="#i-pdf"/></svg></div>
         <div class="card-title">PDF → Ovoz</div>
         <div class="card-sub">PDF faylni o'qib, ovozli formatga aylantiradi</div>
@@ -986,6 +1099,8 @@
 
   <div class="upload-zone reveal" id="uploadZone">
     <input type="file" id="fileInput" accept="audio/*,video/*" onchange="handleFile(this)">
+    <svg class="deco-flower md tl"><use href="#sakura"/></svg>
+    <svg class="deco-flower sm br" style="animation-delay:0.8s"><use href="#sakura"/></svg>
     <div class="upload-icon"><svg><use href="#i-upload"/></svg></div>
     <div class="upload-title">Fayl yuklash</div>
     <div class="upload-hint">Bosing yoki sudrab tashlang<br><span>Audio yoki video faylni tanlang</span></div>
@@ -998,6 +1113,8 @@
   </div>
 
   <div class="url-zone" id="urlZone">
+    <svg class="deco-flower sm tr" style="animation-delay:0.4s"><use href="#sakura"/></svg>
+    <svg class="deco-flower sm bl faded" style="animation-delay:1s"><use href="#sakura"/></svg>
     <div class="url-label">YouTube, TikTok, Instagram yoki boshqa video havolasi</div>
     <div class="url-row">
       <input class="url-input" id="urlInput" type="url" placeholder="https://instagram.com/reel/... yoki youtu.be/...">
@@ -1006,6 +1123,10 @@
   </div>
 
   <div class="processing" id="processing">
+    <svg class="deco-flower md tl"><use href="#sakura"/></svg>
+    <svg class="deco-flower md tr" style="animation-delay:1s"><use href="#sakura"/></svg>
+    <svg class="deco-flower sm bl" style="animation-delay:0.5s"><use href="#sakura"/></svg>
+    <svg class="deco-flower sm br" style="animation-delay:1.4s"><use href="#sakura"/></svg>
     <div class="liquid-loader">
       <div class="blob blob-1"></div>
       <div class="blob blob-2"></div>
@@ -1016,6 +1137,7 @@
   </div>
 
   <div class="result-area" id="resultArea">
+    <svg class="deco-flower sm tr" style="animation-delay:0.3s"><use href="#sakura"/></svg>
     <div class="result-head">
       <div class="result-title">✅ Matn tayyor!</div>
       <button class="copy-btn" onclick="copyText()">Nusxa</button>
@@ -1041,6 +1163,9 @@
     </div>
   </div>
 
+  <div class="flower-divider" style="margin-top:24px">
+    <svg><use href="#sakura"/></svg>
+  </div>
   <div class="footer reveal"><span>MNSM</span> &nbsp;·&nbsp; <span>Premium AI</span></div>
 
 </div>
