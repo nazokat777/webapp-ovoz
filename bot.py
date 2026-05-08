@@ -228,6 +228,42 @@ def convert_to_wav(input_path):
     return wav_path
 
 
+def _prepare_cookies_file():
+    """YOUTUBE_COOKIES env'dan cookies.txt yaratadi (agar bo'lsa)."""
+    cookies_text = os.getenv("YOUTUBE_COOKIES", "").strip()
+    if not cookies_text:
+        return None
+    cookies_path = os.path.join(tempfile.gettempdir(), "yt_cookies.txt")
+    try:
+        with open(cookies_path, "w", encoding="utf-8") as f:
+            f.write(cookies_text)
+        return cookies_path
+    except Exception as e:
+        logging.warning(f"Cookies fayl yaratishda xato: {e}")
+        return None
+
+
+def _run_yt_dlp(url, output_template, use_cookies=True, player_client=None):
+    """yt-dlp ni har xil parametrlar bilan chaqiradi. Returnlar (returncode, stderr)."""
+    cmd = [
+        "yt-dlp", "-x",
+        "--audio-format", "wav",
+        "--no-playlist",
+        "--no-warnings",
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    ]
+    if use_cookies:
+        cookies_path = _prepare_cookies_file()
+        if cookies_path:
+            cmd.extend(["--cookies", cookies_path])
+    if player_client:
+        cmd.extend(["--extractor-args", f"youtube:player_client={player_client}"])
+    cmd.extend(["-o", output_template, url])
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result
+
+
 def download_audio_from_url(url):
     if not have_cmd("yt-dlp"):
         raise Exception("yt-dlp o'rnatilmagan. Terminalda: pip install -U yt-dlp")
@@ -236,23 +272,58 @@ def download_audio_from_url(url):
 
     tmp_dir = tempfile.mkdtemp()
     output_template = os.path.join(tmp_dir, "audio.%(ext)s")
+    is_youtube = bool(re.search(r"(youtube\.com|youtu\.be)", url, re.I))
     try:
-        result = subprocess.run([
-            "yt-dlp", "-x",
-            "--audio-format", "wav",
-            "--no-playlist",
-            "--no-warnings",
-            "-o", output_template, url
-        ], capture_output=True, text=True)
+        # YouTube uchun bir nechta strategiya — birortasi ishlasa bas
+        # 1) cookies bilan (eng ishonchli — agar YOUTUBE_COOKIES env bor bo'lsa)
+        # 2) android player_client (ba'zan bot detection'ni chetlab o'tadi)
+        # 3) web_safari player_client
+        # 4) cookies'siz oddiy (default)
+        attempts = []
+        if is_youtube:
+            attempts = [
+                {"use_cookies": True,  "player_client": None},
+                {"use_cookies": True,  "player_client": "android"},
+                {"use_cookies": False, "player_client": "android,web"},
+                {"use_cookies": False, "player_client": "web_safari"},
+                {"use_cookies": False, "player_client": None},
+            ]
+        else:
+            attempts = [
+                {"use_cookies": True,  "player_client": None},
+                {"use_cookies": False, "player_client": None},
+            ]
+
+        result = None
+        last_stderr = ""
+        for i, attempt in enumerate(attempts):
+            logging.info(f"yt-dlp urinish #{i+1}: cookies={attempt['use_cookies']}, player={attempt['player_client']}")
+            result = _run_yt_dlp(url, output_template, **attempt)
+            if result.returncode == 0:
+                logging.info(f"✅ yt-dlp urinish #{i+1} muvaffaqiyatli")
+                break
+            last_stderr = (result.stderr or "").strip()
+            # Bo'sh bot detection xatosi bo'lsa keyingi urinish; boshqa xato bo'lsa to'xtatamiz
+            low = last_stderr.lower()
+            if not ("sign in" in low or "not a bot" in low or "confirm" in low or
+                    "http error 403" in low or "forbidden" in low):
+                break
 
         if result.returncode != 0:
-            stderr = (result.stderr or "").strip()
+            stderr = last_stderr
             low = stderr.lower()
+            if "sign in" in low or "not a bot" in low or "confirm" in low:
+                raise Exception(
+                    "YouTube cloud serverni bot deb bloklayapti. "
+                    "Yechim: brauzerdan cookies eksport qilib, Railway'ga "
+                    "YOUTUBE_COOKIES env variable sifatida joylang. "
+                    "Yo'riqnoma: @Nazokat_571 ga murojaat qiling."
+                )
             if "instagram" in url.lower():
                 if "login" in low or "rate" in low or "cookies" in low or "private" in low:
                     raise Exception(
                         "Instagram bu havolaga login yoki cookies talab qilyapti. "
-                        "Iltimos public post yuboring (yoki yt-dlp uchun cookies sozlang)."
+                        "Iltimos public post yuboring."
                     )
                 if "unsupported url" in low:
                     raise Exception("Instagram havolasi tan olinmadi. Public post URL yuboring.")
@@ -261,7 +332,7 @@ def download_audio_from_url(url):
             if "unsupported url" in low:
                 raise Exception("Bu havola turi qo'llab-quvvatlanmaydi.")
             if "http error 403" in low or "forbidden" in low:
-                raise Exception("Manba 403 qaytardi. yt-dlp ni yangilang: pip install -U yt-dlp")
+                raise Exception("Manba 403 qaytardi. yt-dlp ni yangilang yoki cookies sozlang.")
             err_msg = stderr[:300] or "noma'lum xato"
             raise Exception(f"yt-dlp xatosi: {err_msg}")
 
