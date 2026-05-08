@@ -1234,7 +1234,8 @@
   let streamRef = null;
   let recordTimeout = null;
   let audioCtx = null, analyser = null, vizRaf = null;
-  const MAX_RECORDING_MS = 12000;
+  // Cheklovsiz — foydalanuvchi o'zi to'xtatadi (uchratish: ko'p soniya)
+  const MAX_RECORDING_MS = 0;
 
   function setLang(lang) {
     currentLang = lang;
@@ -1251,7 +1252,7 @@
     if (recording) {
       btn.innerHTML = '<span>■ To‘xtatish</span>';
       btn.classList.add('recording');
-      if (hint) hint.innerHTML = '<span>Yozilmoqda... 12 soniyadan keyin avtomatik to‘xtaydi</span>';
+      if (hint) hint.innerHTML = '<span>Yozilmoqda... To‘xtatish uchun tugmani bosing</span>';
       viz.classList.add('visible');
     } else {
       btn.innerHTML = '<span>🎙 Mikrofonga yozish</span>';
@@ -1352,9 +1353,11 @@
         if (streamRef) { streamRef.getTracks().forEach(t => t.stop()); streamRef = null; }
       };
       mediaRecorder.start();
-      recordTimeout = setTimeout(() => {
-        if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
-      }, MAX_RECORDING_MS);
+      if (MAX_RECORDING_MS > 0) {
+        recordTimeout = setTimeout(() => {
+          if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
+        }, MAX_RECORDING_MS);
+      }
       updateRecordingUI(true);
       startVisualizer(stream);
       if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.impactOccurred('medium'); } catch (e) {} }

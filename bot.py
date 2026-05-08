@@ -457,17 +457,14 @@ def extract_pdf_text(pdf_path):
         raise Exception(f"PDF o'qib bo'lmadi: {e}")
 
 
-def make_tts(text, lang=None, max_chars=4500):
-    """Matnni ovozli MP3 ga aylantiradi (edge-tts).
-    Uzun matnni qisqartiradi (faqat preview audio sifatida)."""
+def make_tts(text, lang=None):
+    """Matnni ovozli MP3 ga aylantiradi (edge-tts) — vaqt cheklovsiz."""
     if not text or not text.strip():
         return None
     if lang is None:
         lang = detect_lang(text)
     voice = VOICES.get(lang, VOICES["uz"])
     snippet = text.strip()
-    if len(snippet) > max_chars:
-        snippet = snippet[:max_chars].rsplit('.', 1)[0] + "..."
     out_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
 
     async def _run():
