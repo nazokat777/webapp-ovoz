@@ -966,31 +966,32 @@
     to { transform: rotate(360deg); }
   }
 
-  .deco-flower.tl { top: -8px; left: -10px; }
-  .deco-flower.tr { top: -10px; right: -8px; }
-  .deco-flower.bl { bottom: -10px; left: -8px; }
-  .deco-flower.br { bottom: -8px; right: -10px; }
+  /* Burchak gullari — ichkari joylashgan (overflow:hidden parent ichida ham ko'rinadi) */
+  .deco-flower.tl { top: 8px;  left: 8px; }
+  .deco-flower.tr { top: 8px;  right: 8px; }
+  .deco-flower.bl { bottom: 8px; left: 8px; }
+  .deco-flower.br { bottom: 8px; right: 8px; }
 
-  /* Inside-card flowers (no negative offset) */
+  /* Inside-card flowers (alias) */
   .deco-flower.in-tr { top: 8px; right: 8px; }
   .deco-flower.in-br { bottom: 8px; right: 8px; }
   .deco-flower.in-bl { bottom: 8px; left: 8px; }
 
   /* Soft transparency for inside flowers */
-  .deco-flower.faded { opacity: 0.45; }
+  .deco-flower.faded { opacity: 0.55; }
 
-  /* Branch decorations */
+  /* Branch decorations — kichik negative bilan, lekin parent overflow buni ko'radi */
   .deco-branch {
     position: absolute;
     pointer-events: none;
-    z-index: 0;
-    width: 130px; height: 60px;
-    opacity: 0.55;
+    z-index: 1;
+    width: 140px; height: 65px;
+    opacity: 0.7;
   }
-  .deco-branch.tl { top: -16px; left: -20px; transform: rotate(-12deg); }
-  .deco-branch.tr { top: -16px; right: -20px; transform: rotate(192deg); }
-  .deco-branch.br { bottom: -10px; right: -10px; transform: rotate(178deg); }
-  .deco-branch.bl { bottom: -10px; left: -10px; transform: rotate(8deg); }
+  .deco-branch.tl { top: 4px; left: 0; transform: rotate(-12deg); transform-origin: top left; }
+  .deco-branch.tr { top: 4px; right: 0; transform: rotate(192deg); transform-origin: top right; }
+  .deco-branch.br { bottom: 4px; right: 0; transform: rotate(178deg); transform-origin: bottom right; }
+  .deco-branch.bl { bottom: 4px; left: 0; transform: rotate(8deg); transform-origin: bottom left; }
 
   /* Section divider with flower */
   .flower-divider {
