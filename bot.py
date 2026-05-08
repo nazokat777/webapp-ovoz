@@ -29,12 +29,22 @@ from telegram.ext import (
 )
 from aiohttp import web
 import edge_tts
+import speech_recognition as sr
 
 # TTS voices
 VOICES = {
     "uz": "uz-UZ-MadinaNeural",
     "ru": "ru-RU-SvetlanaNeural",
 }
+
+# STT lang codes (Google Speech uchun)
+GOOGLE_LANG = {
+    "ru": "ru-RU",
+    "uz": "uz-UZ",
+    "en": "en-US",
+}
+
+_sr_recognizer = sr.Recognizer()
 
 BOT_TOKEN   = os.getenv("BOT_TOKEN", "8502384684:AAETKbx4YBtiQ9W7PRTWUeVumwwnG-lH9R8")
 MUXLISA_KEY = os.getenv("MUXLISA_KEY", "UYaezERZPBO7pkJj4wzttq5eV90cGdFrI8XxGyCl")
@@ -226,9 +236,35 @@ def _do_muxlisa_request(path, timeout, language="uz"):
         )
 
 
+def google_speech_chunk(path, lang_code="ru-RU"):
+    """Google Speech API (bepul) orqali transcribe."""
+    with sr.AudioFile(path) as source:
+        audio = _sr_recognizer.record(source)
+    try:
+        return (_sr_recognizer.recognize_google(audio, language=lang_code) or "").strip()
+    except sr.UnknownValueError:
+        return ""  # bo'lakda nutq yo'q yoki tan olinmadi
+
+
+def _transcribe_chunk_google(path, max_retries=3, lang_code="ru-RU"):
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            return google_speech_chunk(path, lang_code=lang_code)
+        except sr.RequestError as e:
+            last_error = Exception(f"Google Speech tarmoq xatosi: {e}")
+        except Exception as e:
+            last_error = e
+        if attempt < max_retries - 1:
+            time.sleep(1 + attempt)
+    raise last_error or Exception("Google Speech noma'lum xato")
+
+
 def transcribe_chunk(path, max_retries=3, language="uz"):
-    """Bo'lakni transcribe qiladi. Tarmoq/server xatolarida avtomatik 3 marta urinadi.
-    Fatal xatolar (balans/auth) uchun retry yo'q — darhol qaytaradi."""
+    """Bo'lakni transcribe qiladi. uz -> Muxlisa, ru -> Google Speech."""
+    if language == "ru":
+        return _transcribe_chunk_google(path, max_retries=max_retries, lang_code="ru-RU")
+    # default: uz -> Muxlisa
     last_error = None
     timeouts = [60, 90, 120]
     for attempt in range(max_retries):
@@ -598,7 +634,7 @@ def webapp_keyboard(chat_id=None):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Assalomu alaykum, *{}*!\n\n"
-        "◆ *MNSM — AI Specialist*\n"
+        "◆ *MNSM*\n"
         "Men audio, video va hatto krugli videolarni matnga aylantirib beradigan aqlli bot.\n\n"
         "📌 *Nima yuborsa bo'ladi:*\n"
         "• 🎤 Ovozli xabar\n"
