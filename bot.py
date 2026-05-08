@@ -13,7 +13,6 @@ import time
 import base64
 import tempfile
 import subprocess
-import math
 import shutil
 import requests
 import re
@@ -38,9 +37,11 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "https://botch-engaging-mustang.ngrok-free.
 HTTP_PORT  = int(os.getenv("HTTP_PORT", 8000))
 
 MUXLISA_URL   = "https://service.muxlisa.uz/api/v2/stt"
-# Muxlisa cheklovi: 60 sek davomiylik. Xavfsizlik buferi bilan 50 sek bo'laklar.
-# 1 soatlik audio = ~72 bo'lak. Har biri Muxlisa'ga alohida yuboriladi.
+# Muxlisa cheklovi: 60 sek. CHUNK_SECONDS = 50 sek (xavfsizlik bufer).
+# OVERLAP_SECONDS = 2 sek — bo'lak chegarasidagi so'zlar kesilmasligi uchun
+# har bir bo'lak oldingisining oxirgi 2 sek bilan ustma-ust tushadi.
 CHUNK_SECONDS = 50
+OVERLAP_SECONDS = 2
 
 HERE       = os.path.dirname(os.path.abspath(__file__))
 INDEX_HTML = os.path.join(HERE, "index.html")
@@ -166,22 +167,44 @@ def get_duration(path):
         return 0
 
 
+def fmt_time(seconds):
+    """Sekundlarni 'M:SS' yoki 'H:MM:SS' formatga aylantiradi."""
+    s = int(seconds)
+    h, rem = divmod(s, 3600)
+    m, s = divmod(rem, 60)
+    if h > 0:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
 def split_audio(wav_path):
+    """Audio'ni overlap bilan bo'laklarga ajratadi.
+
+    Returns list of (chunk_path, start_sec, end_sec).
+    """
     duration = get_duration(wav_path)
     if duration <= CHUNK_SECONDS:
-        return [wav_path]
+        return [(wav_path, 0.0, duration)]
     chunks = []
-    n_chunks = math.ceil(duration / CHUNK_SECONDS)
-    for i in range(n_chunks):
+    step = CHUNK_SECONDS - OVERLAP_SECONDS  # masalan 50 - 2 = 48 sek
+    i = 0
+    while True:
+        start = i * step
+        if start >= duration:
+            break
+        end = min(start + CHUNK_SECONDS, duration)
         chunk_path = wav_path + f"_part{i}.wav"
-        start = i * CHUNK_SECONDS
         subprocess.run([
             "ffmpeg", "-y", "-i", wav_path,
             "-ss", str(start), "-t", str(CHUNK_SECONDS),
             "-ar", "16000", "-ac", "1",
             "-acodec", "pcm_s16le", chunk_path
         ], check=True, capture_output=True)
-        chunks.append(chunk_path)
+        chunks.append((chunk_path, float(start), float(end)))
+        i += 1
+        # juda qisqa qoldiq bo'lak bo'lsa to'xtaymiz (overlap'ning o'zi)
+        if end >= duration:
+            break
     return chunks
 
 
@@ -220,27 +243,29 @@ def transcribe(file_path, progress_cb=None):
     if progress_cb:
         try: progress_cb('split', 0, 0)
         except Exception: pass
-    chunks = split_audio(wav_path)
+    chunks = split_audio(wav_path)  # list of (chunk_path, start_sec, end_sec)
     total = len(chunks)
     results = []
-    error_count = 0
+    failed_segments = []   # (segment_no, start_sec, end_sec)
     consecutive_errors = 0
     fatal_msg = None
     last_processed = 0
+    last_ok_end = 0.0
     try:
-        for i, chunk in enumerate(chunks):
+        for i, (chunk_path, start_sec, end_sec) in enumerate(chunks):
             last_processed = i
             if progress_cb:
                 try: progress_cb('chunk', i + 1, total)
                 except Exception: pass
             try:
-                text = transcribe_chunk(chunk)
+                text = transcribe_chunk(chunk_path)
                 if text:
                     results.append(text)
+                last_ok_end = end_sec
                 consecutive_errors = 0
             except Exception as e:
-                logging.error(f"Bo'lak {i+1} xatosi: {e}")
-                error_count += 1
+                logging.error(f"Bo'lak {i+1} ({fmt_time(start_sec)}-{fmt_time(end_sec)}) xatosi: {e}")
+                failed_segments.append((i + 1, start_sec, end_sec))
                 consecutive_errors += 1
                 err_str = str(e)
                 if _is_fatal_error(err_str):
@@ -253,29 +278,46 @@ def transcribe(file_path, progress_cb=None):
                     fatal_msg = "Ketma-ket 3 ta bo'lak xato qaytardi — to'xtatildi."
                     break
             finally:
-                if chunk != wav_path and os.path.exists(chunk):
-                    os.remove(chunk)
-        # Agar erta to'xtagan bo'lsak, qolgan vaqtinchalik bo'laklarni tozalash
+                if chunk_path != wav_path and os.path.exists(chunk_path):
+                    try: os.remove(chunk_path)
+                    except Exception: pass
+        # Erta to'xtagan bo'lsak — qolgan vaqtinchalik bo'laklarni tozalash
         if fatal_msg:
             for j in range(last_processed + 1, total):
-                rest = chunks[j]
+                rest = chunks[j][0]
                 if rest != wav_path and os.path.exists(rest):
                     try: os.remove(rest)
                     except Exception: pass
     finally:
         if wav_path != file_path and os.path.exists(wav_path):
-            os.remove(wav_path)
+            try: os.remove(wav_path)
+            except Exception: pass
 
-    text_part = " ".join(results) if results else ""
+    text_part = " ".join(results).strip() if results else ""
+
+    # Diagnostika tuzish — qaysi vaqt oraliqlari yo'qoldi
+    diag_lines = []
+    if failed_segments:
+        diag_lines.append(f"\n\n⚠️ {len(failed_segments)} ta bo'lak qayta ishlanmadi:")
+        for seg in failed_segments[:15]:
+            s, e = seg[1], seg[2]
+            diag_lines.append(f"• {fmt_time(s)} - {fmt_time(e)}")
+        if len(failed_segments) > 15:
+            diag_lines.append(f"...va yana {len(failed_segments) - 15} ta")
+        diag_lines.append("Bu vaqtlarni audiodan qayta tinglab matnni qo'l bilan to'ldirishingiz mumkin.")
+
     if fatal_msg:
-        if text_part:
-            return f"{text_part}\n\n⚠️ {fatal_msg}\n(Matn {last_processed + 1 - error_count}/{total} bo'lakdan olindi.)"
-        return f"⚠️ {fatal_msg}"
-    if not text_part:
+        diag_lines.append(f"\n⛔ {fatal_msg}")
+        if results:
+            diag_lines.append(f"📍 Matn 0:00 dan {fmt_time(last_ok_end)} gacha olindi.")
+
+    diag = "\n".join(diag_lines)
+
+    if not text_part and not diag:
         return "Matn aniqlanmadi."
-    if error_count:
-        return f"{text_part}\n\nℹ️ {error_count}/{total} bo'lak xato bo'ldi."
-    return text_part
+    if not text_part:
+        return diag.lstrip()
+    return text_part + diag
 
 
 FONT_CANDIDATES = [
