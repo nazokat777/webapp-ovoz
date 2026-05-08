@@ -1048,6 +1048,33 @@
     tg.setHeaderColor('#FFF1F0'); tg.setBackgroundColor('#FFF1F0');
   }
 
+  // Telegram MainButton — har doim WebApp pastida ko'rinadi
+  function setupMainButton() {
+    if (!tg || !tg.MainButton) return;
+    try {
+      tg.MainButton.setParams({
+        text: '🎙 MIKROFONGA YOZISH',
+        color: '#ec4899',
+        text_color: '#ffffff',
+        is_visible: true,
+        is_active: true,
+      });
+      tg.MainButton.onClick(() => {
+        if (typeof toggleRecording === 'function') toggleRecording();
+      });
+    } catch (e) { console.warn('MainButton init failed', e); }
+  }
+  function setMainBtnRecording(rec) {
+    if (!tg || !tg.MainButton) return;
+    try {
+      if (rec) {
+        tg.MainButton.setParams({ text: '■ TO\'XTATISH', color: '#dc2626' });
+      } else {
+        tg.MainButton.setParams({ text: '🎙 MIKROFONGA YOZISH', color: '#ec4899' });
+      }
+    } catch (e) {}
+  }
+
   const toastWrap = document.getElementById('toastWrap');
   function showToast(msg, type = 'info', ms = 4000) {
     const t = document.createElement('div');
@@ -1228,7 +1255,11 @@
       if (hint) hint.innerHTML = '<span>Audio yoki video faylni tanlang</span>';
       viz.classList.remove('visible');
     }
+    setMainBtnRecording(recording);
   }
+
+  // MainButton'ni init qilish
+  setupMainButton();
 
   function startVisualizer(stream) {
     try {
