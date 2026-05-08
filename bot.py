@@ -186,13 +186,15 @@ def split_audio(wav_path):
 
 
 def transcribe_chunk(path):
+    # Bo'lak 50 sek audio — Muxlisa odatda 5-15 sekundda javob beradi.
+    # 90 sek timeout: agar shuncha vaqtda javob bo'lmasa, server osilgan, keyingisiga o'tamiz.
     with open(path, "rb") as f:
         response = requests.post(
             MUXLISA_URL,
             headers={"x-api-key": MUXLISA_KEY},
             files=[("audio", ("audio.wav", f, "audio/wav"))],
             data={},
-            timeout=600,
+            timeout=90,
         )
     if response.status_code == 200:
         return response.json().get("text", "").strip()
