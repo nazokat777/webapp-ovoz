@@ -1154,14 +1154,20 @@ async def run_http_server():
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', HTTP_PORT)
     await site.start()
-    print(f"HTTP server started on port {HTTP_PORT}")
+    print(f"✅ HTTP server started on port {HTTP_PORT} (0.0.0.0)", flush=True)
     await asyncio.Event().wait()
 
 
 def run_http_server_thread():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_http_server())
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        print(f"[HTTP] Starting server thread, binding 0.0.0.0:{HTTP_PORT}", flush=True)
+        loop.run_until_complete(run_http_server())
+    except Exception as e:
+        import traceback
+        print(f"[HTTP] FATAL: {e}", flush=True)
+        traceback.print_exc()
 
 
 def main():
