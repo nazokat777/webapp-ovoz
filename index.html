@@ -1445,7 +1445,7 @@
   let lastTrail = 0;
   function spawnTrailPetal(x, y) {
     const now = performance.now();
-    if (now - lastTrail < 60) return;
+    if (now - lastTrail < 110) return;
     lastTrail = now;
     const p = document.createElement('div');
     p.className = 'trail-petal';
@@ -1467,8 +1467,11 @@
     }
   }, { passive: true });
 
-  // Click burst — bosgan joydan 8 ta gul atrofga uchadi
+  // Click burst — faqat bo'sh joylarda (input/upload/button'larga to'sqinlik qilmaslik uchun)
   document.addEventListener('pointerdown', e => {
+    if (e.target && e.target.closest && e.target.closest(
+      'input, button, [role="button"], .upload-zone, .url-zone, .lang-switch, .record-btn, .main-btn, .url-btn, .copy-btn, .vinyl, .card-icon, .pdf-card, .type-card'
+    )) return;
     const cx = e.clientX, cy = e.clientY;
     const N = 8;
     for (let i = 0; i < N; i++) {
