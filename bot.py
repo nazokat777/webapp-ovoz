@@ -197,6 +197,15 @@ def transcribe_chunk(path):
     raise Exception(f"Muxlisa xatosi: {response.status_code} - {response.text[:200]}")
 
 
+FATAL_KEYWORDS = ("balance", "insufficient", "credit", "payment", "quota",
+                  "limit reach", "unauthorized", "forbidden", "401", "402", "403")
+
+
+def _is_fatal_error(err_str):
+    s = err_str.lower()
+    return any(k in s for k in FATAL_KEYWORDS)
+
+
 def transcribe(file_path, progress_cb=None):
     """progress_cb(stage, current, total) — sync callback. stage: 'convert','split','chunk'."""
     if progress_cb:
@@ -210,8 +219,13 @@ def transcribe(file_path, progress_cb=None):
     chunks = split_audio(wav_path)
     total = len(chunks)
     results = []
+    error_count = 0
+    consecutive_errors = 0
+    fatal_msg = None
+    last_processed = 0
     try:
         for i, chunk in enumerate(chunks):
+            last_processed = i
             if progress_cb:
                 try: progress_cb('chunk', i + 1, total)
                 except Exception: pass
@@ -219,16 +233,45 @@ def transcribe(file_path, progress_cb=None):
                 text = transcribe_chunk(chunk)
                 if text:
                     results.append(text)
+                consecutive_errors = 0
             except Exception as e:
-                logging.error(f"Bo'lak {i} xatosi: {e}")
-                results.append(f"[Bo'lak {i+1} xatosi: {e}]")
+                logging.error(f"Bo'lak {i+1} xatosi: {e}")
+                error_count += 1
+                consecutive_errors += 1
+                err_str = str(e)
+                if _is_fatal_error(err_str):
+                    fatal_msg = (
+                        "Muxlisa hisobingizdagi balans tugagan yoki API kalit muammoli. "
+                        "Iltimos service.muxlisa.uz hisobingizni to'ldirib qayta urinib ko'ring."
+                    )
+                    break
+                if consecutive_errors >= 3:
+                    fatal_msg = "Ketma-ket 3 ta bo'lak xato qaytardi — to'xtatildi."
+                    break
             finally:
                 if chunk != wav_path and os.path.exists(chunk):
                     os.remove(chunk)
+        # Agar erta to'xtagan bo'lsak, qolgan vaqtinchalik bo'laklarni tozalash
+        if fatal_msg:
+            for j in range(last_processed + 1, total):
+                rest = chunks[j]
+                if rest != wav_path and os.path.exists(rest):
+                    try: os.remove(rest)
+                    except Exception: pass
     finally:
         if wav_path != file_path and os.path.exists(wav_path):
             os.remove(wav_path)
-    return " ".join(results) if results else "Matn aniqlanmadi."
+
+    text_part = " ".join(results) if results else ""
+    if fatal_msg:
+        if text_part:
+            return f"{text_part}\n\n⚠️ {fatal_msg}\n(Matn {last_processed + 1 - error_count}/{total} bo'lakdan olindi.)"
+        return f"⚠️ {fatal_msg}"
+    if not text_part:
+        return "Matn aniqlanmadi."
+    if error_count:
+        return f"{text_part}\n\nℹ️ {error_count}/{total} bo'lak xato bo'ldi."
+    return text_part
 
 
 def save_base64_audio(data, suffix='.webm'):
