@@ -640,7 +640,10 @@ def webapp_keyboard(chat_id=None):
         parts.append(f"user={chat_id}")
     url = f"{WEBAPP_URL}{sep}{'&'.join(parts)}"
     return ReplyKeyboardMarkup(
-        [[KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))]],
+        [
+            [KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))],
+            [KeyboardButton(text="/start"), KeyboardButton(text="/help")],
+        ],
         resize_keyboard=True,
     )
 
