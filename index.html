@@ -970,6 +970,60 @@
     margin-bottom: 8px;
   }
 
+  /* ── SIDE BRANCHES (sahifa chap va o'ng tomonida fixed) ── */
+  .side-branch {
+    position: fixed;
+    width: 220px; height: 100vh;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.55;
+  }
+  .side-branch.left  { top: 0; left: -40px; }
+  .side-branch.right { top: 0; right: -40px; transform: scaleX(-1); }
+  .side-branch::before, .side-branch::after {
+    content: ''; position: absolute; left: 0;
+    width: 100%; height: 70px;
+    background-image:
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 220 70'><path d='M0,40 Q60,18 120,32 T220,18' stroke='%237c4a3a' stroke-width='2' fill='none' opacity='0.7' stroke-linecap='round'/><path d='M40,33 Q44,24 52,26' stroke='%237c4a3a' stroke-width='1.2' fill='none' opacity='0.55'/><path d='M130,28 Q136,20 144,22' stroke='%237c4a3a' stroke-width='1.2' fill='none' opacity='0.55'/><circle cx='10' cy='42' r='6' fill='%23FFCCE0' stroke='%23ec4899' stroke-width='0.5' opacity='0.85'/><circle cx='10' cy='42' r='1.5' fill='%23fbbf24'/><circle cx='52' cy='28' r='7' fill='%23FFE4EC' stroke='%23ec4899' stroke-width='0.5' opacity='0.85'/><circle cx='52' cy='28' r='1.6' fill='%23fbbf24'/><circle cx='90' cy='34' r='8' fill='%23f9a8d4' stroke='%23ec4899' stroke-width='0.5' opacity='0.85'/><circle cx='90' cy='34' r='1.8' fill='%23fbbf24'/><circle cx='148' cy='24' r='6' fill='%23FFCCE0' stroke='%23ec4899' stroke-width='0.5' opacity='0.85'/><circle cx='148' cy='24' r='1.5' fill='%23fbbf24'/><circle cx='190' cy='20' r='7' fill='%23FFE4EC' stroke='%23ec4899' stroke-width='0.5' opacity='0.85'/><circle cx='190' cy='20' r='1.6' fill='%23fbbf24'/></svg>");
+    background-size: 220px 70px; background-repeat: no-repeat;
+    filter: drop-shadow(0 2px 8px rgba(252, 165, 207, 0.4));
+  }
+  .side-branch::before { top: 8%; }
+  .side-branch::after  { top: 56%; transform: scaleY(-1); }
+
+  /* ── MOUSE TRAIL PETAL ── */
+  .trail-petal {
+    position: fixed;
+    width: 14px; height: 14px;
+    pointer-events: none;
+    z-index: 9990;
+    opacity: 0.9;
+    background: radial-gradient(ellipse 50% 100% at 50% 0%, #FFE4EC 0%, #FFCCE0 60%, #f9a8d4 100%);
+    border-radius: 100% 0 60% 0;
+    filter: drop-shadow(0 1px 4px rgba(236, 72, 153, 0.6));
+    animation: trail-fade 1.2s ease-out forwards;
+  }
+  @keyframes trail-fade {
+    0%   { transform: rotate(var(--r, 0deg)) scale(1); opacity: 0.9; }
+    100% { transform: rotate(calc(var(--r, 0deg) + 360deg)) translateY(40px) scale(0.3); opacity: 0; }
+  }
+
+  /* ── PETAL BURST (click) ── */
+  .burst-petal {
+    position: fixed;
+    width: 16px; height: 16px;
+    pointer-events: none;
+    z-index: 9991;
+    background: radial-gradient(ellipse 50% 100% at 50% 0%, #FFE4EC 0%, #FFCCE0 60%, #ec4899 100%);
+    border-radius: 100% 0 60% 0;
+    filter: drop-shadow(0 2px 6px rgba(236, 72, 153, 0.7));
+    animation: burst 0.9s cubic-bezier(.16,1,.3,1) forwards;
+  }
+  @keyframes burst {
+    0%   { transform: translate(-50%, -50%) rotate(0deg) scale(0.4); opacity: 1; }
+    100% { transform: translate(calc(-50% + var(--bx, 0px)), calc(-50% + var(--by, 0px))) rotate(720deg) scale(1.2); opacity: 0; }
+  }
+
   /* ── DECORATIVE SAKURA FLOWERS ── */
   .deco-flower {
     position: absolute;
@@ -1046,6 +1100,8 @@
 <body>
 
 <div class="bg-aurora"></div>
+<div class="side-branch left"></div>
+<div class="side-branch right"></div>
 <div class="petals" id="petals"></div>
 <div class="spotlight" id="spotlight"></div>
 <div class="toast-wrap" id="toastWrap"></div>
@@ -1384,9 +1440,52 @@
     document.documentElement.style.setProperty('--mx', x + 'px');
     document.documentElement.style.setProperty('--my', y + 'px');
   }
-  document.addEventListener('mousemove', e => moveSpotlight(e.clientX, e.clientY));
+
+  // Trail petals — kursor/barmoq harakatida gulchalar iz qoldiradi
+  let lastTrail = 0;
+  function spawnTrailPetal(x, y) {
+    const now = performance.now();
+    if (now - lastTrail < 60) return;
+    lastTrail = now;
+    const p = document.createElement('div');
+    p.className = 'trail-petal';
+    p.style.left = (x - 7) + 'px';
+    p.style.top = (y - 7) + 'px';
+    p.style.setProperty('--r', (Math.random() * 360) + 'deg');
+    document.body.appendChild(p);
+    setTimeout(() => p.remove(), 1300);
+  }
+
+  document.addEventListener('mousemove', e => {
+    moveSpotlight(e.clientX, e.clientY);
+    spawnTrailPetal(e.clientX, e.clientY);
+  });
   document.addEventListener('touchmove', e => {
-    if (e.touches[0]) moveSpotlight(e.touches[0].clientX, e.touches[0].clientY);
+    if (e.touches[0]) {
+      moveSpotlight(e.touches[0].clientX, e.touches[0].clientY);
+      spawnTrailPetal(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  }, { passive: true });
+
+  // Click burst — bosgan joydan 8 ta gul atrofga uchadi
+  document.addEventListener('pointerdown', e => {
+    const cx = e.clientX, cy = e.clientY;
+    const N = 8;
+    for (let i = 0; i < N; i++) {
+      const angle = (Math.PI * 2 * i) / N + (Math.random() - 0.5) * 0.4;
+      const dist = 60 + Math.random() * 40;
+      const bx = Math.cos(angle) * dist;
+      const by = Math.sin(angle) * dist;
+      const p = document.createElement('div');
+      p.className = 'burst-petal';
+      p.style.left = cx + 'px';
+      p.style.top = cy + 'px';
+      p.style.setProperty('--bx', bx + 'px');
+      p.style.setProperty('--by', by + 'px');
+      p.style.animationDelay = (i * 20) + 'ms';
+      document.body.appendChild(p);
+      setTimeout(() => p.remove(), 1100);
+    }
   }, { passive: true });
 
   document.querySelectorAll('.type-card').forEach(card => {
