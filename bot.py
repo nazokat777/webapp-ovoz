@@ -20,6 +20,7 @@ import asyncio
 import threading
 from telegram import (
     Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo, BotCommand,
+    MenuButtonWebApp,
 )
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
@@ -30,6 +31,7 @@ from telegram.ext import (
 from aiohttp import web
 import edge_tts
 import speech_recognition as sr
+import pypdf
 
 # TTS voices
 VOICES = {
@@ -441,6 +443,20 @@ def detect_lang(text):
     return "ru" if cyr / max(len(text), 1) > 0.4 else "uz"
 
 
+def extract_pdf_text(pdf_path):
+    """PDF faylidan matn ajratib oladi."""
+    try:
+        reader = pypdf.PdfReader(pdf_path)
+        parts = []
+        for page in reader.pages:
+            t = page.extract_text() or ""
+            if t.strip():
+                parts.append(t.strip())
+        return "\n\n".join(parts)
+    except Exception as e:
+        raise Exception(f"PDF o'qib bo'lmadi: {e}")
+
+
 def make_tts(text, lang=None, max_chars=4500):
     """Matnni ovozli MP3 ga aylantiradi (edge-tts).
     Uzun matnni qisqartiradi (faqat preview audio sifatida)."""
@@ -631,22 +647,43 @@ def webapp_keyboard(chat_id=None):
 
 # ── BOT HANDLERS ────────────────────────────────────────────────────────────
 
+def fresh_webapp_url(chat_id=None):
+    sep = "&" if "?" in WEBAPP_URL else "?"
+    parts = [f"v={int(time.time())}"]
+    if chat_id is not None:
+        parts.append(f"user={chat_id}")
+    return f"{WEBAPP_URL}{sep}{'&'.join(parts)}"
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_user.id
+    # Menu button'ni har gal yangi URL bilan o'rnatish — eski cache buziladi
+    try:
+        await context.bot.set_chat_menu_button(
+            chat_id=update.effective_chat.id,
+            menu_button=MenuButtonWebApp(
+                text="🎙 MNSM",
+                web_app=WebAppInfo(url=fresh_webapp_url(chat_id)),
+            ),
+        )
+    except Exception as e:
+        logging.error(f"Menu button set xato: {e}")
+
     await update.message.reply_text(
         "👋 Assalomu alaykum, *{}*!\n\n"
         "◆ *MNSM*\n"
-        "Men audio, video va hatto krugli videolarni matnga aylantirib beradigan aqlli bot.\n\n"
-        "📌 *Nima yuborsa bo'ladi:*\n"
-        "• 🎤 Ovozli xabar\n"
-        "• 🎵 Audio fayl (MP3, WAV, OGG...)\n"
-        "• 🎬 Video fayl (MP4, MKV...)\n"
-        "• 💬 Dumaloq video xabar\n"
-        "• 🔗 YouTube / TikTok / Instagram havolasi\n\n"
+        "Men audio, video va matnlar bilan ishlaydigan AI bot.\n\n"
+        "📌 *Yuborishingiz mumkin:*\n"
+        "• 🎤 Ovozli xabar / audio fayl\n"
+        "• 🎬 Video / dumaloq video\n"
+        "• 🔗 YouTube / TikTok / Instagram havolasi\n"
+        "• 📄 PDF fayl (matn ovozga aylanadi)\n"
+        "• 📝 Oddiy matn (matn ovozga aylanadi)\n\n"
         "Yoki quyidagi tugma orqali *Web ilovani* oching 👇".format(
             update.effective_user.first_name
         ),
         parse_mode="Markdown",
-        reply_markup=webapp_keyboard(chat_id=update.effective_user.id),
+        reply_markup=webapp_keyboard(chat_id=chat_id),
     )
 
 
@@ -720,8 +757,74 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video_exts = [".mp4", ".avi", ".mov", ".mkv", ".webm", ".3gp"]
     if any(e in mime for e in ["audio", "video"]) or ext in audio_exts + video_exts:
         await process_file(update, context, doc.file_id, ext or ".mp3", 0)
-    else:
-        await update.message.reply_text("⚠️ Bu fayl turi qo'llab-quvvatlanmaydi.")
+        return
+    if ext == ".pdf" or "pdf" in mime:
+        await process_pdf_to_voice(update, context, doc.file_id)
+        return
+    await update.message.reply_text("⚠️ Bu fayl turi qo'llab-quvvatlanmaydi.\n\nQo'llab-quvvatlanadi: audio, video, PDF.")
+
+
+async def process_pdf_to_voice(update, context, file_id):
+    """PDF dan matn ajratib, uni ovozga aylantirib yuboradi."""
+    msg = await update.message.reply_text("📄 PDF qabul qilindi. Matn ajratilmoqda...")
+    tmp_path = None
+    try:
+        file = await context.bot.get_file(file_id)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp_path = tmp.name
+        await file.download_to_drive(tmp_path)
+
+        text = await asyncio.to_thread(extract_pdf_text, tmp_path)
+        if not text or not text.strip():
+            await msg.edit_text("❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).")
+            return
+
+        # Avval matnni ham yuboraman (qisqa bo'lsa)
+        if len(text) <= 4000:
+            await update.message.reply_text(f"📝 PDF matni:\n\n{text}")
+        else:
+            await update.message.reply_text(f"📝 PDF matni (qisqartirilgan):\n\n{text[:3900]}...")
+
+        # Endi audio
+        await msg.edit_text("🔊 Ovozga aylantirilmoqda...")
+        tts_path = await asyncio.to_thread(make_tts, text)
+        if tts_path:
+            try:
+                with open(tts_path, "rb") as f:
+                    await update.message.reply_voice(voice=f, caption="🔊 PDF ovoz shaklida")
+                await msg.edit_text("✅ Tayyor!")
+            finally:
+                if os.path.exists(tts_path):
+                    try: os.remove(tts_path)
+                    except Exception: pass
+    except Exception as e:
+        logging.error(f"PDF -> voice xato: {e}")
+        await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try: os.remove(tmp_path)
+            except Exception: pass
+
+
+async def text_to_voice(update, context, text):
+    """Berilgan matnni ovozli MP3 ga aylantirib yuboradi."""
+    msg = await update.message.reply_text("🔊 Matn ovozga aylantirilmoqda...")
+    tts_path = None
+    try:
+        tts_path = await asyncio.to_thread(make_tts, text)
+        if not tts_path:
+            await msg.edit_text("❌ Matn bo'sh ekan.")
+            return
+        await msg.edit_text("✅ Tayyor!")
+        with open(tts_path, "rb") as f:
+            await update.message.reply_voice(voice=f, caption="🔊 Matn ovoz shaklida")
+    except Exception as e:
+        logging.error(f"TTS xato: {e}")
+        await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
+    finally:
+        if tts_path and os.path.exists(tts_path):
+            try: os.remove(tts_path)
+            except Exception: pass
 
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -729,17 +832,20 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = extract_url(text)
     if url:
         await process_url(update, context, url)
-    else:
-        await update.message.reply_text(
-            "📌 Iltimos quyidagilardan birini yuboring:\n\n"
-            "• 🎤 Ovozli xabar\n"
-            "• 🎵 Audio fayl\n"
-            "• 🎬 Video fayl\n"
-            "• 💬 Dumaloq video\n"
-            "• 🔗 YouTube/TikTok/Instagram havolasi\n\n"
-            "Yoki Web ilovani oching 👇",
-            reply_markup=webapp_keyboard(chat_id=update.effective_user.id),
-        )
+        return
+    # Uzunroq matn bo'lsa — TTS audioga aylantiriladi
+    if len(text) >= 30:
+        await text_to_voice(update, context, text)
+        return
+    await update.message.reply_text(
+        "📌 Iltimos quyidagilardan birini yuboring:\n\n"
+        "• 🎤 Ovozli xabar / audio / video\n"
+        "• 🔗 YouTube / TikTok / Instagram havolasi\n"
+        "• 📄 PDF fayl (matn ovozga aylanadi)\n"
+        "• 📝 Matn (30+ belgi — ovozga aylanadi)\n\n"
+        "Yoki Web ilovani oching 👇",
+        reply_markup=webapp_keyboard(chat_id=update.effective_user.id),
+    )
 
 
 # ── HTTP API (WebApp uchun) ─────────────────────────────────────────────────
