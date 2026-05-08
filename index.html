@@ -1052,32 +1052,39 @@
     tg.setHeaderColor('#FFF1F0'); tg.setBackgroundColor('#FFF1F0');
   }
 
-  // Telegram MainButton — har doim WebApp pastida ko'rinadi
-  function setupMainButton() {
+  // Telegram MainButton — dinamik (kontekstga qarab matn/funksiya o'zgaradi)
+  let mainBtnMode = 'mic'; // 'mic' | 'send' | 'recording' | 'url'
+  function setMainBtn(mode) {
     if (!tg || !tg.MainButton) return;
+    mainBtnMode = mode;
     try {
-      tg.MainButton.setParams({
-        text: '🎙 MIKROFONGA YOZISH',
-        color: '#ec4899',
-        text_color: '#ffffff',
-        is_visible: true,
-        is_active: true,
-      });
-      tg.MainButton.onClick(() => {
-        if (typeof toggleRecording === 'function') toggleRecording();
-      });
-    } catch (e) { console.warn('MainButton init failed', e); }
-  }
-  function setMainBtnRecording(rec) {
-    if (!tg || !tg.MainButton) return;
-    try {
-      if (rec) {
-        tg.MainButton.setParams({ text: '■ TO\'XTATISH', color: '#dc2626' });
+      if (mode === 'recording') {
+        tg.MainButton.setParams({ text: '■ TO\'XTATISH', color: '#dc2626', text_color: '#ffffff', is_visible: true, is_active: true });
+      } else if (mode === 'send') {
+        tg.MainButton.setParams({ text: '✦ BOTGA YUBORISH', color: '#db2777', text_color: '#ffffff', is_visible: true, is_active: true });
+      } else if (mode === 'url') {
+        tg.MainButton.setParams({ text: '→ HAVOLA YUBORISH', color: '#db2777', text_color: '#ffffff', is_visible: true, is_active: true });
       } else {
-        tg.MainButton.setParams({ text: '🎙 MIKROFONGA YOZISH', color: '#ec4899' });
+        tg.MainButton.setParams({ text: '🎙 MIKROFONGA YOZISH', color: '#ec4899', text_color: '#ffffff', is_visible: true, is_active: true });
       }
     } catch (e) {}
   }
+  function setupMainButton() {
+    if (!tg || !tg.MainButton) return;
+    try {
+      tg.MainButton.onClick(() => {
+        try {
+          if (mainBtnMode === 'recording' || mainBtnMode === 'mic') {
+            if (typeof toggleRecording === 'function') toggleRecording();
+          } else if (mainBtnMode === 'send' || mainBtnMode === 'url') {
+            if (typeof sendToBot === 'function') sendToBot();
+          }
+        } catch (e) { console.warn('MainButton click err', e); }
+      });
+      setMainBtn('mic');
+    } catch (e) { console.warn('MainButton init failed', e); }
+  }
+  function setMainBtnRecording(rec) { setMainBtn(rec ? 'recording' : 'mic'); }
 
   const toastWrap = document.getElementById('toastWrap');
   function showToast(msg, type = 'info', ms = 4000) {
@@ -1407,18 +1414,21 @@
     if (type === 'youtube') {
       uploadZone.style.display = 'none';
       urlZone.classList.add('visible');
+      setMainBtn('url');
     } else if (type === 'pdf') {
       uploadZone.style.display = '';
       urlZone.classList.remove('visible');
       fileInput.accept = '.pdf,application/pdf';
       uploadTitle.textContent = 'PDF yuklash';
       uploadHint.innerHTML = 'PDF faylni tanlang<br><span>Ovozli formatga aylantiriladi</span>';
+      setMainBtn(selectedFile ? 'send' : 'mic');
     } else {
       uploadZone.style.display = '';
       urlZone.classList.remove('visible');
       fileInput.accept = (type === 'video') ? 'video/*' : 'audio/*,video/*';
       uploadTitle.textContent = 'Fayl yuklash';
       uploadHint.innerHTML = 'Bosing yoki sudrab tashlang<br><span>Audio yoki video faylni tanlang</span>';
+      setMainBtn(selectedFile ? 'send' : 'mic');
     }
     hideResult();
   }
@@ -1432,6 +1442,7 @@
       zone.querySelector('.upload-title').textContent = selectedFile.name;
       zone.querySelector('.upload-hint').innerHTML = '<span>Fayl tanlandi. "Botga yuborish" tugmasini bosing</span>';
       showToast('Fayl tanlandi: ' + selectedFile.name, 'success', 2500);
+      setMainBtn('send');
     }
   }
 
@@ -1557,6 +1568,7 @@
       zone.querySelector('.upload-title').textContent = file.name;
       zone.querySelector('.upload-hint').innerHTML = '<span>Fayl tanlandi!</span>';
       showToast('Fayl tanlandi: ' + file.name, 'success', 2500);
+      setMainBtn('send');
     }
   });
 </script>
