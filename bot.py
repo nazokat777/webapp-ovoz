@@ -208,20 +208,51 @@ def split_audio(wav_path):
     return chunks
 
 
-def transcribe_chunk(path):
-    # Bo'lak 50 sek audio — Muxlisa odatda 5-15 sekundda javob beradi.
-    # 90 sek timeout: agar shuncha vaqtda javob bo'lmasa, server osilgan, keyingisiga o'tamiz.
+def _do_muxlisa_request(path, timeout):
     with open(path, "rb") as f:
-        response = requests.post(
+        return requests.post(
             MUXLISA_URL,
             headers={"x-api-key": MUXLISA_KEY},
             files=[("audio", ("audio.wav", f, "audio/wav"))],
             data={},
-            timeout=90,
+            timeout=timeout,
         )
-    if response.status_code == 200:
-        return response.json().get("text", "").strip()
-    raise Exception(f"Muxlisa xatosi: {response.status_code} - {response.text[:200]}")
+
+
+def transcribe_chunk(path, max_retries=3):
+    """Bo'lakni transcribe qiladi. Tarmoq/server xatolarida avtomatik 3 marta urinadi.
+    Fatal xatolar (balans/auth) uchun retry yo'q — darhol qaytaradi."""
+    last_error = None
+    timeouts = [60, 90, 120]  # har urinishda biroz uzunroq
+    for attempt in range(max_retries):
+        timeout = timeouts[min(attempt, len(timeouts) - 1)]
+        try:
+            response = _do_muxlisa_request(path, timeout)
+            if response.status_code == 200:
+                return response.json().get("text", "").strip()
+            # Fatal xatolar (auth/balance) — retry yo'q
+            err_text = response.text or ""
+            err_lower = err_text.lower()
+            if response.status_code in (401, 402, 403) or any(
+                k in err_lower for k in ("balance", "insufficient", "credit", "quota", "unauthorized", "forbidden")
+            ):
+                raise Exception(f"Muxlisa xatosi: {response.status_code} - {err_text[:200]}")
+            # Boshqa xato (4xx/5xx) — retry qilamiz
+            last_error = Exception(f"Muxlisa xatosi: {response.status_code} - {err_text[:200]}")
+        except requests.exceptions.Timeout:
+            last_error = Exception(f"Muxlisa javob bermadi ({timeout} sek)")
+        except requests.exceptions.ConnectionError as e:
+            last_error = Exception(f"Tarmoq xatosi: {str(e)[:80]}")
+        except Exception as e:
+            # Fatal bo'lsa darhol — retry qilmasdan
+            if _is_fatal_error(str(e)):
+                raise
+            last_error = e
+        # Keyingi urinishgacha kutish (1, 2 sek)
+        if attempt < max_retries - 1:
+            time.sleep(1 + attempt)
+            logging.info(f"Bo'lak retry #{attempt + 2} ({path})")
+    raise last_error or Exception("Muxlisa noma'lum xato")
 
 
 FATAL_KEYWORDS = ("balance", "insufficient", "credit", "payment", "quota",
