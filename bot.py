@@ -19,7 +19,7 @@ import re
 import asyncio
 import threading
 from telegram import (
-    Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo,
+    Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo, BotCommand,
 )
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
@@ -28,6 +28,13 @@ from telegram.ext import (
     filters, ContextTypes,
 )
 from aiohttp import web
+import edge_tts
+
+# TTS voices
+VOICES = {
+    "uz": "uz-UZ-MadinaNeural",
+    "ru": "ru-RU-SvetlanaNeural",
+}
 
 BOT_TOKEN   = os.getenv("BOT_TOKEN", "8502384684:AAETKbx4YBtiQ9W7PRTWUeVumwwnG-lH9R8")
 MUXLISA_KEY = os.getenv("MUXLISA_KEY", "UYaezERZPBO7pkJj4wzttq5eV90cGdFrI8XxGyCl")
@@ -208,26 +215,26 @@ def split_audio(wav_path):
     return chunks
 
 
-def _do_muxlisa_request(path, timeout):
+def _do_muxlisa_request(path, timeout, language="uz"):
     with open(path, "rb") as f:
         return requests.post(
             MUXLISA_URL,
             headers={"x-api-key": MUXLISA_KEY},
             files=[("audio", ("audio.wav", f, "audio/wav"))],
-            data={},
+            data={"language": language} if language else {},
             timeout=timeout,
         )
 
 
-def transcribe_chunk(path, max_retries=3):
+def transcribe_chunk(path, max_retries=3, language="uz"):
     """Bo'lakni transcribe qiladi. Tarmoq/server xatolarida avtomatik 3 marta urinadi.
     Fatal xatolar (balans/auth) uchun retry yo'q — darhol qaytaradi."""
     last_error = None
-    timeouts = [60, 90, 120]  # har urinishda biroz uzunroq
+    timeouts = [60, 90, 120]
     for attempt in range(max_retries):
         timeout = timeouts[min(attempt, len(timeouts) - 1)]
         try:
-            response = _do_muxlisa_request(path, timeout)
+            response = _do_muxlisa_request(path, timeout, language=language)
             if response.status_code == 200:
                 return response.json().get("text", "").strip()
             # Fatal xatolar (auth/balance) — retry yo'q
@@ -236,11 +243,11 @@ def transcribe_chunk(path, max_retries=3):
             if response.status_code in (401, 402, 403) or any(
                 k in err_lower for k in ("balance", "insufficient", "credit", "quota", "unauthorized", "forbidden")
             ):
-                raise Exception(f"Muxlisa xatosi: {response.status_code} - {err_text[:200]}")
+                raise Exception(f"AI xatosi: {response.status_code} - {err_text[:200]}")
             # Boshqa xato (4xx/5xx) — retry qilamiz
-            last_error = Exception(f"Muxlisa xatosi: {response.status_code} - {err_text[:200]}")
+            last_error = Exception(f"AI xatosi: {response.status_code} - {err_text[:200]}")
         except requests.exceptions.Timeout:
-            last_error = Exception(f"Muxlisa javob bermadi ({timeout} sek)")
+            last_error = Exception(f"AI javob bermadi ({timeout} sek)")
         except requests.exceptions.ConnectionError as e:
             last_error = Exception(f"Tarmoq xatosi: {str(e)[:80]}")
         except Exception as e:
@@ -252,7 +259,7 @@ def transcribe_chunk(path, max_retries=3):
         if attempt < max_retries - 1:
             time.sleep(1 + attempt)
             logging.info(f"Bo'lak retry #{attempt + 2} ({path})")
-    raise last_error or Exception("Muxlisa noma'lum xato")
+    raise last_error or Exception("AI noma'lum xato")
 
 
 FATAL_KEYWORDS = ("balance", "insufficient", "credit", "payment", "quota",
@@ -264,7 +271,7 @@ def _is_fatal_error(err_str):
     return any(k in s for k in FATAL_KEYWORDS)
 
 
-def transcribe(file_path, progress_cb=None):
+def transcribe(file_path, progress_cb=None, language="uz"):
     """progress_cb(stage, current, total) — sync callback. stage: 'convert','split','chunk'."""
     if progress_cb:
         try: progress_cb('convert', 0, 0)
@@ -289,7 +296,7 @@ def transcribe(file_path, progress_cb=None):
                 try: progress_cb('chunk', i + 1, total)
                 except Exception: pass
             try:
-                text = transcribe_chunk(chunk_path)
+                text = transcribe_chunk(chunk_path, language=language)
                 if text:
                     results.append(text)
                 last_ok_end = end_sec
@@ -301,8 +308,8 @@ def transcribe(file_path, progress_cb=None):
                 err_str = str(e)
                 if _is_fatal_error(err_str):
                     fatal_msg = (
-                        "Muxlisa hisobingizdagi balans tugagan yoki API kalit muammoli. "
-                        "Iltimos service.muxlisa.uz hisobingizni to'ldirib qayta urinib ko'ring."
+                        "AI servisidagi balans tugagan yoki API kalit muammoli. "
+                        "Iltimos hisobingizni to'ldirib qayta urinib ko'ring."
                     )
                     break
                 if consecutive_errors >= 3:
@@ -390,6 +397,39 @@ def make_pdf(text, title="MNSM — Matn"):
     return out_path
 
 
+def detect_lang(text):
+    """Matn ichidagi kirill harflar ulushi yuqori bo'lsa rus tili deb hisoblash."""
+    if not text:
+        return "uz"
+    cyr = sum(1 for ch in text if 'Ѐ' <= ch <= 'ӿ')
+    return "ru" if cyr / max(len(text), 1) > 0.4 else "uz"
+
+
+def make_tts(text, lang=None, max_chars=4500):
+    """Matnni ovozli MP3 ga aylantiradi (edge-tts).
+    Uzun matnni qisqartiradi (faqat preview audio sifatida)."""
+    if not text or not text.strip():
+        return None
+    if lang is None:
+        lang = detect_lang(text)
+    voice = VOICES.get(lang, VOICES["uz"])
+    snippet = text.strip()
+    if len(snippet) > max_chars:
+        snippet = snippet[:max_chars].rsplit('.', 1)[0] + "..."
+    out_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
+
+    async def _run():
+        comm = edge_tts.Communicate(snippet, voice)
+        await comm.save(out_path)
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_run())
+    finally:
+        loop.close()
+    return out_path
+
+
 def save_base64_audio(data, suffix='.webm'):
     if data.startswith('data:'):
         data = data.split(',', 1)[1]
@@ -418,7 +458,7 @@ async def send_result(update, msg, text):
         parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
         for i, part in enumerate(parts):
             await update.message.reply_text(f"📄 Qism {i+1}/{len(parts)}:\n\n{part}")
-    # PDF qilib yuborish (bonus — saqlash qulay)
+    # PDF qilib yuborish
     pdf_path = None
     try:
         pdf_path = await asyncio.to_thread(make_pdf, text)
@@ -433,6 +473,23 @@ async def send_result(update, msg, text):
     finally:
         if pdf_path and os.path.exists(pdf_path):
             try: os.remove(pdf_path)
+            except Exception: pass
+
+    # TTS — matnni ovozga aylantirib yuborish
+    tts_path = None
+    try:
+        tts_path = await asyncio.to_thread(make_tts, text)
+        if tts_path:
+            with open(tts_path, "rb") as f:
+                await update.message.reply_voice(
+                    voice=f,
+                    caption="🔊 Matn ovoz shaklida"
+                )
+    except Exception as e:
+        logging.error(f"TTS yaratish xatosi: {e}")
+    finally:
+        if tts_path and os.path.exists(tts_path):
+            try: os.remove(tts_path)
             except Exception: pass
 
 
@@ -462,7 +519,7 @@ def make_progress_cb(loop, msg, base_label="🎙 Tanilmoqda"):
     return cb
 
 
-async def process_local_audio(update, context, file_path, duration=0):
+async def process_local_audio(update, context, file_path, duration=0, language="uz"):
     est = f"{duration // 60} daqiqa {duration % 60} soniya" if duration else "noma'lum"
     msg = await update.message.reply_text(
         f"🎙 Tanilmoqda...\n⏱ Davomiyligi: {est}\n\nBiroz sabr qiling..."
@@ -470,14 +527,14 @@ async def process_local_audio(update, context, file_path, duration=0):
     try:
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
-        text = await asyncio.to_thread(transcribe, file_path, cb)
+        text = await asyncio.to_thread(transcribe, file_path, cb, language)
         await send_result(update, msg, text)
     except Exception as e:
         logging.error(f"Xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
 
 
-async def process_file(update, context, file_id, suffix, duration=0):
+async def process_file(update, context, file_id, suffix, duration=0, language="uz"):
     est = f"{duration // 60} daqiqa {duration % 60} soniya" if duration else "noma'lum"
     msg = await update.message.reply_text(
         f"🎙 Tanilmoqda...\n⏱ Davomiyligi: {est}\n\nBiroz sabr qiling..."
@@ -491,7 +548,7 @@ async def process_file(update, context, file_id, suffix, duration=0):
 
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
-        text = await asyncio.to_thread(transcribe, tmp_path, cb)
+        text = await asyncio.to_thread(transcribe, tmp_path, cb, language)
         await send_result(update, msg, text)
     except Exception as e:
         logging.error(f"Xato: {e}")
@@ -502,7 +559,7 @@ async def process_file(update, context, file_id, suffix, duration=0):
             except Exception: pass
 
 
-async def process_url(update, context, url):
+async def process_url(update, context, url, language="uz"):
     msg = await update.message.reply_text(
         f"📥 Video yuklanmoqda...\n🔗 {url[:50]}\n\nBiroz sabr qiling..."
     )
@@ -513,7 +570,7 @@ async def process_url(update, context, url):
 
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
-        text = await asyncio.to_thread(transcribe, audio_path, cb)
+        text = await asyncio.to_thread(transcribe, audio_path, cb, language)
         await send_result(update, msg, text)
     except Exception as e:
         logging.error(f"URL xato: {e}")
@@ -677,8 +734,21 @@ def telegram_send_document(chat_id, file_path, filename=None, caption=None):
         logging.error(f"Telegram document send error: {e}")
 
 
+def telegram_send_voice(chat_id, file_path, caption=None):
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVoice"
+        with open(file_path, 'rb') as f:
+            files = {"voice": ("voice.mp3", f, "audio/mpeg")}
+            data = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = caption
+            requests.post(url, data=data, files=files, timeout=120)
+    except Exception as e:
+        logging.error(f"Telegram voice send error: {e}")
+
+
 def _send_text_and_pdf(user_id, text):
-    """Matn + PDF yuborish (HTTP fallback yo'lida)."""
+    """Matn + PDF + ovozli TTS yuborish (HTTP fallback yo'lida)."""
     telegram_send_message(user_id, f"📝 Matn:\n\n{text}")
     try:
         pdf_path = make_pdf(text)
@@ -690,12 +760,23 @@ def _send_text_and_pdf(user_id, text):
                 except Exception: pass
     except Exception as e:
         logging.error(f"PDF (HTTP) xato: {e}")
+    try:
+        tts_path = make_tts(text)
+        if tts_path:
+            try:
+                telegram_send_voice(user_id, tts_path, caption="🔊 Matn ovoz shaklida")
+            finally:
+                if os.path.exists(tts_path):
+                    try: os.remove(tts_path)
+                    except Exception: pass
+    except Exception as e:
+        logging.error(f"TTS (HTTP) xato: {e}")
 
 
-def process_audio_for_user(user_id, file_path):
+def process_audio_for_user(user_id, file_path, language="uz"):
     try:
         telegram_send_message(user_id, "🎙 Web ilova yuborgan fayl tanilmoqda...")
-        text = transcribe(file_path)
+        text = transcribe(file_path, language=language)
         if text and text.strip() != "Matn aniqlanmadi.":
             _send_text_and_pdf(user_id, text)
         else:
@@ -711,13 +792,13 @@ def process_audio_for_user(user_id, file_path):
                 pass
 
 
-def process_url_for_user(user_id, url):
+def process_url_for_user(user_id, url, language="uz"):
     audio_path = None
     try:
         telegram_send_message(user_id, f"📥 Video yuklanmoqda...\n🔗 {url[:80]}")
         audio_path = download_audio_from_url(url)
         telegram_send_message(user_id, "✅ Yuklanidi! 🎙 Matn tanilmoqda...")
-        text = transcribe(audio_path)
+        text = transcribe(audio_path, language=language)
         if text and text.strip() != "Matn aniqlanmadi.":
             _send_text_and_pdf(user_id, text)
         else:
@@ -737,13 +818,16 @@ async def handle_webapp_audio(request):
         user_id = data.get("user_id")
         audio_data = data.get("audio", "")
         format_hint = data.get("format", "audio/webm")
+        language = (data.get("language") or "uz").lower()
+        if language not in ("uz", "ru"):
+            language = "uz"
         if not user_id or not audio_data:
             return web.json_response({"error": "user_id yoki audio yo'q"}, status=400, headers=cors_headers())
         ext = format_hint.split("/")[-1].split(";")[0] if "/" in format_hint else format_hint
         if not ext.startswith('.'):
             ext = '.' + ext
         tmp_path = save_base64_audio(audio_data, ext)
-        threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path), daemon=True).start()
+        threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP audio xatosi: {e}")
@@ -757,12 +841,17 @@ async def handle_webapp_upload(request):
         user_id = None
         file_data = None
         file_name = None
+        language = "uz"
         while True:
             part = await reader.next()
             if part is None:
                 break
             if part.name == "user_id":
                 user_id = (await part.text()).strip()
+            elif part.name == "language":
+                lang_val = (await part.text()).strip().lower()
+                if lang_val in ("uz", "ru"):
+                    language = lang_val
             elif part.name == "file":
                 file_name = part.filename or "upload.bin"
                 file_data = await part.read()
@@ -772,7 +861,7 @@ async def handle_webapp_upload(request):
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
             tmp.write(file_data)
             tmp_path = tmp.name
-        threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path), daemon=True).start()
+        threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP upload xatosi: {e}")
@@ -786,9 +875,12 @@ async def handle_webapp_url_post(request):
         user_id = data.get("user_id")
         url = (data.get("url") or "").strip()
         url = extract_url(url) or url
+        language = (data.get("language") or "uz").lower()
+        if language not in ("uz", "ru"):
+            language = "uz"
         if not user_id or not url:
             return web.json_response({"error": "user_id yoki url yo'q"}, status=400, headers=cors_headers())
-        threading.Thread(target=process_url_for_user, args=(int(user_id), url), daemon=True).start()
+        threading.Thread(target=process_url_for_user, args=(int(user_id), url, language), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP URL xatosi: {e}")
@@ -861,7 +953,20 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
     bot_app = app
+
+    async def _setup_commands(application):
+        try:
+            await application.bot.set_my_commands([
+                BotCommand("start", "Botni ishga tushirish / Запустить бот"),
+                BotCommand("help", "Yordam / Помощь"),
+            ])
+            await application.bot.set_chat_menu_button()
+        except Exception as e:
+            logging.error(f"setMyCommands xato: {e}")
+    app.post_init = _setup_commands
+
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", start))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.AUDIO, handle_audio))

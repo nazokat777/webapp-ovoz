@@ -150,6 +150,48 @@
     -webkit-mask-image: radial-gradient(ellipse at center, rgba(0,0,0,0.65), transparent 75%);
   }
 
+  /* ── SCAN LINE — neon horizontal sweep ── */
+  .scan-line {
+    position: fixed; left: 0; right: 0; height: 2px;
+    z-index: 0; pointer-events: none;
+    background: linear-gradient(90deg, transparent, var(--neon-cyan-bright), var(--neon-magenta), var(--neon-cyan-bright), transparent);
+    box-shadow: 0 0 14px var(--neon-cyan), 0 0 32px var(--neon-magenta);
+    opacity: 0.55;
+    animation: scan-sweep 7s linear infinite;
+    mix-blend-mode: screen;
+  }
+  @keyframes scan-sweep {
+    0% { top: -5%; }
+    100% { top: 105%; }
+  }
+
+  /* ── LANG SWITCHER ── */
+  .lang-switch {
+    display: flex; gap: 4px; padding: 4px;
+    background: rgba(3, 17, 50, 0.55);
+    border: 1px solid rgba(3,204,255,0.32);
+    border-radius: 14px;
+    backdrop-filter: blur(14px);
+    box-shadow: 0 0 16px rgba(3,204,255,0.18);
+  }
+  .lang-btn {
+    padding: 6px 12px;
+    color: var(--text-2);
+    font-family: 'Orbitron', sans-serif;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.8px;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.25s;
+  }
+  .lang-btn.active {
+    background: var(--grad-cyan);
+    color: #020D2F;
+    box-shadow: 0 0 14px rgba(3,204,255,0.55);
+  }
+  .lang-btn:not(.active):hover { color: var(--neon-cyan-bright); }
+
   /* Particles (neon dots) */
   .particles { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
   .particle {
@@ -1010,6 +1052,7 @@
 <div class="bg-aurora"></div>
 <div class="aurora-ribbon"></div>
 <div class="neon-grid"></div>
+<div class="scan-line"></div>
 <div class="spotlight" id="spotlight"></div>
 <div class="particles" id="particles"></div>
 <div class="toast-wrap" id="toastWrap"></div>
@@ -1052,12 +1095,11 @@
       </div>
       <div>
         <div class="logo-name">MNSM</div>
-        <div class="logo-tag">AI Specialist</div>
       </div>
     </div>
-    <div class="online-badge">
-      <div class="online-dot"></div>
-      <div class="online-text">Faol</div>
+    <div class="lang-switch" id="langSwitch">
+      <button class="lang-btn active" data-lang="uz" onclick="setLang('uz')" type="button">UZ</button>
+      <button class="lang-btn" data-lang="ru" onclick="setLang('ru')" type="button">RU</button>
     </div>
   </div>
 
@@ -1066,7 +1108,7 @@
     <div class="hero-content">
       <div class="hero-badge">Artificial Intelligence Solutions</div>
       <div class="hero-title">Ovozni <em>matnga</em><br>aylantirish</div>
-      <div class="hero-desc">Audio, video, ovozli xabar yoki YouTube/Instagram havolasini yuboring — Muxlisa AI biz uchun matnga aylantiradi.</div>
+      <div class="hero-desc">Audio, video, ovozli xabar yoki YouTube/Instagram havolasini yuboring — biz uni matn, PDF va ovozli formatga aylantiramiz.</div>
     </div>
     <svg class="hero-wave" viewBox="0 0 600 60" preserveAspectRatio="none">
       <path d="M0,30 Q150,5 300,30 T600,30 L600,60 L0,60 Z" fill="url(#waveGrad)"/>
@@ -1182,25 +1224,8 @@
     </div>
   </div>
 
-  <!-- HOW IT WORKS -->
-  <div class="how reveal">
-    <div class="how-head">Qanday ishlaydi?</div>
-    <div class="step">
-      <div class="step-n">1</div>
-      <div class="step-txt"><strong>Fayl yoki havola</strong> tanlang yuqoridan</div>
-    </div>
-    <div class="step">
-      <div class="step-n">2</div>
-      <div class="step-txt">Bot <strong>audio ajratadi</strong> va Muxlisa AI ga yuboradi</div>
-    </div>
-    <div class="step">
-      <div class="step-n">3</div>
-      <div class="step-txt"><strong>Matn + PDF</strong> tayyor — saqlang yoki ulashing</div>
-    </div>
-  </div>
-
   <!-- FOOTER -->
-  <div class="footer reveal">MNSM &nbsp;·&nbsp; <span>AI SPECIALIST</span> &nbsp;·&nbsp; Muxlisa AI</div>
+  <div class="footer reveal"><span>MNSM</span> &nbsp;·&nbsp; <span>Premium AI</span></div>
 
 </div>
 
@@ -1361,7 +1386,16 @@
   }
 
   let currentType = 'file';
+  let currentLang = 'uz';
   let selectedFile = null;
+
+  function setLang(lang) {
+    currentLang = lang;
+    document.querySelectorAll('.lang-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.lang === lang);
+    });
+    if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.selectionChanged(); } catch (e) {} }
+  }
   let resultTextContent = '';
   let mediaRecorder = null;
   let recordedChunks = [];
@@ -1496,7 +1530,8 @@
     if (!tg || !userId) { hideProcessing(); showToast(userIdMissingMessage(), 'error', 8000); return; }
     const payload = {
       user_id: userId, audio: dataUrl,
-      format: dataUrl.split(',')[0].split(':')[1].split(';')[0] || 'audio/webm'
+      format: dataUrl.split(',')[0].split(':')[1].split(';')[0] || 'audio/webm',
+      language: currentLang
     };
     fetch(window.location.origin + '/audio', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1569,7 +1604,7 @@
       try {
         const r = await fetch(window.location.origin + '/url', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: userId, url: link })
+          body: JSON.stringify({ user_id: userId, url: link, language: currentLang })
         });
         const json = await r.json();
         if (!r.ok) throw new Error(json.error || 'Server xato');
@@ -1588,6 +1623,7 @@
     try {
       const fd = new FormData();
       fd.append('user_id', String(userId));
+      fd.append('language', currentLang);
       fd.append('file', selectedFile, selectedFile.name);
       const r = await fetch(window.location.origin + '/upload', { method: 'POST', body: fd });
       const json = await r.json();
