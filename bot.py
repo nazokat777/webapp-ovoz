@@ -195,12 +195,24 @@ def transcribe_chunk(path):
     raise Exception(f"Muxlisa xatosi: {response.status_code} - {response.text[:200]}")
 
 
-def transcribe(file_path):
+def transcribe(file_path, progress_cb=None):
+    """progress_cb(stage, current, total) — sync callback. stage: 'convert','split','chunk'."""
+    if progress_cb:
+        try: progress_cb('convert', 0, 0)
+        except Exception: pass
     wav_path = convert_to_wav(file_path)
+
+    if progress_cb:
+        try: progress_cb('split', 0, 0)
+        except Exception: pass
     chunks = split_audio(wav_path)
+    total = len(chunks)
     results = []
     try:
         for i, chunk in enumerate(chunks):
+            if progress_cb:
+                try: progress_cb('chunk', i + 1, total)
+                except Exception: pass
             try:
                 text = transcribe_chunk(chunk)
                 if text:
@@ -246,13 +258,41 @@ async def send_result(update, msg, text):
             await update.message.reply_text(f"📄 Qism {i+1}/{len(parts)}:\n\n{part}")
 
 
+def make_progress_cb(loop, msg, base_label="🎙 Tanilmoqda"):
+    """Sync callback yaratadi — Telegram xabarini async edit qiladi (rate-limited)."""
+    state = {"last": 0.0}
+    def cb(stage, current, total):
+        now = time.time()
+        if now - state["last"] < 4 and stage == "chunk":
+            return  # juda tez bosqichlarni o'tkazib yuborish (Telegram rate limit)
+        state["last"] = now
+        if stage == "convert":
+            text = f"{base_label}...\n🔄 Audio konvertatsiya qilinmoqda..."
+        elif stage == "split":
+            text = f"{base_label}...\n✂️ Bo'laklarga bo'linmoqda..."
+        elif stage == "chunk":
+            if total > 1:
+                text = f"{base_label}...\n📊 {current}/{total} bo'lak qayta ishlanmoqda..."
+            else:
+                text = f"{base_label}...\n🎙 Tanilmoqda..."
+        else:
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(msg.edit_text(text), loop)
+        except Exception:
+            pass
+    return cb
+
+
 async def process_local_audio(update, context, file_path, duration=0):
     est = f"{duration // 60} daqiqa {duration % 60} soniya" if duration else "noma'lum"
     msg = await update.message.reply_text(
         f"🎙 Tanilmoqda...\n⏱ Davomiyligi: {est}\n\nBiroz sabr qiling..."
     )
     try:
-        text = transcribe(file_path)
+        loop = asyncio.get_running_loop()
+        cb = make_progress_cb(loop, msg)
+        text = await asyncio.to_thread(transcribe, file_path, cb)
         await send_result(update, msg, text)
     except Exception as e:
         logging.error(f"Xato: {e}")
@@ -264,18 +304,24 @@ async def process_file(update, context, file_id, suffix, duration=0):
     msg = await update.message.reply_text(
         f"🎙 Tanilmoqda...\n⏱ Davomiyligi: {est}\n\nBiroz sabr qiling..."
     )
+    tmp_path = None
     try:
         file = await context.bot.get_file(file_id)
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp_path = tmp.name
         await file.download_to_drive(tmp_path)
-        text = transcribe(tmp_path)
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+
+        loop = asyncio.get_running_loop()
+        cb = make_progress_cb(loop, msg)
+        text = await asyncio.to_thread(transcribe, tmp_path, cb)
         await send_result(update, msg, text)
     except Exception as e:
         logging.error(f"Xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try: os.remove(tmp_path)
+            except Exception: pass
 
 
 async def process_url(update, context, url):
@@ -284,9 +330,12 @@ async def process_url(update, context, url):
     )
     audio_path = None
     try:
-        audio_path = download_audio_from_url(url)
+        audio_path = await asyncio.to_thread(download_audio_from_url, url)
         await msg.edit_text("✅ Yuklanidi! 🎙 Matn tanilmoqda...")
-        text = transcribe(audio_path)
+
+        loop = asyncio.get_running_loop()
+        cb = make_progress_cb(loop, msg)
+        text = await asyncio.to_thread(transcribe, audio_path, cb)
         await send_result(update, msg, text)
     except Exception as e:
         logging.error(f"URL xato: {e}")
