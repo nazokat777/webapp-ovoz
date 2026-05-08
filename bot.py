@@ -37,6 +37,7 @@ import pypdf
 VOICES = {
     "uz": "uz-UZ-MadinaNeural",
     "ru": "ru-RU-SvetlanaNeural",
+    "en": "en-US-JennyNeural",
 }
 
 # STT lang codes (Google Speech uchun)
@@ -263,9 +264,10 @@ def _transcribe_chunk_google(path, max_retries=3, lang_code="ru-RU"):
 
 
 def transcribe_chunk(path, max_retries=3, language="uz"):
-    """Bo'lakni transcribe qiladi. uz -> Muxlisa, ru -> Google Speech."""
-    if language == "ru":
-        return _transcribe_chunk_google(path, max_retries=max_retries, lang_code="ru-RU")
+    """Bo'lakni transcribe qiladi. uz -> Muxlisa, ru/en -> Google Speech."""
+    if language in ("ru", "en"):
+        lang_code = GOOGLE_LANG.get(language, "ru-RU")
+        return _transcribe_chunk_google(path, max_retries=max_retries, lang_code=lang_code)
     # default: uz -> Muxlisa
     last_error = None
     timeouts = [60, 90, 120]
@@ -436,11 +438,19 @@ def make_pdf(text, title="Audio & Konspekt — Matn"):
 
 
 def detect_lang(text):
-    """Matn ichidagi kirill harflar ulushi yuqori bo'lsa rus tili deb hisoblash."""
+    """Matn tilini aniqlash: kirill -> ru, lotin asosan ASCII English -> en, aks holda uz."""
     if not text:
         return "uz"
     cyr = sum(1 for ch in text if 'Ѐ' <= ch <= 'ӿ')
-    return "ru" if cyr / max(len(text), 1) > 0.4 else "uz"
+    if cyr / max(len(text), 1) > 0.35:
+        return "ru"
+    # Lotin matn — agar uzbek-specific belgilar bo'lmasa, ingliz deb hisoblaymiz
+    uz_specific = ("o'", "g'", "o‘", "g‘", "sh", "ch", "ng")
+    low = text.lower()
+    if any(m in low for m in uz_specific):
+        return "uz"
+    # ko'p ASCII inglizcha so'zlar bormi
+    return "en"
 
 
 def extract_pdf_text(pdf_path):
@@ -972,7 +982,7 @@ async def handle_webapp_audio(request):
         audio_data = data.get("audio", "")
         format_hint = data.get("format", "audio/webm")
         language = (data.get("language") or "uz").lower()
-        if language not in ("uz", "ru"):
+        if language not in ("uz", "ru", "en"):
             language = "uz"
         if not user_id or not audio_data:
             return web.json_response({"error": "user_id yoki audio yo'q"}, status=400, headers=cors_headers())
@@ -1003,7 +1013,7 @@ async def handle_webapp_upload(request):
                 user_id = (await part.text()).strip()
             elif part.name == "language":
                 lang_val = (await part.text()).strip().lower()
-                if lang_val in ("uz", "ru"):
+                if lang_val in ("uz", "ru", "en"):
                     language = lang_val
             elif part.name == "file":
                 file_name = part.filename or "upload.bin"
@@ -1033,7 +1043,7 @@ async def handle_webapp_url_post(request):
         url = (data.get("url") or "").strip()
         url = extract_url(url) or url
         language = (data.get("language") or "uz").lower()
-        if language not in ("uz", "ru"):
+        if language not in ("uz", "ru", "en"):
             language = "uz"
         if not user_id or not url:
             return web.json_response({"error": "user_id yoki url yo'q"}, status=400, headers=cors_headers())
