@@ -679,6 +679,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "konspektlar tayyorlab beraman.\n\n"
         "🎧 Shuningdek, PDF hujjatlarni ovozli audio formatga aylantirib, "
         "ularni istalgan joyda qulay tinglashingizga yordam beraman.\n\n"
+        "📌 *Yuborishingiz mumkin:*\n"
+        "• 🎤 Ovozli xabar / audio fayl\n"
+        "• 🎬 Video / dumaloq video\n"
+        "• 🔗 YouTube / TikTok / Instagram havolasi\n"
+        "• 📄 PDF fayl (matn ovozga aylanadi)\n"
+        "• 📝 Oddiy matn (matn ovozga aylanadi)\n\n"
         "Quyidagi tugma orqali *Web ilovani* oching 👇".format(
             update.effective_user.first_name
         ),
