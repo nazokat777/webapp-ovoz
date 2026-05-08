@@ -805,10 +805,27 @@ async def serve_index(request):
     return web.FileResponse(INDEX_HTML, headers={"Cache-Control": "no-store"})
 
 
+async def serve_static(request):
+    """Loyiha katalogidagi xavfsiz statik fayllarni xizmat qilish (logo va h.k.)."""
+    name = request.match_info.get('name', '')
+    # Faqat oddiy fayl nomi (slash, .., ~ taqiqlangan)
+    if not name or '/' in name or '\\' in name or '..' in name or name.startswith('.'):
+        return web.Response(status=403)
+    allowed_ext = {'.png', '.jpg', '.jpeg', '.webp', '.svg', '.ico', '.gif'}
+    if os.path.splitext(name)[1].lower() not in allowed_ext:
+        return web.Response(status=403)
+    full = os.path.join(HERE, name)
+    if not os.path.exists(full) or not os.path.isfile(full):
+        return web.Response(status=404)
+    return web.FileResponse(full, headers={"Cache-Control": "public, max-age=3600"})
+
+
 async def run_http_server():
     web_app = web.Application(client_max_size=200 * 1024 * 1024)  # 200 MB
     web_app.router.add_get('/', serve_index)
     web_app.router.add_get('/index.html', serve_index)
+    web_app.router.add_get('/static/{name}', serve_static)
+    web_app.router.add_get('/{name:[^/]+\\.(png|jpg|jpeg|webp|svg|ico|gif)}', serve_static)
     web_app.router.add_post('/audio', handle_webapp_audio)
     web_app.router.add_post('/upload', handle_webapp_upload)
     web_app.router.add_post('/url', handle_webapp_url_post)
