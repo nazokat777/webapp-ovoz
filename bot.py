@@ -22,6 +22,8 @@ import threading
 from telegram import (
     Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo,
 )
+from fpdf import FPDF
+from fpdf.enums import XPos, YPos
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
     filters, ContextTypes,
@@ -274,6 +276,45 @@ def transcribe(file_path, progress_cb=None):
     return text_part
 
 
+FONT_CANDIDATES = [
+    r"C:\Windows\Fonts\arial.ttf",
+    r"C:\Windows\Fonts\segoeui.ttf",
+    r"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    r"/Library/Fonts/Arial.ttf",
+]
+
+
+def _find_font():
+    for p in FONT_CANDIDATES:
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def make_pdf(text, title="SesTon — Matn"):
+    """Matnni PDF qiladi va vaqtinchalik fayl yo'lini qaytaradi."""
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_title(title)
+    font_path = _find_font()
+    if font_path:
+        pdf.add_font("Body", "", font_path)
+        pdf.set_font("Body", size=14)
+        pdf.cell(0, 12, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        pdf.ln(4)
+        pdf.set_font("Body", size=11)
+    else:
+        pdf.set_font("Helvetica", size=14)
+        pdf.cell(0, 12, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+        pdf.ln(4)
+        pdf.set_font("Helvetica", size=11)
+    # multi_cell uzun matnni avtomatik o'rab beradi
+    pdf.multi_cell(0, 7, text)
+    out_path = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False).name
+    pdf.output(out_path)
+    return out_path
+
+
 def save_base64_audio(data, suffix='.webm'):
     if data.startswith('data:'):
         data = data.split(',', 1)[1]
@@ -294,6 +335,7 @@ async def send_result(update, msg, text):
     if not text:
         await msg.edit_text("Matn aniqlanmadi.")
         return
+    # Matnni xabarda yuborish
     if len(text) <= 4000:
         await msg.edit_text(f"📝 Matn:\n\n{text}")
     else:
@@ -301,6 +343,22 @@ async def send_result(update, msg, text):
         parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
         for i, part in enumerate(parts):
             await update.message.reply_text(f"📄 Qism {i+1}/{len(parts)}:\n\n{part}")
+    # PDF qilib yuborish (bonus — saqlash qulay)
+    pdf_path = None
+    try:
+        pdf_path = await asyncio.to_thread(make_pdf, text)
+        with open(pdf_path, "rb") as f:
+            await update.message.reply_document(
+                document=f,
+                filename="seston-matn.pdf",
+                caption="📎 Matn PDF formatda"
+            )
+    except Exception as e:
+        logging.error(f"PDF yaratish xatosi: {e}")
+    finally:
+        if pdf_path and os.path.exists(pdf_path):
+            try: os.remove(pdf_path)
+            except Exception: pass
 
 
 def make_progress_cb(loop, msg, base_label="🎙 Tanilmoqda"):
@@ -530,11 +588,42 @@ def telegram_send_message(chat_id, text):
         logging.error(f"Telegram send error: {e}")
 
 
+def telegram_send_document(chat_id, file_path, filename=None, caption=None):
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+        with open(file_path, 'rb') as f:
+            files = {"document": (filename or os.path.basename(file_path), f, "application/pdf")}
+            data = {"chat_id": chat_id}
+            if caption:
+                data["caption"] = caption
+            requests.post(url, data=data, files=files, timeout=120)
+    except Exception as e:
+        logging.error(f"Telegram document send error: {e}")
+
+
+def _send_text_and_pdf(user_id, text):
+    """Matn + PDF yuborish (HTTP fallback yo'lida)."""
+    telegram_send_message(user_id, f"📝 Matn:\n\n{text}")
+    try:
+        pdf_path = make_pdf(text)
+        try:
+            telegram_send_document(user_id, pdf_path, filename="seston-matn.pdf", caption="📎 Matn PDF formatda")
+        finally:
+            if os.path.exists(pdf_path):
+                try: os.remove(pdf_path)
+                except Exception: pass
+    except Exception as e:
+        logging.error(f"PDF (HTTP) xato: {e}")
+
+
 def process_audio_for_user(user_id, file_path):
     try:
         telegram_send_message(user_id, "🎙 Web ilova yuborgan fayl tanilmoqda...")
         text = transcribe(file_path)
-        telegram_send_message(user_id, f"📝 Matn:\n\n{text}" if text else "Matn aniqlanmadi.")
+        if text and text.strip() != "Matn aniqlanmadi.":
+            _send_text_and_pdf(user_id, text)
+        else:
+            telegram_send_message(user_id, "Matn aniqlanmadi.")
     except Exception as e:
         logging.error(f"process_audio_for_user xato: {e}")
         telegram_send_message(user_id, f"❌ Xato: {str(e)[:300]}")
@@ -553,7 +642,10 @@ def process_url_for_user(user_id, url):
         audio_path = download_audio_from_url(url)
         telegram_send_message(user_id, "✅ Yuklanidi! 🎙 Matn tanilmoqda...")
         text = transcribe(audio_path)
-        telegram_send_message(user_id, f"📝 Matn:\n\n{text}" if text else "Matn aniqlanmadi.")
+        if text and text.strip() != "Matn aniqlanmadi.":
+            _send_text_and_pdf(user_id, text)
+        else:
+            telegram_send_message(user_id, "Matn aniqlanmadi.")
     except Exception as e:
         logging.error(f"process_url_for_user xato: {e}")
         telegram_send_message(user_id, f"❌ Xato: {str(e)[:300]}")
