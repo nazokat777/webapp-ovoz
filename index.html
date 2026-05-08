@@ -1086,24 +1086,25 @@
         <div class="card-sub">YouTube, TikTok, Instagram havolalari</div>
         <span class="card-pill pill-peach">Avtomatik</span>
       </div>
-      <div class="type-card" onclick="selectType(this,'pdf')" data-type="pdf">
+      <div class="type-card" onclick="selectType(this,'voice')" data-type="voice">
         <div class="card-glow"></div>
         <svg class="deco-flower sm in-tr faded" style="animation-delay:1.5s"><use href="#sakura"/></svg>
-        <div class="card-icon icon-blossom"><svg><use href="#i-pdf"/></svg></div>
-        <div class="card-title">PDF → Ovoz</div>
-        <div class="card-sub">PDF faylni o'qib, ovozli formatga aylantiradi</div>
-        <span class="card-pill pill-blossom">Yangi</span>
+        <div class="card-icon icon-blossom"><svg><use href="#i-chat"/></svg></div>
+        <div class="card-title">Ovozli xabar</div>
+        <div class="card-sub">Telegram ovozli xabarlari yoki PDF faylni matnga</div>
+        <span class="card-pill pill-blossom">Tez ishlaydi</span>
       </div>
     </div>
   </div>
 
   <div class="upload-zone reveal" id="uploadZone">
-    <input type="file" id="fileInput" accept="audio/*,video/*" onchange="handleFile(this)">
+    <input type="file" id="fileInput" accept="audio/*,video/*,.pdf,application/pdf" onchange="handleFile(this)">
     <svg class="deco-flower md tl"><use href="#sakura"/></svg>
     <svg class="deco-flower sm br" style="animation-delay:0.8s"><use href="#sakura"/></svg>
+    <svg class="deco-branch bl" style="opacity:0.4"><use href="#sakura-branch"/></svg>
     <div class="upload-icon"><svg><use href="#i-upload"/></svg></div>
-    <div class="upload-title">Fayl yuklash</div>
-    <div class="upload-hint">Bosing yoki sudrab tashlang<br><span>Audio yoki video faylni tanlang</span></div>
+    <div class="upload-title">Faylni bu yerga torting yoki tanlang</div>
+    <div class="upload-hint">Drag &amp; Drop or Click to Upload<br><span>Audio, video yoki PDF</span></div>
   </div>
 
   <div class="record-btn reveal" id="recordBtn" role="button" tabindex="0" onclick="toggleRecording()"><span>🎙 Mikrofonga yozish</span></div>
@@ -1540,19 +1541,20 @@
       uploadZone.style.display = 'none';
       urlZone.classList.add('visible');
       setMainBtn('url');
-    } else if (type === 'pdf') {
+    } else if (type === 'voice') {
+      // Ovozli xabar — audio yoki PDF qabul qilinadi
       uploadZone.style.display = '';
       urlZone.classList.remove('visible');
-      fileInput.accept = '.pdf,application/pdf';
-      uploadTitle.textContent = 'PDF yuklash';
-      uploadHint.innerHTML = 'PDF faylni tanlang<br><span>Ovozli formatga aylantiriladi</span>';
+      fileInput.accept = 'audio/*,.pdf,application/pdf';
+      uploadTitle.textContent = 'Faylni bu yerga torting yoki tanlang';
+      uploadHint.innerHTML = 'Audio yoki PDF<br><span>Drag & Drop or Click to Upload</span>';
       setMainBtn(selectedFile ? 'send' : 'mic');
     } else {
       uploadZone.style.display = '';
       urlZone.classList.remove('visible');
-      fileInput.accept = (type === 'video') ? 'video/*' : 'audio/*,video/*';
-      uploadTitle.textContent = 'Fayl yuklash';
-      uploadHint.innerHTML = 'Bosing yoki sudrab tashlang<br><span>Audio yoki video faylni tanlang</span>';
+      fileInput.accept = (type === 'video') ? 'video/*' : 'audio/*,video/*,.pdf,application/pdf';
+      uploadTitle.textContent = 'Faylni bu yerga torting yoki tanlang';
+      uploadHint.innerHTML = 'Audio, video yoki PDF<br><span>Drag & Drop or Click to Upload</span>';
       setMainBtn(selectedFile ? 'send' : 'mic');
     }
     hideResult();
