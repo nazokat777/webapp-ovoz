@@ -510,7 +510,7 @@ async def send_result(update, msg, text):
         parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
         for i, part in enumerate(parts):
             await update.message.reply_text(f"📄 Qism {i+1}/{len(parts)}:\n\n{part}")
-    # PDF qilib yuborish
+    # PDF qilib yuborish (audio kontekstida — TTS yo'q)
     pdf_path = None
     try:
         pdf_path = await asyncio.to_thread(make_pdf, text)
@@ -525,23 +525,6 @@ async def send_result(update, msg, text):
     finally:
         if pdf_path and os.path.exists(pdf_path):
             try: os.remove(pdf_path)
-            except Exception: pass
-
-    # TTS — matnni ovozga aylantirib yuborish
-    tts_path = None
-    try:
-        tts_path = await asyncio.to_thread(make_tts, text)
-        if tts_path:
-            with open(tts_path, "rb") as f:
-                await update.message.reply_voice(
-                    voice=f,
-                    caption="🔊 Matn ovoz shaklida"
-                )
-    except Exception as e:
-        logging.error(f"TTS yaratish xatosi: {e}")
-    finally:
-        if tts_path and os.path.exists(tts_path):
-            try: os.remove(tts_path)
             except Exception: pass
 
 
@@ -893,7 +876,7 @@ def telegram_send_voice(chat_id, file_path, caption=None):
 
 
 def _send_text_and_pdf(user_id, text):
-    """Matn + PDF + ovozli TTS yuborish (HTTP fallback yo'lida)."""
+    """Matn + PDF yuborish (HTTP fallback yo'lida) — audio kontekstida TTS yo'q."""
     telegram_send_message(user_id, f"📝 Matn:\n\n{text}")
     try:
         pdf_path = make_pdf(text)
@@ -905,17 +888,38 @@ def _send_text_and_pdf(user_id, text):
                 except Exception: pass
     except Exception as e:
         logging.error(f"PDF (HTTP) xato: {e}")
+
+
+def process_pdf_for_user(user_id, pdf_path):
+    """WebApp orqali yuborilgan PDF dan matn ajratib, audio sifatida qaytaradi."""
     try:
+        telegram_send_message(user_id, "📄 PDF qabul qilindi. Matn ajratilmoqda...")
+        text = extract_pdf_text(pdf_path)
+        if not text or not text.strip():
+            telegram_send_message(user_id, "❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).")
+            return
+        # Matn xabar
+        if len(text) <= 4000:
+            telegram_send_message(user_id, f"📝 PDF matni:\n\n{text}")
+        else:
+            telegram_send_message(user_id, f"📝 PDF matni (qisqartirilgan):\n\n{text[:3900]}...")
+        # Audio
+        telegram_send_message(user_id, "🔊 Ovozga aylantirilmoqda...")
         tts_path = make_tts(text)
         if tts_path:
             try:
-                telegram_send_voice(user_id, tts_path, caption="🔊 Matn ovoz shaklida")
+                telegram_send_voice(user_id, tts_path, caption="🔊 PDF ovoz shaklida")
             finally:
                 if os.path.exists(tts_path):
                     try: os.remove(tts_path)
                     except Exception: pass
     except Exception as e:
-        logging.error(f"TTS (HTTP) xato: {e}")
+        logging.error(f"process_pdf_for_user xato: {e}")
+        telegram_send_message(user_id, f"❌ Xato: {str(e)[:300]}")
+    finally:
+        if pdf_path and os.path.exists(pdf_path):
+            try: os.remove(pdf_path)
+            except Exception: pass
 
 
 def process_audio_for_user(user_id, file_path, language="uz"):
@@ -1002,11 +1006,15 @@ async def handle_webapp_upload(request):
                 file_data = await part.read()
         if not user_id or not file_data:
             return web.json_response({"error": "user_id yoki fayl yo'q"}, status=400, headers=cors_headers())
-        ext = os.path.splitext(file_name)[1] or ".bin"
+        ext = os.path.splitext(file_name)[1].lower() or ".bin"
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
             tmp.write(file_data)
             tmp_path = tmp.name
-        threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language), daemon=True).start()
+        # PDF -> ovoz, audio/video -> matn+PDF
+        if ext == ".pdf":
+            threading.Thread(target=process_pdf_for_user, args=(int(user_id), tmp_path), daemon=True).start()
+        else:
+            threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP upload xatosi: {e}")
