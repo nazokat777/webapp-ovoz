@@ -296,10 +296,13 @@ async def process_url(update, context, url):
             shutil.rmtree(os.path.dirname(audio_path), ignore_errors=True)
 
 
-def webapp_keyboard():
-    # Cache buster — Telegram WebApp eski versiyani saqlab qolmasin
+def webapp_keyboard(chat_id=None):
+    # Cache buster + chat_id (iMe va boshqa Telegram fork'lari uchun fallback)
     sep = "&" if "?" in WEBAPP_URL else "?"
-    url = f"{WEBAPP_URL}{sep}v={int(time.time())}"
+    parts = [f"v={int(time.time())}"]
+    if chat_id is not None:
+        parts.append(f"user={chat_id}")
+    url = f"{WEBAPP_URL}{sep}{'&'.join(parts)}"
     return ReplyKeyboardMarkup(
         [[KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))]],
         resize_keyboard=True,
@@ -322,7 +325,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.effective_user.first_name
         ),
         parse_mode="Markdown",
-        reply_markup=webapp_keyboard(),
+        reply_markup=webapp_keyboard(chat_id=update.effective_user.id),
     )
 
 
@@ -414,7 +417,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• 💬 Dumaloq video\n"
             "• 🔗 YouTube/TikTok/Instagram havolasi\n\n"
             "Yoki Web ilovani oching 👇",
-            reply_markup=webapp_keyboard(),
+            reply_markup=webapp_keyboard(chat_id=update.effective_user.id),
         )
 
 
