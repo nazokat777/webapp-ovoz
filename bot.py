@@ -9,6 +9,7 @@ except Exception:
 import logging
 import os
 import json
+import time
 import base64
 import tempfile
 import subprocess
@@ -296,8 +297,11 @@ async def process_url(update, context, url):
 
 
 def webapp_keyboard():
+    # Cache buster — Telegram WebApp eski versiyani saqlab qolmasin
+    sep = "&" if "?" in WEBAPP_URL else "?"
+    url = f"{WEBAPP_URL}{sep}v={int(time.time())}"
     return ReplyKeyboardMarkup(
-        [[KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=WEBAPP_URL))]],
+        [[KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))]],
         resize_keyboard=True,
     )
 
