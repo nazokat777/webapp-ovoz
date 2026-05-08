@@ -437,6 +437,23 @@ def make_pdf(text, title="Audio & Konspekt — Matn"):
     return out_path
 
 
+def user_lang(update):
+    """Foydalanuvchi chat'i uchun tilni aniqlash:
+    1) /lang buyruq orqali saqlangan tanlov (chat_data) — bu handlerdan tashqarida)
+    2) Telegram language_code (ru-RU -> ru, en-US -> en, aks holda uz)
+    """
+    code = ""
+    try:
+        code = (update.effective_user.language_code or "").lower()
+    except Exception:
+        code = ""
+    if code.startswith("ru") or code.startswith("be") or code.startswith("kk"):
+        return "ru"
+    if code.startswith("en"):
+        return "en"
+    return "uz"
+
+
 def detect_lang(text):
     """Matn tilini aniqlash: kirill -> ru, lotin asosan ASCII English -> en, aks holda uz."""
     if not text:
@@ -743,24 +760,62 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not v:
         await update.message.reply_text("⚠️ Ovozli xabaringiz topilmadi. Iltimos qayta yuboring.")
         return
-    await process_file(update, context, v.file_id, ".ogg", v.duration or 0)
+    lang = _chat_lang(context, update)
+    await process_file(update, context, v.file_id, ".ogg", v.duration or 0, language=lang)
 
 
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = update.message.audio
     ext = os.path.splitext(a.file_name or "audio.mp3")[1] or ".mp3"
-    await process_file(update, context, a.file_id, ext, a.duration or 0)
+    lang = _chat_lang(context, update)
+    await process_file(update, context, a.file_id, ext, a.duration or 0, language=lang)
 
 
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     v = update.message.video
     ext = os.path.splitext(v.file_name or "video.mp4")[1] or ".mp4"
-    await process_file(update, context, v.file_id, ext, v.duration or 0)
+    lang = _chat_lang(context, update)
+    await process_file(update, context, v.file_id, ext, v.duration or 0, language=lang)
 
 
 async def handle_video_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     v = update.message.video_note
-    await process_file(update, context, v.file_id, ".mp4", v.duration or 0)
+    lang = _chat_lang(context, update)
+    await process_file(update, context, v.file_id, ".mp4", v.duration or 0, language=lang)
+
+
+def _chat_lang(context, update):
+    """Chat'da saqlangan til (/lang buyrug'i orqali) yoki Telegram language_code."""
+    try:
+        saved = context.chat_data.get("lang") if context and hasattr(context, "chat_data") else None
+        if saved in ("uz", "ru", "en"):
+            return saved
+    except Exception:
+        pass
+    return user_lang(update)
+
+
+async def lang_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/lang uz | /lang ru | /lang en — chat tilini saqlash."""
+    text = (update.message.text or "").strip().split(None, 1)
+    code = (text[1].strip().lower() if len(text) > 1 else "")[:2]
+    if code not in ("uz", "ru", "en"):
+        cur = _chat_lang(context, update)
+        await update.message.reply_text(
+            f"🌐 Joriy til: *{cur.upper()}*\n\n"
+            "Boshqa tilni tanlash uchun:\n"
+            "• `/lang uz` — O'zbekcha\n"
+            "• `/lang ru` — Русский\n"
+            "• `/lang en` — English",
+            parse_mode="Markdown",
+        )
+        return
+    try:
+        context.chat_data["lang"] = code
+    except Exception:
+        pass
+    names = {"uz": "O'zbekcha 🇺🇿", "ru": "Русский 🇷🇺", "en": "English 🇬🇧"}
+    await update.message.reply_text(f"✅ Til o'zgartirildi: *{names[code]}*", parse_mode="Markdown")
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -838,7 +893,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     url = extract_url(text)
     if url:
-        await process_url(update, context, url)
+        await process_url(update, context, url, language=_chat_lang(context, update))
         return
     # Uzunroq matn bo'lsa — TTS audioga aylantiriladi
     if len(text) >= 30:
@@ -1129,7 +1184,8 @@ def main():
         try:
             await application.bot.set_my_commands([
                 BotCommand("start", "Botni ishga tushirish / Запустить бот"),
-                BotCommand("help", "Yordam / Помощь"),
+                BotCommand("lang",  "Til tanlash: uz / ru / en"),
+                BotCommand("help",  "Yordam / Помощь"),
             ])
             await application.bot.set_chat_menu_button()
             try:
@@ -1159,6 +1215,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", start))
+    app.add_handler(CommandHandler("lang", lang_command))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.AUDIO, handle_audio))
