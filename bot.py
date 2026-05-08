@@ -36,10 +36,9 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "https://botch-engaging-mustang.ngrok-free.
 HTTP_PORT  = int(os.getenv("HTTP_PORT", 8000))
 
 MUXLISA_URL   = "https://service.muxlisa.uz/api/v2/stt"
-# Muxlisa cheklovi: 5 MB hajm. 16 kHz mono 16-bit WAV = 32 KB/sek.
-# 5 MB / 32 KB ≈ 163 sek. Xavfsizlik buferi bilan 140 sek (~2.3 daqiqa, ~4.3 MB).
-CHUNK_SECONDS = 140
-MAX_CHUNK_BYTES = 4_500_000  # ~4.3 MB — agar shu hajmdan oshsa, ikkiga bo'lamiz
+# Muxlisa cheklovi: 60 sek davomiylik. Xavfsizlik buferi bilan 50 sek bo'laklar.
+# 1 soatlik audio = ~72 bo'lak. Har biri Muxlisa'ga alohida yuboriladi.
+CHUNK_SECONDS = 50
 
 HERE       = os.path.dirname(os.path.abspath(__file__))
 INDEX_HTML = os.path.join(HERE, "index.html")
