@@ -71,15 +71,23 @@ bot_app = None
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# ── ADMIN & LIMIT KONFIGURATSIYASI ─────────────────────────────────────────
+# ── ADMIN & TARIFLAR KONFIGURATSIYASI ──────────────────────────────────────
 # Admin Telegram username (kichik harf, @ siz)
 ADMIN_USERNAMES = {"nazokat_571"}
-# Bepul foydalanuvchi uchun oylik O'zbek STT limiti (daqiqa)
-FREE_MINUTES_PER_MONTH = 5
+
+# Tariflar (O'zbek STT uchun)
+TARIFFS = {
+    "free":     {"name": "🌸 Bepul",    "minutes": 5,   "price": 0},
+    "standart": {"name": "🌿 Standart", "minutes": 180, "price": 170000},  # 3 soat
+    "premium":  {"name": "🌺 Premium",  "minutes": 360, "price": 300000},  # 6 soat
+    "pro":      {"name": "💎 Pro",      "minutes": 600, "price": 500000},  # 10 soat
+}
+
 # Foydalanuvchi xarajatlarini saqlash {user_id: jami_soniya}
-# Eslatma: bot qayta ishga tushganda tiklanadi (ephemeral). Database keyin qo'shiladi.
 user_uzbek_usage = {}
-# Admin /test buyrug'i bilan yoqadigan rejim — Muxlisa chaqirilmaydi (test uchun)
+# Foydalanuvchi tarifi {user_id: tariff_kalit}, default = "free"
+user_tariffs = {}
+# Admin /test buyrug'i bilan yoqadigan rejim — Muxlisa chaqirilmaydi
 TEST_MODE = {"on": False}
 # Muxlisa tarifi (so'm/daqiqa) — statistika uchun
 MUXLISA_PRICE_PER_MIN = 500
@@ -93,6 +101,15 @@ def is_admin(update):
     return uname in ADMIN_USERNAMES
 
 
+def get_user_tariff(user_id):
+    return user_tariffs.get(user_id, "free")
+
+
+def get_user_limit_sec(user_id):
+    tariff = get_user_tariff(user_id)
+    return TARIFFS[tariff]["minutes"] * 60
+
+
 def get_user_usage_sec(user_id):
     return user_uzbek_usage.get(user_id, 0)
 
@@ -102,22 +119,42 @@ def add_user_usage(user_id, seconds):
         user_uzbek_usage[user_id] = user_uzbek_usage.get(user_id, 0) + seconds
 
 
+def format_tariffs_text():
+    lines = ["💎 *Tariflar — O'zbek tilida ovozni matnga aylantirish*\n"]
+    for key, t in TARIFFS.items():
+        mins = t["minutes"]
+        hrs_str = f" ({mins // 60} soat)" if mins >= 60 else ""
+        if t["price"] == 0:
+            lines.append(f"{t['name']} — *{mins} daqiqa/oy* — BEPUL")
+        else:
+            lines.append(f"{t['name']} — *{mins} daqiqa{hrs_str}* — *{t['price']:,} so'm*")
+    lines.append("\n♾️ *CHEKSIZ BEPUL:*")
+    lines.append("• 🇷🇺🇬🇧 Rus / Ingliz audiolar (har qanday davomiyligi)")
+    lines.append("• 📄 PDF → Audio")
+    lines.append("• 📝 Matn → Ovoz")
+    lines.append("\n📞 Tarif olish: @Nazokat_571")
+    return "\n".join(lines)
+
+
 async def can_process_uzbek(update, duration_seconds=0):
     """O'zbek STT limitini tekshiradi. Adminda har doim True."""
     if is_admin(update):
         return True
     user_id = update.effective_user.id
     used = get_user_usage_sec(user_id)
-    limit = FREE_MINUTES_PER_MONTH * 60
+    limit = get_user_limit_sec(user_id)
+    tariff = TARIFFS[get_user_tariff(user_id)]
     if used >= limit:
         await update.message.reply_text(
-            f"⚠️ *Bepul limit tugadi!*\n\n"
-            f"📊 Ishlatilgan: {used/60:.1f} / {FREE_MINUTES_PER_MONTH} daqiqa\n\n"
+            f"⚠️ *Limit tugadi!*\n\n"
+            f"🌸 Tarifingiz: {tariff['name']}\n"
+            f"📊 Ishlatilgan: {used/60:.1f} / {tariff['minutes']} daqiqa\n\n"
             f"♾️ *Cheksiz bepul ishlaydi:*\n"
             f"• 🇷🇺🇬🇧 Rus / Ingliz audiolar\n"
             f"• 📄 PDF → Audio\n"
             f"• 📝 Matn → Ovoz\n\n"
-            f"💎 Premium tarif uchun: @Nazokat_571",
+            f"💎 Tariflar: /tariflar\n"
+            f"📞 Murojaat: @Nazokat_571",
             parse_mode="Markdown"
         )
         return False
@@ -125,10 +162,11 @@ async def can_process_uzbek(update, duration_seconds=0):
         rem = max(0, limit - used) / 60
         await update.message.reply_text(
             f"⚠️ *Bu audio limitga sig'maydi!*\n\n"
-            f"📊 Ishlatilgan: {used/60:.1f} / {FREE_MINUTES_PER_MONTH} daqiqa\n"
+            f"🌸 Tarifingiz: {tariff['name']}\n"
+            f"📊 Ishlatilgan: {used/60:.1f} / {tariff['minutes']} daqiqa\n"
             f"⏳ Bu audio: {duration_seconds/60:.1f} daqiqa\n"
             f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
-            f"💎 Premium tarif: @Nazokat_571",
+            f"💎 Yuqori tarif: /tariflar",
             parse_mode="Markdown"
         )
         return False
@@ -774,16 +812,19 @@ async def process_url(update, context, url, language="uz"):
 
         # Limit qaytadan tekshirish (real davomiyligi bilan)
         if language == "uz" and not is_admin(update) and actual_duration > 0:
-            used = get_user_usage_sec(update.effective_user.id)
-            limit = FREE_MINUTES_PER_MONTH * 60
+            user_id = update.effective_user.id
+            used = get_user_usage_sec(user_id)
+            limit = get_user_limit_sec(user_id)
+            tariff = TARIFFS[get_user_tariff(user_id)]
             if used + actual_duration > limit:
                 rem = max(0, limit - used) / 60
                 await msg.edit_text(
                     f"⚠️ *Bu video limitga sig'maydi!*\n\n"
-                    f"📊 Ishlatilgan: {used/60:.1f} / {FREE_MINUTES_PER_MONTH} daqiqa\n"
+                    f"🌸 Tarif: {tariff['name']}\n"
+                    f"📊 Ishlatilgan: {used/60:.1f} / {tariff['minutes']} daqiqa\n"
                     f"⏳ Bu video: {actual_duration/60:.1f} daqiqa\n"
                     f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
-                    f"💎 Premium: @Nazokat_571",
+                    f"💎 Yuqori tarif: /tariflar",
                     parse_mode="Markdown"
                 )
                 return
@@ -947,34 +988,50 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_sec = sum(user_uzbek_usage.values())
         total_cost = int(total_sec / 60 * MUXLISA_PRICE_PER_MIN)
         test_status = "✅ YONIQ" if TEST_MODE["on"] else "❌ O'CHIQ"
+        # Tariflar bo'yicha foydalanuvchilar soni
+        tariff_counts = {}
+        for t in user_tariffs.values():
+            tariff_counts[t] = tariff_counts.get(t, 0) + 1
+        tariff_lines = []
+        for key, t in TARIFFS.items():
+            cnt = tariff_counts.get(key, 0)
+            if cnt > 0:
+                tariff_lines.append(f"• {t['name']}: {cnt} ta")
+        tariff_text = "\n".join(tariff_lines) if tariff_lines else "• 🌸 Bepul (default): hamma"
         await update.message.reply_text(
             f"👑 *ADMIN PANEL* — @{update.effective_user.username}\n\n"
             f"🧪 Test rejimi: *{test_status}*\n"
             f"👥 Foydalanuvchilar: {total_users}\n"
             f"⏱ Jami O'zbek STT: {total_sec/60:.1f} daqiqa\n"
             f"💰 Jami xarajat: ~{total_cost:,} so'm\n\n"
-            f"*Buyruqlar:*\n"
-            f"• /test — test rejimini yoqish/o'chirish\n"
-            f"• /stats — barcha userlar statistikasi\n"
-            f"• /reset — limitlarni tiklash",
+            f"*Tariflar bo'yicha:*\n{tariff_text}\n\n"
+            f"*Admin buyruqlari:*\n"
+            f"• /test — test rejimi\n"
+            f"• /stats — userlar statistikasi\n"
+            f"• /grant <user_id> <tarif> — tarif berish\n"
+            f"• /reset — limitlarni tiklash\n"
+            f"• /tariflar — tariflar ro'yxati",
             parse_mode="Markdown"
         )
         return
 
     user_id = update.effective_user.id
     used = get_user_usage_sec(user_id)
-    limit = FREE_MINUTES_PER_MONTH * 60
+    limit = get_user_limit_sec(user_id)
     rem = max(0, limit - used) / 60
+    tariff = TARIFFS[get_user_tariff(user_id)]
     await update.message.reply_text(
         f"📊 *Sizning hisobingiz*\n\n"
-        f"🌸 Tarif: *Bepul* ({FREE_MINUTES_PER_MONTH} daqiqa/oy)\n"
+        f"🌸 Tarif: *{tariff['name']}* ({tariff['minutes']} daqiqa/oy)\n"
         f"⏱ Ishlatilgan: {used/60:.1f} daqiqa\n"
         f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
         f"♾️ *Cheksiz bepul:*\n"
         f"• 🇷🇺🇬🇧 Rus / Ingliz audiolar\n"
         f"• 📄 PDF → Audio\n"
         f"• 📝 Matn → Ovoz\n\n"
-        f"💎 Premium tarif: @Nazokat_571",
+        f"💎 Tariflarni ko'rish: /tariflar\n"
+        f"📞 Tarif olish: @Nazokat_571\n\n"
+        f"🆔 Sizning ID'ingiz: `{user_id}`",
         parse_mode="Markdown"
     )
 
@@ -1028,6 +1085,68 @@ async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     n = len(user_uzbek_usage)
     user_uzbek_usage.clear()
     await update.message.reply_text(f"✅ {n} ta foydalanuvchining limiti tiklandi.")
+
+
+async def tariflar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Hammaga: tariflar ro'yxati."""
+    await update.message.reply_text(format_tariffs_text(), parse_mode="Markdown")
+
+
+async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: foydalanuvchiga tarif berish.
+    Foydalanish: /grant <user_id> <free|standart|premium|pro>"""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    args = (update.message.text or "").split()
+    if len(args) < 3:
+        await update.message.reply_text(
+            "*Foydalanish:*\n"
+            "`/grant <user_id> <tarif>`\n\n"
+            "*Tariflar:* `free`, `standart`, `premium`, `pro`\n\n"
+            "*Misol:*\n"
+            "`/grant 123456789 standart`",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        target_id = int(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ user_id raqam bo'lishi kerak.")
+        return
+    tariff_key = args[2].lower()
+    if tariff_key not in TARIFFS:
+        await update.message.reply_text(
+            f"❌ Tarif `{tariff_key}` mavjud emas.\n\n"
+            f"Mavjud: `free`, `standart`, `premium`, `pro`",
+            parse_mode="Markdown"
+        )
+        return
+    user_tariffs[target_id] = tariff_key
+    # Yangi tarif berilganda ishlatilganlar tiklanadi
+    user_uzbek_usage[target_id] = 0
+    t = TARIFFS[tariff_key]
+    await update.message.reply_text(
+        f"✅ *Tarif berildi!*\n\n"
+        f"👤 User ID: `{target_id}`\n"
+        f"🌸 Tarif: {t['name']}\n"
+        f"⏱ Limit: {t['minutes']} daqiqa/oy\n"
+        f"💰 Narx: {t['price']:,} so'm\n\n"
+        f"Limitlar tiklandi (0 dan boshlanadi).",
+        parse_mode="Markdown"
+    )
+    # Foydalanuvchiga ham xabar yuborish
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=f"🎉 *Tabriklaymiz!*\n\n"
+                 f"Sizga yangi tarif berildi: {t['name']}\n"
+                 f"⏱ Limit: {t['minutes']} daqiqa/oy\n\n"
+                 f"Hisobingizni ko'rish: /balance",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logging.warning(f"Userga ({target_id}) tarif xabari yuborilmadi: {e}")
 
 
 async def lang_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1424,10 +1543,11 @@ def main():
     async def _setup_commands(application):
         try:
             await application.bot.set_my_commands([
-                BotCommand("start",   "Botni ishga tushirish / Запустить бот"),
-                BotCommand("balance", "Mening balansim / Мой баланс"),
-                BotCommand("lang",    "Til tanlash: uz / ru / en"),
-                BotCommand("help",    "Yordam / Помощь"),
+                BotCommand("start",    "Botni ishga tushirish"),
+                BotCommand("balance",  "Mening balansim"),
+                BotCommand("tariflar", "Tariflar ro'yxati"),
+                BotCommand("lang",     "Til tanlash: uz / ru / en"),
+                BotCommand("help",     "Yordam"),
             ])
             await application.bot.set_chat_menu_button()
             try:
@@ -1459,9 +1579,11 @@ def main():
     app.add_handler(CommandHandler("help", start))
     app.add_handler(CommandHandler("lang", lang_command))
     app.add_handler(CommandHandler("balance", balance_cmd))
+    app.add_handler(CommandHandler("tariflar", tariflar_cmd))
     app.add_handler(CommandHandler("test", test_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
+    app.add_handler(CommandHandler("grant", grant_cmd))
     app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, handle_web_app_data))
     app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(MessageHandler(filters.AUDIO, handle_audio))
