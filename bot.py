@@ -788,9 +788,12 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
 
 
 async def process_url(update, context, url, language="uz"):
+    logging.info(f"🔗 process_url chaqirildi: lang={language}, url={url[:80]}")
     # O'zbek STT — pulli, limit tekshirish (URL uchun davomiyligi noma'lum, faqat hech qancha qoldimi tekshiramiz)
     if language == "uz":
-        if not await can_process_uzbek(update, 0):
+        ok = await can_process_uzbek(update, 0)
+        logging.info(f"🔐 can_process_uzbek natijasi: {ok}")
+        if not ok:
             return
 
     # Admin test rejimi — yuklash ham, transcribe ham yo'q
@@ -923,10 +926,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Web App dan json ma'lumot kelganda ishlaydi (faqat KeyboardButton orqali)."""
+    logging.info(f"📨 WebApp data keldi userdan: {update.effective_user.id}")
     try:
-        data = json.loads(update.message.web_app_data.data)
+        raw = update.message.web_app_data.data if update.message.web_app_data else ""
+        logging.info(f"📋 WebApp raw data (ilk 200): {raw[:200]}")
+        data = json.loads(raw)
         file_type = data.get("type", "")
         url = data.get("url", "")
+        logging.info(f"🎯 WebApp type={file_type}, url={url[:60] if url else ''}")
 
         if file_type == "url" and url:
             url = extract_url(url) or url
