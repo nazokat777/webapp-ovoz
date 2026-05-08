@@ -366,7 +366,7 @@ def _find_font():
     return None
 
 
-def make_pdf(text, title="SesTon — Matn"):
+def make_pdf(text, title="MNSM — Matn"):
     """Matnni PDF qiladi va vaqtinchalik fayl yo'lini qaytaradi."""
     pdf = FPDF()
     pdf.add_page()
@@ -425,7 +425,7 @@ async def send_result(update, msg, text):
         with open(pdf_path, "rb") as f:
             await update.message.reply_document(
                 document=f,
-                filename="seston-matn.pdf",
+                filename="mnsm-matn.pdf",
                 caption="📎 Matn PDF formatda"
             )
     except Exception as e:
@@ -541,7 +541,8 @@ def webapp_keyboard(chat_id=None):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Assalomu alaykum, *{}*!\n\n"
-        "🎧 Men audio, video va hatto krugli videolarni matnga aylantirib beradigan aqlli bot.\n\n"
+        "◆ *MNSM — AI Specialist*\n"
+        "Men audio, video va hatto krugli videolarni matnga aylantirib beradigan aqlli bot.\n\n"
         "📌 *Nima yuborsa bo'ladi:*\n"
         "• 🎤 Ovozli xabar\n"
         "• 🎵 Audio fayl (MP3, WAV, OGG...)\n"
@@ -682,7 +683,7 @@ def _send_text_and_pdf(user_id, text):
     try:
         pdf_path = make_pdf(text)
         try:
-            telegram_send_document(user_id, pdf_path, filename="seston-matn.pdf", caption="📎 Matn PDF formatda")
+            telegram_send_document(user_id, pdf_path, filename="mnsm-matn.pdf", caption="📎 Matn PDF formatda")
         finally:
             if os.path.exists(pdf_path):
                 try: os.remove(pdf_path)
@@ -855,7 +856,7 @@ def main():
     http_thread = threading.Thread(target=run_http_server_thread, daemon=True)
     http_thread.start()
 
-    print(f"✅ SesTon bot ishga tushdi... (HTTP: {HTTP_PORT}, WebApp: {WEBAPP_URL})")
+    print(f"✅ MNSM bot ishga tushdi... (HTTP: {HTTP_PORT}, WebApp: {WEBAPP_URL})")
     app.run_polling()
 
 
