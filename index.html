@@ -6,7 +6,7 @@
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate, max-age=0">
 <meta http-equiv="Pragma" content="no-cache">
 <meta http-equiv="Expires" content="0">
-<title>MNSM</title>
+<title>Audio & Konspekt bot</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -214,10 +214,23 @@
   .logo-img.failed + .logo-svg-fallback { display: flex; }
   .logo-img.failed { display: none; }
 
+  .logo-name-wrap { display: flex; flex-direction: column; line-height: 1.05; }
   .logo-name {
-    font-family: 'Manrope', sans-serif;
-    font-size: 22px; font-weight: 800; letter-spacing: 4px;
+    font-family: 'Playfair Display', serif;
+    font-size: 18px; font-weight: 800; letter-spacing: 0.3px;
     color: var(--text);
+    background: linear-gradient(135deg, var(--text) 0%, var(--pink-600) 70%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    white-space: nowrap;
+  }
+  .logo-tag {
+    font-family: 'Manrope', sans-serif;
+    font-size: 10px; font-weight: 700; letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--pink-500);
+    margin-top: 2px;
   }
 
   /* Lang switcher (oq pill) */
@@ -1029,10 +1042,13 @@
   <div class="header reveal">
     <div class="logo">
       <div class="logo-icon-wrap">
-        <img class="logo-img" src="logo.png" alt="MNSM" onerror="this.classList.add('failed')">
-        <div class="logo-svg-fallback">MNSM</div>
+        <img class="logo-img" src="logo.png" alt="Audio & Konspekt" onerror="this.classList.add('failed')">
+        <div class="logo-svg-fallback">A&amp;K</div>
       </div>
-      <div class="logo-name">MNSM</div>
+      <div class="logo-name-wrap">
+        <div class="logo-name">Audio &amp; Konspekt</div>
+        <div class="logo-tag">bot</div>
+      </div>
     </div>
     <div class="lang-switch" id="langSwitch">
       <button class="lang-btn active" data-lang="uz" onclick="setLang('uz')" type="button">UZ</button>
@@ -1167,7 +1183,7 @@
   <div class="flower-divider" style="margin-top:24px">
     <svg><use href="#sakura"/></svg>
   </div>
-  <div class="footer reveal"><span>MNSM</span> &nbsp;·&nbsp; <span>Premium AI</span></div>
+  <div class="footer reveal"><span>Audio &amp; Konspekt</span> &nbsp;·&nbsp; <span>Premium AI</span></div>
 
 </div>
 

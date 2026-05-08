@@ -411,7 +411,7 @@ def _find_font():
     return None
 
 
-def make_pdf(text, title="MNSM — Matn"):
+def make_pdf(text, title="Audio & Konspekt — Matn"):
     """Matnni PDF qiladi va vaqtinchalik fayl yo'lini qaytaradi."""
     pdf = FPDF()
     pdf.add_page()
@@ -465,7 +465,10 @@ def _clean_pdf_text(text):
     lines = text.split("\n")
     # Bot sarlavhalari ('MNSM — Matn', 'SesTon — Matn', va h.k.) olib tashlash
     cleaned = []
-    skip_keywords = ("mnsm", "seston", "— matn", "—matn", "matn:", "📝", "📎", "🔊")
+    skip_keywords = (
+        "mnsm", "seston", "audio & konspekt", "konspekt",
+        "— matn", "—matn", "matn:", "📝", "📎", "🔊", "🌸",
+    )
     for ln in lines:
         s = ln.strip()
         if not cleaned and (not s or any(kw in s.lower() for kw in skip_keywords)):
@@ -670,16 +673,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Menu button set xato: {e}")
 
     await update.message.reply_text(
-        "👋 Assalomu alaykum, *{}*!\n\n"
-        "◆ *MNSM*\n"
-        "Men audio, video va matnlar bilan ishlaydigan AI bot.\n\n"
-        "📌 *Yuborishingiz mumkin:*\n"
-        "• 🎤 Ovozli xabar / audio fayl\n"
-        "• 🎬 Video / dumaloq video\n"
-        "• 🔗 YouTube / TikTok / Instagram havolasi\n"
-        "• 📄 PDF fayl (matn ovozga aylanadi)\n"
-        "• 📝 Oddiy matn (matn ovozga aylanadi)\n\n"
-        "Yoki quyidagi tugma orqali *Web ilovani* oching 👇".format(
+        "🌸 Assalomu alaykum, *{}*!\n\n"
+        "Men audio va videolarni matn hamda PDF formatiga aylantiruvchi aqlli botman. "
+        "Darslaringizni yanada osonlashtirish uchun tartibli, chiroyli va tushunarli "
+        "konspektlar tayyorlab beraman.\n\n"
+        "🎧 Shuningdek, PDF hujjatlarni ovozli audio formatga aylantirib, "
+        "ularni istalgan joyda qulay tinglashingizga yordam beraman.\n\n"
+        "Quyidagi tugma orqali *Web ilovani* oching 👇".format(
             update.effective_user.first_name
         ),
         parse_mode="Markdown",
@@ -1117,6 +1117,27 @@ def main():
                 BotCommand("help", "Yordam / Помощь"),
             ])
             await application.bot.set_chat_menu_button()
+            try:
+                await application.bot.set_my_name("Audio & Konspekt bot")
+            except Exception as e:
+                logging.warning(f"set_my_name xato (rate-limit bo'lishi mumkin): {e}")
+            try:
+                await application.bot.set_my_short_description(
+                    "🌸 Audio/video → matn va PDF konspekt. PDF → ovozli audio."
+                )
+            except Exception as e:
+                logging.warning(f"set_my_short_description xato: {e}")
+            try:
+                await application.bot.set_my_description(
+                    "🌸 Assalomu alaykum!\n"
+                    "Men audio va videolarni matn hamda PDF formatiga aylantiruvchi aqlli botman. "
+                    "Darslaringizni yanada osonlashtirish uchun tartibli, chiroyli va tushunarli "
+                    "konspektlar tayyorlab beraman.\n\n"
+                    "🎧 Shuningdek, PDF hujjatlarni ovozli audio formatga aylantirib, "
+                    "ularni istalgan joyda qulay tinglashingizga yordam beraman."
+                )
+            except Exception as e:
+                logging.warning(f"set_my_description xato: {e}")
         except Exception as e:
             logging.error(f"setMyCommands xato: {e}")
     app.post_init = _setup_commands
