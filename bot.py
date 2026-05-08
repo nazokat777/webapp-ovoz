@@ -930,7 +930,11 @@ async def handle_options(request):
 async def serve_index(request):
     if not os.path.exists(INDEX_HTML):
         return web.Response(text="index.html topilmadi", status=404)
-    return web.FileResponse(INDEX_HTML, headers={"Cache-Control": "no-store"})
+    return web.FileResponse(INDEX_HTML, headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    })
 
 
 async def serve_static(request):
