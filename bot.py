@@ -20,13 +20,13 @@ import asyncio
 import threading
 from telegram import (
     Update, KeyboardButton, ReplyKeyboardMarkup, WebAppInfo, BotCommand,
-    MenuButtonWebApp, InlineKeyboardButton, InlineKeyboardMarkup,
+    MenuButtonWebApp, InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice,
 )
 from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    filters, ContextTypes,
+    PreCheckoutQueryHandler, filters, ContextTypes,
 )
 from aiohttp import web
 import edge_tts
@@ -58,6 +58,16 @@ PAYMENT_CARD_HOLDER = os.getenv("PAYMENT_CARD_HOLDER", "")
 ADMIN_CONTACT = os.getenv("ADMIN_CONTACT", "@Nazokat_571")
 # Markdown V1 uchun xavfsiz versiya (pastki chiziqni qochirish — italic talqin qilinmasligi uchun)
 ADMIN_CONTACT_MD = ADMIN_CONTACT.replace("_", "\\_")
+
+# Foydalanuvchilarga ko'rsatiladigan neutral nom (admin username yashiriladi)
+SUPPORT_NAME = os.getenv("SUPPORT_NAME", "Audio Bot Yordam markazi")
+
+# Telegram Payments — BotFather'dan olingan provider token (Click/Stripe/etc.)
+# BotFather → /mybots → bot tanlang → Payments → provayder ulang → token nusxalang
+# Railway'da PAYMENT_PROVIDER_TOKEN env qo'shing
+PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
+# Telegram Payments valyutasi (UZS yoki test uchun USD)
+PAYMENT_CURRENCY = os.getenv("PAYMENT_CURRENCY", "UZS")
 
 # Web App URL — ngrok yoki o'z serveringiz URL'ini kiriting
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://botch-engaging-mustang.ngrok-free.dev")
@@ -192,7 +202,7 @@ def format_tariffs_text():
     lines.append("• 🇷🇺🇬🇧 Rus / Ingliz audiolar (har qanday davomiyligi)")
     lines.append("• 📄 PDF → Audio")
     lines.append("• 📝 Matn → Ovoz")
-    lines.append(f"\n📞 Tarif olish: {ADMIN_CONTACT_MD}")
+    lines.append("\n💎 Tarif sotib olish uchun pastdagi tugmani bosing 👇")
     return "\n".join(lines)
 
 
@@ -213,8 +223,7 @@ async def can_process_uzbek(update, duration_seconds=0):
             f"• 🇷🇺🇬🇧 Rus / Ingliz audiolar\n"
             f"• 📄 PDF → Audio\n"
             f"• 📝 Matn → Ovoz\n\n"
-            f"💎 Tariflar: /tariflar\n"
-            f"📞 Murojaat: {ADMIN_CONTACT_MD}",
+            f"💎 Tariflar va to'lov: /tariflar",
             parse_mode="Markdown"
         )
         return False
@@ -364,9 +373,7 @@ def download_audio_from_url(url):
             if "sign in" in low or "not a bot" in low or "confirm" in low:
                 raise Exception(
                     "YouTube cloud serverni bot deb bloklayapti. "
-                    "Yechim: brauzerdan cookies eksport qilib, Railway'ga "
-                    "YOUTUBE_COOKIES env variable sifatida joylang. "
-                    "Yo'riqnoma: @Nazokat_571 ga murojaat qiling."
+                    "Iltimos boshqa havola yuborib ko'ring yoki keyinroq urining."
                 )
             if "instagram" in url.lower():
                 if "login" in low or "rate" in low or "cookies" in low or "private" in low:
@@ -1224,7 +1231,7 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• 📄 PDF → Audio\n"
         f"• 📝 Matn → Ovoz\n\n"
         f"💎 Tariflarni ko'rish: /tariflar\n"
-        f"📞 Tarif olish: {ADMIN_CONTACT_MD}\n\n"
+        f"💳 Tarif sotib olish: /buy\n\n"
         f"🆔 Sizning ID'ingiz: `{user_id}`",
         parse_mode="Markdown"
     )
@@ -1309,11 +1316,9 @@ async def _show_buy_menu(message_obj):
         buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
     text = (
         "💎 *Tarifni tanlang*\n\n"
-        "Tanlagan tarifingizdan keyin to'lov ma'lumotlari ko'rinadi:\n"
-        "• Karta raqami\n"
-        "• To'lov miqdori\n"
-        "• Adminga chek yuborish ko'rsatmasi\n\n"
-        "🔒 Tarif chek tasdiqlanganidan keyin faollashadi."
+        "Tanlagan tarifingiz uchun to'lov oynasi avtomatik ochiladi.\n"
+        "💳 Click / Payme / Uzcard / Humo orqali to'lov qila olasiz.\n\n"
+        "🔒 To'lov muvaffaqiyatli o'tgan zahoti tarif avtomat faollashadi."
     )
     if hasattr(message_obj, "edit_message_text"):
         await message_obj.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
@@ -1322,7 +1327,7 @@ async def _show_buy_menu(message_obj):
 
 
 async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User tarif tugmasini bosganida — to'lov ma'lumotlarini ko'rsatish + adminga xabar."""
+    """User tarif tugmasini bosganida — Telegram Payments invoice yuboriladi."""
     query = update.callback_query
     if not query or not query.data:
         return
@@ -1342,60 +1347,125 @@ async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = TARIFFS[tariff_key]
     user = query.from_user
 
-    # To'lov ma'lumotlari
-    card = PAYMENT_CARD or "_(admin sozlamagan — env: PAYMENT_CARD)_"
-    holder = PAYMENT_CARD_HOLDER or "_(env: PAYMENT_CARD_HOLDER)_"
+    # PROVIDER_TOKEN sozlanmagan bo'lsa — foydalanuvchiga aytamiz
+    if not PAYMENT_PROVIDER_TOKEN:
+        await query.edit_message_text(
+            "⚙️ *To'lov tizimi sozlanmoqda*\n\n"
+            "Hurmatli foydalanuvchi, avtomat to'lov tizimi hozircha faol emas.\n"
+            f"Iltimos {SUPPORT_NAME} bilan bog'laning.",
+            parse_mode="Markdown"
+        )
+        return
 
-    text = (
-        f"💳 *To'lov ma'lumotlari*\n\n"
+    payload = f"tariff:{tariff_key}:{user.id}"
+    title = f"{t['name']} tarif"
+    description = (
+        f"{t['minutes']} daqiqa/oy ({t['minutes']//60} soat) "
+        f"O'zbek tilida ovoz/videoni matnga aylantirish."
+    )
+    # Telegram Payments narxni eng kichik valyuta birligida kutadi.
+    # UZS uchun rasmiy birlik — tiyin yo'q, lekin Telegram amount * 100 talab qiladi.
+    amount_minor = t["price"] * 100
+    prices = [LabeledPrice(label=t["name"], amount=amount_minor)]
+
+    try:
+        await context.bot.send_invoice(
+            chat_id=query.message.chat_id,
+            title=title,
+            description=description,
+            payload=payload,
+            provider_token=PAYMENT_PROVIDER_TOKEN,
+            currency=PAYMENT_CURRENCY,
+            prices=prices,
+            start_parameter=f"buy_{tariff_key}",
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            is_flexible=False,
+        )
+        # Tugma menyusini "tarif tanlandi" ko'rinishiga o'zgartiramiz
+        try:
+            await query.edit_message_text(
+                f"💳 *{t['name']}* uchun to'lov oynasi yuborildi 👇\n\n"
+                f"Telegramning ichki to'lov oynasidan to'lovni amalga oshiring.\n"
+                f"To'lov muvaffaqiyatli o'tgach tarif avtomat faollashadi.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+    except Exception as e:
+        logging.error(f"send_invoice xatosi: {e}")
+        await query.edit_message_text(
+            f"❌ To'lov oynasini ochishda xato: {str(e)[:200]}\n\n"
+            f"Iltimos keyinroq urinib ko'ring."
+        )
+
+
+async def precheckout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Telegram to'lovni tasdiqlash so'rovi — 10 sek ichida javob berish shart."""
+    q = update.pre_checkout_query
+    if not q:
+        return
+    payload = q.invoice_payload or ""
+    parts = payload.split(":")
+    if len(parts) >= 3 and parts[0] == "tariff" and parts[1] in TARIFFS:
+        await q.answer(ok=True)
+    else:
+        await q.answer(ok=False, error_message="Noma'lum tarif. Iltimos qayta urining.")
+
+
+async def successful_payment_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """To'lov muvaffaqiyatli o'tgach — tarifni avtomat faollashtirish."""
+    sp = update.message.successful_payment
+    if not sp:
+        return
+    payload = sp.invoice_payload or ""
+    parts = payload.split(":")
+    if len(parts) < 3 or parts[0] != "tariff":
+        logging.warning(f"Notanish payment payload: {payload}")
+        return
+    tariff_key = parts[1]
+    try:
+        target_id = int(parts[2])
+    except ValueError:
+        target_id = update.effective_user.id
+    if tariff_key not in TARIFFS:
+        logging.warning(f"Notanish tariff_key: {tariff_key}")
+        return
+
+    user_tariffs[target_id] = tariff_key
+    user_uzbek_usage[target_id] = 0
+    _save_user_data()
+
+    t = TARIFFS[tariff_key]
+    await update.message.reply_text(
+        f"✅ *To'lov muvaffaqiyatli!*\n\n"
         f"🌸 Tarif: *{t['name']}*\n"
         f"⏱ Limit: *{t['minutes']} daqiqa/oy* ({t['minutes']//60} soat)\n"
-        f"💰 To'lov miqdori: *{t['price']:,} so'm*\n\n"
-        f"━━━━━━━━━━━━━━━━━\n"
-        f"📋 *Karta raqami:*\n`{card}`\n"
-        f"👤 *Egasi:* {holder}\n"
-        f"━━━━━━━━━━━━━━━━━\n\n"
-        f"💸 *To'lov usullari:*\n"
-        f"✅ Payme — kartaga o'tkazma\n"
-        f"✅ Click — kartaga o'tkazma\n"
-        f"✅ Paynet — kartaga o'tkazma\n"
-        f"✅ Humo / Uzcard — to'g'ridan to'g'ri\n"
-        f"✅ Boshqa bank — kartaga o'tkazma\n\n"
-        f"📸 *To'lov qilgandan keyin:*\n"
-        f"1. Chek (screenshot) oling\n"
-        f"2. {ADMIN_CONTACT_MD} ga yuboring\n"
-        f"3. ID'ingizni ham yozing: `{user.id}`\n"
-        f"4. Admin 1-5 daqiqa ichida tarifni faollashtiradi\n\n"
-        f"🆔 Sizning ID'ingiz: `{user.id}`"
+        f"💰 To'langan: {sp.total_amount//100:,} {sp.currency}\n\n"
+        f"Tarifingiz faollashdi. Endi audio yuborishingiz mumkin 🎙",
+        parse_mode="Markdown"
     )
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⬅️ Boshqa tarif", callback_data="buy:menu")],
-        [InlineKeyboardButton(f"💬 Adminga yozish — {ADMIN_CONTACT}", url=f"https://t.me/{ADMIN_CONTACT.lstrip('@')}")]
-    ])
-    await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
-
-    # Adminga xabar yuborish
+    # Adminga xabar
     if ADMIN_CHAT_ID["id"]:
-        username = f"@{user.username}" if user.username else (user.first_name or "noma'lum")
+        u = update.effective_user
+        username = f"@{u.username}" if u.username else (u.first_name or "noma'lum")
         try:
             await context.bot.send_message(
                 chat_id=ADMIN_CHAT_ID["id"],
                 text=(
-                    f"🔔 *Yangi to'lov so'rovi!*\n\n"
+                    f"💸 *Yangi to'lov keldi!*\n\n"
                     f"👤 Foydalanuvchi: {username}\n"
-                    f"🆔 ID: `{user.id}`\n"
+                    f"🆔 ID: `{target_id}`\n"
                     f"🌸 Tarif: *{t['name']}*\n"
-                    f"💰 Miqdori: *{t['price']:,} so'm*\n\n"
-                    f"⏳ User chek yuborishini kuting.\n"
-                    f"Chek kelganidan keyin tarifini faollashtirish:\n"
-                    f"`/grant {user.id} {tariff_key}`"
+                    f"💰 Miqdor: {sp.total_amount//100:,} {sp.currency}\n"
+                    f"🧾 Provider id: `{sp.provider_payment_charge_id}`\n\n"
+                    f"Tarif avtomat faollashtirildi."
                 ),
                 parse_mode="Markdown"
             )
         except Exception as e:
-            logging.warning(f"Admin xabarnomasi yuborilmadi: {e}")
-    else:
-        logging.warning("ADMIN_CHAT_ID hali saqlanmagan — admin botga /start yubormagan.")
+            logging.warning(f"Admin xabari yuborilmadi: {e}")
 
 
 async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1897,6 +1967,10 @@ def main():
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(CommandHandler("grant", grant_cmd))
     app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
+
+    # Telegram Payments handlerlari (avtomat to'lov uchun)
+    app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
+    app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
 
     # Global error handler — barcha qaydqilinmagan xatolarni log + userga xabar
     async def _error_handler(update, context):
