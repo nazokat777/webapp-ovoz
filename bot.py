@@ -99,6 +99,52 @@ MUXLISA_PRICE_PER_MIN = 500
 # Admin chat_id (avtomatik saqlanadi admin botga xabar yuborganda) — to'lov xabarnomasi uchun
 ADMIN_CHAT_ID = {"id": None}
 
+# ── PERSISTENCE: usage va tarif ma'lumotlarini JSON faylga saqlash ──────────
+# Railway'da volume bo'lsa /data ga, aks holda working dir'ga yoziladi.
+# Bot qayta yoqilganda limitlar yo'qolib ketmasligi uchun.
+DATA_FILE = os.getenv("DATA_FILE", os.path.join(HERE, "user_data.json"))
+_save_lock = threading.Lock()
+
+
+def _load_user_data():
+    """Bot ishga tushganda saqlangan usage va tariflarni yuklaydi."""
+    if not os.path.exists(DATA_FILE):
+        return
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        for k, v in (data.get("usage") or {}).items():
+            try:
+                user_uzbek_usage[int(k)] = int(v)
+            except (ValueError, TypeError):
+                pass
+        for k, v in (data.get("tariffs") or {}).items():
+            try:
+                if v in TARIFFS:
+                    user_tariffs[int(k)] = v
+            except (ValueError, TypeError):
+                pass
+        logging.info(f"📂 user_data.json yuklandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif")
+    except Exception as e:
+        logging.warning(f"user_data.json o'qishda xato: {e}")
+
+
+def _save_user_data():
+    """user_uzbek_usage va user_tariffs ni faylga yozadi (atomik)."""
+    with _save_lock:
+        try:
+            data = {
+                "usage": {str(k): int(v) for k, v in user_uzbek_usage.items()},
+                "tariffs": {str(k): v for k, v in user_tariffs.items()},
+            }
+            tmp_path = DATA_FILE + ".tmp"
+            os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp_path, DATA_FILE)
+        except Exception as e:
+            logging.warning(f"user_data.json yozishda xato: {e}")
+
 
 def is_admin(update):
     """Foydalanuvchi adminmi tekshiradi (username asosida)."""
@@ -128,6 +174,7 @@ def get_user_usage_sec(user_id):
 def add_user_usage(user_id, seconds):
     if seconds and seconds > 0:
         user_uzbek_usage[user_id] = user_uzbek_usage.get(user_id, 0) + seconds
+        _save_user_data()
 
 
 def format_tariffs_text():
@@ -804,19 +851,44 @@ async def process_local_audio(update, context, file_path, duration=0, language="
         f"🎙 Tanilmoqda...\n⏱ Davomiyligi: {est}\n\nBiroz sabr qiling..."
     )
     try:
+        # Davomiylik noma'lum bo'lsa (webapp duration=0 yuborgan bo'lsa) — ffprobe bilan aniqlaymiz
+        actual_duration = duration
+        if language == "uz" and not is_admin(update) and (not duration or duration <= 0):
+            try:
+                actual_duration = int(await asyncio.to_thread(get_duration, file_path))
+            except Exception:
+                actual_duration = 0
+            if actual_duration > 0:
+                user_id = update.effective_user.id
+                used = get_user_usage_sec(user_id)
+                limit = get_user_limit_sec(user_id)
+                tariff = TARIFFS[get_user_tariff(user_id)]
+                if used + actual_duration > limit:
+                    rem = max(0, limit - used) / 60
+                    await msg.edit_text(
+                        f"⚠️ *Bu audio limitga sig'maydi!*\n\n"
+                        f"🌸 Tarif: {tariff['name']}\n"
+                        f"📊 Ishlatilgan: {used/60:.1f} / {tariff['minutes']} daqiqa\n"
+                        f"⏳ Bu audio: {actual_duration/60:.1f} daqiqa\n"
+                        f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
+                        f"💎 Yuqori tarif: /tariflar",
+                        parse_mode="Markdown"
+                    )
+                    return
+
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
         text = await asyncio.to_thread(transcribe, file_path, cb, language)
         await send_result(update, msg, text)
-        if language == "uz" and not is_admin(update) and duration > 0:
-            add_user_usage(update.effective_user.id, duration)
+        if language == "uz" and not is_admin(update) and actual_duration > 0:
+            add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
 
 
 async def process_file(update, context, file_id, suffix, duration=0, language="uz"):
-    # O'zbek STT — pulli, limit tekshirish
+    # O'zbek STT — pulli, limit tekshirish (oldindan ma'lum bo'lgan davomiylik bilan)
     if language == "uz":
         if not await can_process_uzbek(update, duration):
             return
@@ -843,12 +915,38 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
             tmp_path = tmp.name
         await file.download_to_drive(tmp_path)
 
+        # Agar Telegram metadata davomiylikni bermagan bo'lsa (masalan, document fayl)
+        # ffprobe orqali aniqlaymiz va limitni qayta tekshiramiz — chetlab o'tilmasin.
+        actual_duration = duration
+        if language == "uz" and not is_admin(update) and (not duration or duration <= 0):
+            try:
+                actual_duration = int(await asyncio.to_thread(get_duration, tmp_path))
+            except Exception:
+                actual_duration = 0
+            if actual_duration > 0:
+                user_id = update.effective_user.id
+                used = get_user_usage_sec(user_id)
+                limit = get_user_limit_sec(user_id)
+                tariff = TARIFFS[get_user_tariff(user_id)]
+                if used + actual_duration > limit:
+                    rem = max(0, limit - used) / 60
+                    await msg.edit_text(
+                        f"⚠️ *Bu fayl limitga sig'maydi!*\n\n"
+                        f"🌸 Tarif: {tariff['name']}\n"
+                        f"📊 Ishlatilgan: {used/60:.1f} / {tariff['minutes']} daqiqa\n"
+                        f"⏳ Bu fayl: {actual_duration/60:.1f} daqiqa\n"
+                        f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
+                        f"💎 Yuqori tarif: /tariflar",
+                        parse_mode="Markdown"
+                    )
+                    return
+
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
         text = await asyncio.to_thread(transcribe, tmp_path, cb, language)
         await send_result(update, msg, text)
-        if language == "uz" and not is_admin(update) and duration > 0:
-            add_user_usage(update.effective_user.id, duration)
+        if language == "uz" and not is_admin(update) and actual_duration > 0:
+            add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
@@ -1178,6 +1276,7 @@ async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     n = len(user_uzbek_usage)
     user_uzbek_usage.clear()
+    _save_user_data()
     await update.message.reply_text(f"✅ {n} ta foydalanuvchining limiti tiklandi.")
 
 
@@ -1330,6 +1429,7 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_tariffs[target_id] = tariff_key
     # Yangi tarif berilganda ishlatilganlar tiklanadi
     user_uzbek_usage[target_id] = 0
+    _save_user_data()
     t = TARIFFS[tariff_key]
     await update.message.reply_text(
         f"✅ *Tarif berildi!*\n\n"
@@ -1730,6 +1830,9 @@ def run_http_server_thread():
 
 def main():
     global bot_app
+
+    # Saqlangan usage va tariflarni yuklash
+    _load_user_data()
 
     # Tashqi dasturlarni tekshirish
     missing = []
