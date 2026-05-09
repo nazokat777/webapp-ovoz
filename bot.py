@@ -56,6 +56,8 @@ MUXLISA_KEY = os.getenv("MUXLISA_KEY", "UYaezERZPBO7pkJj4wzttq5eV90cGdFrI8XxGyCl
 PAYMENT_CARD = os.getenv("PAYMENT_CARD", "")
 PAYMENT_CARD_HOLDER = os.getenv("PAYMENT_CARD_HOLDER", "")
 ADMIN_CONTACT = os.getenv("ADMIN_CONTACT", "@Nazokat_571")
+# Markdown V1 uchun xavfsiz versiya (pastki chiziqni qochirish — italic talqin qilinmasligi uchun)
+ADMIN_CONTACT_MD = ADMIN_CONTACT.replace("_", "\\_")
 
 # Web App URL — ngrok yoki o'z serveringiz URL'ini kiriting
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://botch-engaging-mustang.ngrok-free.dev")
@@ -190,7 +192,7 @@ def format_tariffs_text():
     lines.append("• 🇷🇺🇬🇧 Rus / Ingliz audiolar (har qanday davomiyligi)")
     lines.append("• 📄 PDF → Audio")
     lines.append("• 📝 Matn → Ovoz")
-    lines.append("\n📞 Tarif olish: @Nazokat_571")
+    lines.append(f"\n📞 Tarif olish: {ADMIN_CONTACT_MD}")
     return "\n".join(lines)
 
 
@@ -212,7 +214,7 @@ async def can_process_uzbek(update, duration_seconds=0):
             f"• 📄 PDF → Audio\n"
             f"• 📝 Matn → Ovoz\n\n"
             f"💎 Tariflar: /tariflar\n"
-            f"📞 Murojaat: @Nazokat_571",
+            f"📞 Murojaat: {ADMIN_CONTACT_MD}",
             parse_mode="Markdown"
         )
         return False
@@ -1222,7 +1224,7 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• 📄 PDF → Audio\n"
         f"• 📝 Matn → Ovoz\n\n"
         f"💎 Tariflarni ko'rish: /tariflar\n"
-        f"📞 Tarif olish: @Nazokat_571\n\n"
+        f"📞 Tarif olish: {ADMIN_CONTACT_MD}\n\n"
         f"🆔 Sizning ID'ingiz: `{user_id}`",
         parse_mode="Markdown"
     )
@@ -1361,7 +1363,7 @@ async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Boshqa bank — kartaga o'tkazma\n\n"
         f"📸 *To'lov qilgandan keyin:*\n"
         f"1. Chek (screenshot) oling\n"
-        f"2. {ADMIN_CONTACT} ga yuboring\n"
+        f"2. {ADMIN_CONTACT_MD} ga yuboring\n"
         f"3. ID'ingizni ham yozing: `{user.id}`\n"
         f"4. Admin 1-5 daqiqa ichida tarifni faollashtiradi\n\n"
         f"🆔 Sizning ID'ingiz: `{user.id}`"
