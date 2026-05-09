@@ -199,20 +199,18 @@ def add_user_usage(user_id, seconds):
 
 def format_tariffs_text():
     lines = ["💎 *Tariflar*\n"]
-    lines.append("Tarif daqiqalari quyidagilarga sarflanadi:")
-    lines.append("• 🎤 O'zbek audio/video → matn")
+    lines.append("Tarif daqiqalari barcha xizmatlarga sarflanadi:")
+    lines.append("• 🎤 Audio/video → matn (har qanday tilda)")
     lines.append("• 📄 PDF → Audio (TTS)")
     lines.append("• 📝 Matn → Ovoz (TTS)")
     lines.append("")
-    for key, t in TARIFFS.items():
+    for _, t in TARIFFS.items():
         mins = t["minutes"]
         hrs_str = f" ({mins // 60} soat)" if mins >= 60 else ""
         if t["price"] == 0:
             lines.append(f"{t['name']} — *{mins} daqiqa/oy* — BEPUL")
         else:
             lines.append(f"{t['name']} — *{mins} daqiqa{hrs_str}* — *{t['price']:,} so'm*")
-    lines.append("\n♾️ *Cheksiz bepul:*")
-    lines.append("• 🇷🇺🇬🇧 Rus / Ingliz audiolar (har qanday davomiyligi)")
     lines.append("\n💎 Tarif sotib olish uchun pastdagi tugmani bosing 👇")
     return "\n".join(lines)
 
@@ -230,11 +228,7 @@ async def can_process_uzbek(update, duration_seconds=0):
             f"⚠️ *Limit tugadi!*\n\n"
             f"🌸 Tarifingiz: {tariff['name']}\n"
             f"📊 Ishlatilgan: {used/60:.1f} / {tariff['minutes']} daqiqa\n\n"
-            f"♾️ *Cheksiz bepul ishlaydi:*\n"
-            f"• 🇷🇺🇬🇧 Rus / Ingliz audiolar\n"
-            f"• 📄 PDF → Audio\n"
-            f"• 📝 Matn → Ovoz\n\n"
-            f"💎 Tariflar va to'lov: /tariflar",
+            f"💎 Tarif sotib olish: /tariflar",
             parse_mode="Markdown"
         )
         return False
@@ -850,10 +844,9 @@ def make_progress_cb(loop, msg, base_label="🎙 Tanilmoqda"):
 
 
 async def process_local_audio(update, context, file_path, duration=0, language="uz"):
-    # O'zbek STT — pulli, limit tekshirish
-    if language == "uz":
-        if not await can_process_uzbek(update, duration):
-            return
+    # Tarif limiti — barcha tillarda qo'llanadi
+    if not await can_process_uzbek(update, duration):
+        return
 
     est = f"{duration // 60} daqiqa {duration % 60} soniya" if duration else "noma'lum"
 
@@ -873,7 +866,7 @@ async def process_local_audio(update, context, file_path, duration=0, language="
     try:
         # Davomiylik noma'lum bo'lsa (webapp duration=0 yuborgan bo'lsa) — ffprobe bilan aniqlaymiz
         actual_duration = duration
-        if language == "uz" and not is_admin(update) and (not duration or duration <= 0):
+        if not is_admin(update) and (not duration or duration <= 0):
             try:
                 actual_duration = int(await asyncio.to_thread(get_duration, file_path))
             except Exception:
@@ -900,7 +893,7 @@ async def process_local_audio(update, context, file_path, duration=0, language="
         cb = make_progress_cb(loop, msg)
         text = await asyncio.to_thread(transcribe, file_path, cb, language)
         await send_result(update, msg, text)
-        if language == "uz" and not is_admin(update) and actual_duration > 0:
+        if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
@@ -908,10 +901,9 @@ async def process_local_audio(update, context, file_path, duration=0, language="
 
 
 async def process_file(update, context, file_id, suffix, duration=0, language="uz"):
-    # O'zbek STT — pulli, limit tekshirish (oldindan ma'lum bo'lgan davomiylik bilan)
-    if language == "uz":
-        if not await can_process_uzbek(update, duration):
-            return
+    # Tarif limiti — barcha tillarda qo'llanadi
+    if not await can_process_uzbek(update, duration):
+        return
 
     est = f"{duration // 60} daqiqa {duration % 60} soniya" if duration else "noma'lum"
 
@@ -938,7 +930,7 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
         # Agar Telegram metadata davomiylikni bermagan bo'lsa (masalan, document fayl)
         # ffprobe orqali aniqlaymiz va limitni qayta tekshiramiz — chetlab o'tilmasin.
         actual_duration = duration
-        if language == "uz" and not is_admin(update) and (not duration or duration <= 0):
+        if not is_admin(update) and (not duration or duration <= 0):
             try:
                 actual_duration = int(await asyncio.to_thread(get_duration, tmp_path))
             except Exception:
@@ -965,7 +957,7 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
         cb = make_progress_cb(loop, msg)
         text = await asyncio.to_thread(transcribe, tmp_path, cb, language)
         await send_result(update, msg, text)
-        if language == "uz" and not is_admin(update) and actual_duration > 0:
+        if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
@@ -978,12 +970,11 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
 
 async def process_url(update, context, url, language="uz"):
     logging.info(f"🔗 process_url chaqirildi: lang={language}, url={url[:80]}")
-    # O'zbek STT — pulli, limit tekshirish (URL uchun davomiyligi noma'lum, faqat hech qancha qoldimi tekshiramiz)
-    if language == "uz":
-        ok = await can_process_uzbek(update, 0)
-        logging.info(f"🔐 can_process_uzbek natijasi: {ok}")
-        if not ok:
-            return
+    # Tarif limiti — barcha tillarda qo'llanadi (davomiylik yuklab olingach tekshiriladi)
+    ok = await can_process_uzbek(update, 0)
+    logging.info(f"🔐 can_process tarif natijasi: {ok}")
+    if not ok:
+        return
 
     # Admin test rejimi — yuklash ham, transcribe ham yo'q
     if language == "uz" and is_admin(update) and TEST_MODE["on"]:
@@ -1019,7 +1010,7 @@ async def process_url(update, context, url, language="uz"):
             actual_duration = 0
 
         # Limit qaytadan tekshirish (real davomiyligi bilan)
-        if language == "uz" and not is_admin(update) and actual_duration > 0:
+        if not is_admin(update) and actual_duration > 0:
             user_id = update.effective_user.id
             used = get_user_usage_sec(user_id)
             limit = get_user_limit_sec(user_id)
@@ -1043,7 +1034,7 @@ async def process_url(update, context, url, language="uz"):
         cb = make_progress_cb(loop, msg)
         text = await asyncio.to_thread(transcribe, audio_path, cb, language)
         await send_result(update, msg, text)
-        if language == "uz" and not is_admin(update) and actual_duration > 0:
+        if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"URL xato: {e}")
@@ -1237,10 +1228,6 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🌸 Tarif: *{tariff['name']}* ({tariff['minutes']} daqiqa/oy)\n"
         f"⏱ Ishlatilgan: {used/60:.1f} daqiqa\n"
         f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
-        f"♾️ *Cheksiz bepul:*\n"
-        f"• 🇷🇺🇬🇧 Rus / Ingliz audiolar\n"
-        f"• 📄 PDF → Audio\n"
-        f"• 📝 Matn → Ovoz\n\n"
         f"💎 Tariflarni ko'rish: /tariflar\n"
         f"💳 Tarif sotib olish: /buy\n\n"
         f"🆔 Sizning ID'ingiz: `{user_id}`",
