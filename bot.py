@@ -62,6 +62,14 @@ ADMIN_CONTACT_MD = ADMIN_CONTACT.replace("_", "\\_")
 # Foydalanuvchilarga ko'rsatiladigan neutral nom (admin username yashiriladi)
 SUPPORT_NAME = os.getenv("SUPPORT_NAME", "Audio Bot Yordam markazi")
 
+# Admin Telegram user ID — agar sozlangan bo'lsa, bot startup'da ADMIN_CHAT_ID ga yoziladi.
+# Bu admin /start yubormay turib ham chek xabarlarini olish imkonini beradi.
+try:
+    _admin_id_env = os.getenv("ADMIN_USER_ID", "").strip()
+    ADMIN_USER_ID = int(_admin_id_env) if _admin_id_env else None
+except ValueError:
+    ADMIN_USER_ID = None
+
 # Telegram Payments — BotFather'dan olingan provider token (Click/Stripe/etc.)
 # BotFather → /mybots → bot tanlang → Payments → provayder ulang → token nusxalang
 # Railway'da PAYMENT_PROVIDER_TOKEN env qo'shing
@@ -190,7 +198,12 @@ def add_user_usage(user_id, seconds):
 
 
 def format_tariffs_text():
-    lines = ["💎 *Tariflar — O'zbek tilida ovozni matnga aylantirish*\n"]
+    lines = ["💎 *Tariflar*\n"]
+    lines.append("Tarif daqiqalari quyidagilarga sarflanadi:")
+    lines.append("• 🎤 O'zbek audio/video → matn")
+    lines.append("• 📄 PDF → Audio (TTS)")
+    lines.append("• 📝 Matn → Ovoz (TTS)")
+    lines.append("")
     for key, t in TARIFFS.items():
         mins = t["minutes"]
         hrs_str = f" ({mins // 60} soat)" if mins >= 60 else ""
@@ -198,10 +211,8 @@ def format_tariffs_text():
             lines.append(f"{t['name']} — *{mins} daqiqa/oy* — BEPUL")
         else:
             lines.append(f"{t['name']} — *{mins} daqiqa{hrs_str}* — *{t['price']:,} so'm*")
-    lines.append("\n♾️ *CHEKSIZ BEPUL:*")
+    lines.append("\n♾️ *Cheksiz bepul:*")
     lines.append("• 🇷🇺🇬🇧 Rus / Ingliz audiolar (har qanday davomiyligi)")
-    lines.append("• 📄 PDF → Audio")
-    lines.append("• 📝 Matn → Ovoz")
     lines.append("\n💎 Tarif sotib olish uchun pastdagi tugmani bosing 👇")
     return "\n".join(lines)
 
@@ -1742,9 +1753,17 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def process_pdf_to_voice(update, context, file_id):
-    """PDF dan matn ajratib, faqat ovozga aylantirib yuboradi (matn ko'rsatilmaydi)."""
+    """PDF dan matn ajratib, faqat ovozga aylantirib yuboradi (matn ko'rsatilmaydi).
+    Tarif limiti qo'llanadi — natija audio davomiyligi ishlatilgan daqiqaga qo'shiladi."""
+    # Adminda har doim True (limit yo'q)
+    if not is_admin(update):
+        # Foydalanuvchining qoldiq daqiqalari bormi tekshirish
+        if not await can_process_uzbek(update, 0):
+            return
+
     msg = await update.message.reply_text("📄 PDF qabul qilindi. Ovozga aylantirilmoqda...")
     tmp_path = None
+    tts_path = None
     try:
         file = await context.bot.get_file(file_id)
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
@@ -1757,26 +1776,61 @@ async def process_pdf_to_voice(update, context, file_id):
             return
 
         tts_path = await asyncio.to_thread(make_tts, text)
-        if tts_path:
+        if not tts_path:
+            await msg.edit_text("❌ Ovoz yaratib bo'lmadi.")
+            return
+
+        # Audio davomiyligini aniqlash va limit qayta tekshirish
+        actual_duration = 0
+        if not is_admin(update):
             try:
-                with open(tts_path, "rb") as f:
-                    await update.message.reply_voice(voice=f, caption="🔊 PDF ovoz shaklida")
-                await msg.edit_text("✅ Tayyor!")
-            finally:
-                if os.path.exists(tts_path):
-                    try: os.remove(tts_path)
-                    except Exception: pass
+                actual_duration = int(await asyncio.to_thread(get_duration, tts_path))
+            except Exception:
+                actual_duration = 0
+            if actual_duration > 0:
+                user_id = update.effective_user.id
+                used = get_user_usage_sec(user_id)
+                limit = get_user_limit_sec(user_id)
+                tariff = TARIFFS[get_user_tariff(user_id)]
+                if used + actual_duration > limit:
+                    rem = max(0, limit - used) / 60
+                    await msg.edit_text(
+                        f"⚠️ *Bu PDF limitga sig'maydi!*\n\n"
+                        f"🌸 Tarif: {tariff['name']}\n"
+                        f"📊 Ishlatilgan: {used/60:.1f} / {tariff['minutes']} daqiqa\n"
+                        f"⏳ Bu PDF audiosi: {actual_duration/60:.1f} daqiqa\n"
+                        f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
+                        f"💎 Yuqori tarif: /tariflar",
+                        parse_mode="Markdown"
+                    )
+                    return
+
+        with open(tts_path, "rb") as f:
+            await update.message.reply_voice(voice=f, caption="🔊 PDF ovoz shaklida")
+        await msg.edit_text("✅ Tayyor!")
+
+        if not is_admin(update) and actual_duration > 0:
+            add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"PDF -> voice xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
     finally:
+        if tts_path and os.path.exists(tts_path):
+            try: os.remove(tts_path)
+            except Exception: pass
         if tmp_path and os.path.exists(tmp_path):
             try: os.remove(tmp_path)
             except Exception: pass
 
 
 async def text_to_voice(update, context, text):
-    """Berilgan matnni ovozli MP3 ga aylantirib yuboradi."""
+    """Berilgan matnni ovozli MP3 ga aylantirib yuboradi.
+    Tarif limiti qo'llanadi — natija audio davomiyligi ishlatilgan daqiqaga qo'shiladi."""
+    # Adminda limit yo'q
+    if not is_admin(update):
+        if not await can_process_uzbek(update, 0):
+            return
+
     msg = await update.message.reply_text("🔊 Matn ovozga aylantirilmoqda...")
     tts_path = None
     try:
@@ -1784,9 +1838,38 @@ async def text_to_voice(update, context, text):
         if not tts_path:
             await msg.edit_text("❌ Matn bo'sh ekan.")
             return
+
+        # Audio davomiyligini aniqlash va limit qayta tekshirish
+        actual_duration = 0
+        if not is_admin(update):
+            try:
+                actual_duration = int(await asyncio.to_thread(get_duration, tts_path))
+            except Exception:
+                actual_duration = 0
+            if actual_duration > 0:
+                user_id = update.effective_user.id
+                used = get_user_usage_sec(user_id)
+                limit = get_user_limit_sec(user_id)
+                tariff = TARIFFS[get_user_tariff(user_id)]
+                if used + actual_duration > limit:
+                    rem = max(0, limit - used) / 60
+                    await msg.edit_text(
+                        f"⚠️ *Bu matn limitga sig'maydi!*\n\n"
+                        f"🌸 Tarif: {tariff['name']}\n"
+                        f"📊 Ishlatilgan: {used/60:.1f} / {tariff['minutes']} daqiqa\n"
+                        f"⏳ Bu ovoz: {actual_duration/60:.1f} daqiqa\n"
+                        f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
+                        f"💎 Yuqori tarif: /tariflar",
+                        parse_mode="Markdown"
+                    )
+                    return
+
         await msg.edit_text("✅ Tayyor!")
         with open(tts_path, "rb") as f:
             await update.message.reply_voice(voice=f, caption="🔊 Matn ovoz shaklida")
+
+        if not is_admin(update) and actual_duration > 0:
+            add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"TTS xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
@@ -2081,6 +2164,11 @@ def main():
 
     # Saqlangan usage va tariflarni yuklash
     _load_user_data()
+
+    # Admin user ID env'dan o'qib ADMIN_CHAT_ID ga yozamiz (admin /start kutmasdan ishlasin)
+    if ADMIN_USER_ID:
+        ADMIN_CHAT_ID["id"] = ADMIN_USER_ID
+        logging.info(f"👑 Admin chat ID env'dan o'rnatildi: {ADMIN_USER_ID}")
 
     # Tashqi dasturlarni tekshirish
     missing = []
