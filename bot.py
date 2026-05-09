@@ -1316,9 +1316,9 @@ async def _show_buy_menu(message_obj):
         buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
     text = (
         "💎 *Tarifni tanlang*\n\n"
-        "Tanlagan tarifingiz uchun to'lov oynasi avtomatik ochiladi.\n"
-        "💳 Click / Payme / Uzcard / Humo orqali to'lov qila olasiz.\n\n"
-        "🔒 To'lov muvaffaqiyatli o'tgan zahoti tarif avtomat faollashadi."
+        "Tanlagan tarifingiz uchun to'lov ma'lumotlari ko'rinadi.\n"
+        "💳 Click / Payme / Paynet / Uzcard / Humo orqali to'lashingiz mumkin.\n\n"
+        "📸 To'lov chekini botga yuborgach tarifingiz tasdiqlanadi va faollashadi."
     )
     if hasattr(message_obj, "edit_message_text"):
         await message_obj.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
@@ -1347,14 +1347,31 @@ async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = TARIFFS[tariff_key]
     user = query.from_user
 
-    # PROVIDER_TOKEN sozlanmagan bo'lsa — foydalanuvchiga aytamiz
+    # PROVIDER_TOKEN sozlanmagan bo'lsa — manual to'lov rejimi
+    # (karta raqami ko'rsatiladi, foydalanuvchi to'laydi va chek yuboradi)
     if not PAYMENT_PROVIDER_TOKEN:
-        await query.edit_message_text(
-            "⚙️ *To'lov tizimi sozlanmoqda*\n\n"
-            "Hurmatli foydalanuvchi, avtomat to'lov tizimi hozircha faol emas.\n"
-            f"Iltimos {SUPPORT_NAME} bilan bog'laning.",
-            parse_mode="Markdown"
+        card = PAYMENT_CARD or "(karta raqami sozlanmagan)"
+        holder_line = f"👤 Karta egasi: *{PAYMENT_CARD_HOLDER}*\n" if PAYMENT_CARD_HOLDER else ""
+        text = (
+            f"💳 *To'lov*\n\n"
+            f"🌸 Tarif: *{t['name']}*\n"
+            f"⏱ Limit: *{t['minutes']} daqiqa/oy* ({t['minutes']//60} soat)\n"
+            f"💰 To'lov miqdori: *{t['price']:,} so'm*\n\n"
+            f"━━━━━━━━━━━━━━━━━\n"
+            f"📋 *Karta raqami:*\n`{card}`\n"
+            f"{holder_line}"
+            f"━━━━━━━━━━━━━━━━━\n\n"
+            f"💸 To'lov usullari:\n"
+            f"✅ Click / Payme / Paynet (kartaga o'tkazma)\n"
+            f"✅ Humo / Uzcard P2P\n"
+            f"✅ Boshqa bank ilovalari\n\n"
+            f"📸 *To'lovdan keyin pastdagi tugmani bosing va chekni shu chatga yuboring* 👇"
         )
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Men to'ladim — chek yuboraman", callback_data=f"paid:{tariff_key}")],
+            [InlineKeyboardButton("⬅️ Boshqa tarif", callback_data="buy:menu")],
+        ])
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=keyboard)
         return
 
     payload = f"tariff:{tariff_key}:{user.id}"
@@ -1466,6 +1483,165 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
             )
         except Exception as e:
             logging.warning(f"Admin xabari yuborilmadi: {e}")
+
+
+# ── MANUAL TO'LOV REJIMI: chek + admin tasdiqlash ──────────────────────────
+
+async def paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User 'Men to'ladim' tugmasini bossa — botga chek (rasm) yuborishini kutamiz."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+    if not query.data.startswith("paid:"):
+        return
+    tariff_key = query.data.split(":", 1)[1]
+    if tariff_key not in TARIFFS:
+        return
+    # User holatini saqlaymiz — keyingi photo shu tarif uchun chek deb qabul qilinadi
+    context.user_data["awaiting_payment_for"] = tariff_key
+    t = TARIFFS[tariff_key]
+    await query.edit_message_text(
+        f"📸 *{t['name']}* uchun chekni shu chatga yuboring (rasm/screenshot).\n\n"
+        f"💰 Miqdor: *{t['price']:,} so'm*\n\n"
+        f"Chek tasdiqlanganidan keyin tarifingiz avtomat faollashadi.\n"
+        f"Odatda 5-30 daqiqa ichida.",
+        parse_mode="Markdown"
+    )
+
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User chek (rasm) yuborganda — agar to'lov kutilayotgan bo'lsa adminga uzatamiz."""
+    tariff_key = context.user_data.get("awaiting_payment_for") if context.user_data else None
+    if not tariff_key or tariff_key not in TARIFFS:
+        # Boshqa rasm yuborilgan — javob bermaymiz (o'tkazib yuboramiz)
+        return
+
+    if not ADMIN_CHAT_ID["id"]:
+        await update.message.reply_text(
+            "⚠️ Admin tizimi hali sozlanmagan. Iltimos keyinroq urinib ko'ring."
+        )
+        return
+
+    t = TARIFFS[tariff_key]
+    user = update.effective_user
+    photo = update.message.photo[-1]  # eng katta o'lchamdagi rasm
+    username = f"@{user.username}" if user.username else (user.first_name or "noma'lum")
+
+    caption = (
+        f"💸 *Yangi to'lov cheki*\n\n"
+        f"👤 Foydalanuvchi: {username}\n"
+        f"🆔 ID: `{user.id}`\n"
+        f"🌸 Tarif: *{t['name']}*\n"
+        f"⏱ Limit: {t['minutes']} daqiqa/oy\n"
+        f"💰 Miqdor: *{t['price']:,} so'm*"
+    )
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("✅ Tasdiqlash", callback_data=f"approve:{user.id}:{tariff_key}"),
+            InlineKeyboardButton("❌ Rad etish",  callback_data=f"reject:{user.id}:{tariff_key}"),
+        ]
+    ])
+    try:
+        await context.bot.send_photo(
+            chat_id=ADMIN_CHAT_ID["id"],
+            photo=photo.file_id,
+            caption=caption,
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+    except Exception as e:
+        logging.error(f"Chekni adminga yuborishda xato: {e}")
+        await update.message.reply_text("❌ Chekni yuborishda xato. Iltimos keyinroq urinib ko'ring.")
+        return
+
+    await update.message.reply_text(
+        "✅ Chek qabul qilindi.\n\n"
+        "To'lov tekshirilmoqda. Tasdiqlanganidan keyin tarif avtomat faollashadi.\n"
+        "Odatda 5-30 daqiqa ichida xabar olasiz."
+    )
+    # Holatni tozalash — qayta chek yuborilmasin
+    context.user_data.pop("awaiting_payment_for", None)
+
+
+def _is_admin_callback(query):
+    """Callback adminmi tekshirish."""
+    user = query.from_user
+    if user.username and user.username.lower() in ADMIN_USERNAMES:
+        return True
+    if ADMIN_CHAT_ID["id"] and user.id == ADMIN_CHAT_ID["id"]:
+        return True
+    return False
+
+
+async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin chek ostidagi 'Tasdiqlash' yoki 'Rad etish' tugmasi."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    if not _is_admin_callback(query):
+        await query.answer("⛔ Faqat admin uchun.", show_alert=True)
+        return
+    await query.answer()
+
+    parts = query.data.split(":")
+    if len(parts) < 3:
+        return
+    action = parts[0]
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        return
+    tariff_key = parts[2]
+    if tariff_key not in TARIFFS:
+        return
+    t = TARIFFS[tariff_key]
+
+    if action == "approve":
+        user_tariffs[target_id] = tariff_key
+        user_uzbek_usage[target_id] = 0
+        _save_user_data()
+        # Admin xabar caption'ini yangilash
+        try:
+            await query.edit_message_caption(
+                caption=(query.message.caption or "") + f"\n\n✅ *TASDIQLANDI* — tarif berildi.",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        # Foydalanuvchiga xabar
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=(
+                    f"✅ *To'lovingiz tasdiqlandi!*\n\n"
+                    f"🌸 Tarif: *{t['name']}*\n"
+                    f"⏱ Limit: *{t['minutes']} daqiqa/oy* ({t['minutes']//60} soat)\n\n"
+                    f"Tarifingiz faollashdi. Endi audio yuborishingiz mumkin 🎙"
+                ),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logging.warning(f"Userga ({target_id}) tasdiq xabari yuborilmadi: {e}")
+    elif action == "reject":
+        try:
+            await query.edit_message_caption(
+                caption=(query.message.caption or "") + "\n\n❌ *RAD ETILDI*",
+                parse_mode="Markdown"
+            )
+        except Exception:
+            pass
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=(
+                    f"❌ *To'lovingiz tasdiqlanmadi*\n\n"
+                    f"Iltimos chekni qayta tekshirib /buy orqali qaytadan urining."
+                ),
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logging.warning(f"Userga ({target_id}) rad xabari yuborilmadi: {e}")
 
 
 async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1968,7 +2144,12 @@ def main():
     app.add_handler(CommandHandler("grant", grant_cmd))
     app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
 
-    # Telegram Payments handlerlari (avtomat to'lov uchun)
+    # Manual to'lov rejimi handlerlari (chek + admin tasdiqlash)
+    app.add_handler(CallbackQueryHandler(paid_callback, pattern=r"^paid:"))
+    app.add_handler(CallbackQueryHandler(approve_reject_callback, pattern=r"^(approve|reject):"))
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+
+    # Telegram Payments handlerlari (kelajakda PROVIDER_TOKEN qo'shilsa avtomat ishlaydi)
     app.add_handler(PreCheckoutQueryHandler(precheckout_handler))
     app.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment_handler))
 
