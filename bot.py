@@ -1951,39 +1951,116 @@ def _send_text_and_pdf(user_id, text):
         logging.error(f"PDF (HTTP) xato: {e}")
 
 
+# ── HTTP/THREAD CONTEXT UCHUN LIMIT TEKSHIRUVI ─────────────────────────────
+# WebApp orqali yuborilgan fayllar Update obyektisiz thread'da ishlanadi.
+# Shu sababli user_id asosida ishlaydigan alohida limit funksiyasi kerak.
+
+def _is_admin_id(user_id):
+    """user_id admin chat ID ga teng bo'lsa admin."""
+    return ADMIN_CHAT_ID["id"] is not None and user_id == ADMIN_CHAT_ID["id"]
+
+
+def check_limit_by_user_id(user_id, duration_seconds=0):
+    """user_id uchun tarif limitini tekshiradi.
+    Returns: (ok: bool) — agar limit oshib ketgan bo'lsa Telegram'ga xabar yuborib False qaytaradi."""
+    if _is_admin_id(user_id):
+        return True
+    used = get_user_usage_sec(user_id)
+    limit = get_user_limit_sec(user_id)
+    tariff = TARIFFS[get_user_tariff(user_id)]
+    if used >= limit:
+        telegram_send_message(
+            user_id,
+            f"⚠️ Limit tugadi!\n\n"
+            f"🌸 Tarifingiz: {tariff['name']}\n"
+            f"📊 Ishlatilgan: {used/60:.1f} / {tariff['minutes']} daqiqa\n\n"
+            f"💎 Tarif sotib olish: /tariflar"
+        )
+        return False
+    if duration_seconds > 0 and used + duration_seconds > limit:
+        rem = max(0, limit - used) / 60
+        telegram_send_message(
+            user_id,
+            f"⚠️ Bu fayl limitga sig'maydi!\n\n"
+            f"🌸 Tarifingiz: {tariff['name']}\n"
+            f"📊 Ishlatilgan: {used/60:.1f} / {tariff['minutes']} daqiqa\n"
+            f"⏳ Bu fayl: {duration_seconds/60:.1f} daqiqa\n"
+            f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
+            f"💎 Yuqori tarif: /tariflar"
+        )
+        return False
+    return True
+
+
 def process_pdf_for_user(user_id, pdf_path):
-    """PDF dan matn ajratib, faqat audio sifatida qaytaradi (matn ko'rsatilmaydi)."""
+    """PDF dan matn ajratib, faqat audio sifatida qaytaradi (matn ko'rsatilmaydi).
+    Tarif limiti qo'llanadi — TTS audio davomiyligi ishlatilgan daqiqaga qo'shiladi."""
+    tts_path = None
     try:
+        # Limit dastlabki tekshiruvi — qoldiq daqiqalari bormi
+        if not check_limit_by_user_id(user_id, 0):
+            return
+
         telegram_send_message(user_id, "📄 PDF qabul qilindi. Ovozga aylantirilmoqda...")
         text = extract_pdf_text(pdf_path)
         if not text or not text.strip():
             telegram_send_message(user_id, "❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).")
             return
+
         tts_path = make_tts(text)
-        if tts_path:
+        if not tts_path:
+            telegram_send_message(user_id, "❌ Ovoz yaratib bo'lmadi.")
+            return
+
+        # Audio davomiyligini aniqlash va limitni qayta tekshirish
+        actual_duration = 0
+        if not _is_admin_id(user_id):
             try:
-                telegram_send_voice(user_id, tts_path, caption="🔊 PDF ovoz shaklida")
-            finally:
-                if os.path.exists(tts_path):
-                    try: os.remove(tts_path)
-                    except Exception: pass
+                actual_duration = int(get_duration(tts_path))
+            except Exception:
+                actual_duration = 0
+            if not check_limit_by_user_id(user_id, actual_duration):
+                return
+
+        telegram_send_voice(user_id, tts_path, caption="🔊 PDF ovoz shaklida")
+
+        if not _is_admin_id(user_id) and actual_duration > 0:
+            add_user_usage(user_id, actual_duration)
     except Exception as e:
         logging.error(f"process_pdf_for_user xato: {e}")
         telegram_send_message(user_id, f"❌ Xato: {str(e)[:300]}")
     finally:
+        if tts_path and os.path.exists(tts_path):
+            try: os.remove(tts_path)
+            except Exception: pass
         if pdf_path and os.path.exists(pdf_path):
             try: os.remove(pdf_path)
             except Exception: pass
 
 
 def process_audio_for_user(user_id, file_path, language="uz"):
+    """WebApp orqali yuborilgan audio'ni matnga aylantirish — tarif limiti qo'llanadi."""
     try:
+        # Audio davomiyligini avval aniqlaymiz va limitni tekshiramiz
+        actual_duration = 0
+        if not _is_admin_id(user_id):
+            try:
+                actual_duration = int(get_duration(file_path))
+            except Exception:
+                actual_duration = 0
+            # Limit (davomiylik bilan)
+            if not check_limit_by_user_id(user_id, actual_duration):
+                return
+
         telegram_send_message(user_id, "🎙 Web ilova yuborgan fayl tanilmoqda...")
         text = transcribe(file_path, language=language)
         if text and text.strip() != "Matn aniqlanmadi.":
             _send_text_and_pdf(user_id, text)
         else:
             telegram_send_message(user_id, "Matn aniqlanmadi.")
+
+        if not _is_admin_id(user_id) and actual_duration > 0:
+            add_user_usage(user_id, actual_duration)
     except Exception as e:
         logging.error(f"process_audio_for_user xato: {e}")
         telegram_send_message(user_id, f"❌ Xato: {str(e)[:300]}")
@@ -1996,16 +2073,35 @@ def process_audio_for_user(user_id, file_path, language="uz"):
 
 
 def process_url_for_user(user_id, url, language="uz"):
+    """WebApp URL'idan video yuklab matnga aylantirish — tarif limiti qo'llanadi."""
     audio_path = None
     try:
+        # Limit dastlabki tekshiruvi (davomiylik hali noma'lum)
+        if not check_limit_by_user_id(user_id, 0):
+            return
+
         telegram_send_message(user_id, f"📥 Video yuklanmoqda...\n🔗 {url[:80]}")
         audio_path = download_audio_from_url(url)
+
+        # Yuklab olingach real davomiylikni aniqlaymiz
+        actual_duration = 0
+        if not _is_admin_id(user_id):
+            try:
+                actual_duration = int(get_duration(audio_path))
+            except Exception:
+                actual_duration = 0
+            if not check_limit_by_user_id(user_id, actual_duration):
+                return
+
         telegram_send_message(user_id, "✅ Yuklanidi! 🎙 Matn tanilmoqda...")
         text = transcribe(audio_path, language=language)
         if text and text.strip() != "Matn aniqlanmadi.":
             _send_text_and_pdf(user_id, text)
         else:
             telegram_send_message(user_id, "Matn aniqlanmadi.")
+
+        if not _is_admin_id(user_id) and actual_duration > 0:
+            add_user_usage(user_id, actual_duration)
     except Exception as e:
         logging.error(f"process_url_for_user xato: {e}")
         telegram_send_message(user_id, f"❌ Xato: {str(e)[:300]}")
