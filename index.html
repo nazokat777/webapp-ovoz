@@ -1953,6 +1953,25 @@
       if (!link) { showToast(t('t_url_empty'), 'error'); return; }
       if (!/^https?:\/\//i.test(link)) { showToast(t('t_url_proto'), 'error'); return; }
       showProcessing();
+      // Avval fetch — MenuButton va KeyboardButton orqali ochilsa ham ishlaydi
+      if (userId) {
+        try {
+          const r = await fetch(window.location.origin + '/url', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: userId, url: link, language: currentLang })
+          });
+          const json = await r.json();
+          if (!r.ok) throw new Error(json.error || 'Server xato');
+          hideProcessing();
+          showToast(t('t_url_sent'), 'success');
+          fireConfetti();
+          setTimeout(() => { try { tg && tg.close && tg.close(); } catch (e) {} }, 1500);
+          return;
+        } catch (err) {
+          console.warn('fetch /url fail, sendData fallback:', err);
+        }
+      }
+      // Fallback: tg.sendData (faqat KeyboardButton orqali ishlaydi)
       if (tg && typeof tg.sendData === 'function') {
         try {
           tg.sendData(JSON.stringify({ type: 'url', url: link }));
@@ -1960,21 +1979,8 @@
           return;
         } catch (e) { console.warn('sendData fail', e); }
       }
-      if (!userId) { hideProcessing(); showToast(userIdMissingMessage(), 'error', 8000); return; }
-      try {
-        const r = await fetch(window.location.origin + '/url', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_id: userId, url: link, language: currentLang })
-        });
-        const json = await r.json();
-        if (!r.ok) throw new Error(json.error || 'Server xato');
-        hideProcessing();
-        showToast(t('t_url_sent'), 'success');
-        fireConfetti();
-      } catch (err) {
-        hideProcessing();
-        showToast(t('t_send_err') + (err.message || err), 'error');
-      }
+      hideProcessing();
+      showToast(userIdMissingMessage(), 'error', 8000);
       return;
     }
     if (!selectedFile) { showToast(t('t_no_file'), 'error'); return; }
