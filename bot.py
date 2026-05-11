@@ -1619,13 +1619,16 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     t = TARIFFS[tariff_key]
     user = update.effective_user
     photo = update.message.photo[-1]  # eng katta o'lchamdagi rasm
-    username = f"@{user.username}" if user.username else (user.first_name or "noma'lum")
+    username_raw = f"@{user.username}" if user.username else (user.first_name or "noma'lum")
+    # Markdown'da pastki chiziq italic boshlovchi bo'lib qolmasin
+    username_safe = username_raw.replace("_", "\\_").replace("*", "\\*")
+    tariff_name_safe = t['name'].replace("_", "\\_").replace("*", "\\*")
 
     caption = (
         f"💸 *Yangi to'lov cheki*\n\n"
-        f"👤 Foydalanuvchi: {username}\n"
+        f"👤 Foydalanuvchi: {username_safe}\n"
         f"🆔 ID: `{user.id}`\n"
-        f"🌸 Tarif: *{t['name']}*\n"
+        f"🌸 Tarif: *{tariff_name_safe}*\n"
         f"⏱ Limit: {t['minutes']} daqiqa/oy\n"
         f"💰 Miqdor: *{t['price']:,} so'm*"
     )
@@ -1644,9 +1647,30 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=keyboard,
         )
     except Exception as e:
-        logging.error(f"Chekni adminga yuborishda xato: {e}")
-        await update.message.reply_text("❌ Chekni yuborishda xato. Iltimos keyinroq urinib ko'ring.")
-        return
+        logging.error(f"Chekni adminga (Markdown) yuborishda xato: {e}")
+        # Fallback: Markdown'siz qayta urinish — har qanday matn xavfsiz
+        try:
+            plain_caption = (
+                f"💸 Yangi to'lov cheki\n\n"
+                f"👤 Foydalanuvchi: {username_raw}\n"
+                f"🆔 ID: {user.id}\n"
+                f"🌸 Tarif: {t['name']}\n"
+                f"⏱ Limit: {t['minutes']} daqiqa/oy\n"
+                f"💰 Miqdor: {t['price']:,} so'm"
+            )
+            await context.bot.send_photo(
+                chat_id=ADMIN_CHAT_ID["id"],
+                photo=photo.file_id,
+                caption=plain_caption,
+                reply_markup=keyboard,
+            )
+        except Exception as e2:
+            logging.error(f"Chekni adminga (plain) yuborishda xato: {e2}, ADMIN_CHAT_ID={ADMIN_CHAT_ID['id']}")
+            await update.message.reply_text(
+                f"❌ Chekni yuborishda xato. Iltimos keyinroq urinib ko'ring.\n\n"
+                f"Texnik ma'lumot: {str(e2)[:100]}"
+            )
+            return
 
     await update.message.reply_text(
         "✅ Chek qabul qilindi.\n\n"
