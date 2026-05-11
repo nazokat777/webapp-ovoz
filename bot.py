@@ -127,7 +127,7 @@ _save_lock = threading.Lock()
 
 
 def _load_user_data():
-    """Bot ishga tushganda saqlangan usage va tariflarni yuklaydi."""
+    """Bot ishga tushganda saqlangan usage, tariflar va admin_chat_id'ni yuklaydi."""
     if not os.path.exists(DATA_FILE):
         return
     try:
@@ -144,18 +144,26 @@ def _load_user_data():
                     user_tariffs[int(k)] = v
             except (ValueError, TypeError):
                 pass
-        logging.info(f"📂 user_data.json yuklandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif")
+        # Admin chat_id — bir marta admin /start yuborgach saqlanib qoladi
+        saved_admin = data.get("admin_chat_id")
+        if saved_admin:
+            try:
+                ADMIN_CHAT_ID["id"] = int(saved_admin)
+            except (ValueError, TypeError):
+                pass
+        logging.info(f"📂 user_data.json yuklandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif, admin_chat_id={ADMIN_CHAT_ID['id']}")
     except Exception as e:
         logging.warning(f"user_data.json o'qishda xato: {e}")
 
 
 def _save_user_data():
-    """user_uzbek_usage va user_tariffs ni faylga yozadi (atomik)."""
+    """user_uzbek_usage, user_tariffs va admin_chat_id ni faylga yozadi (atomik)."""
     with _save_lock:
         try:
             data = {
                 "usage": {str(k): int(v) for k, v in user_uzbek_usage.items()},
                 "tariffs": {str(k): v for k, v in user_tariffs.items()},
+                "admin_chat_id": ADMIN_CHAT_ID["id"],
             }
             tmp_path = DATA_FILE + ".tmp"
             os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
@@ -174,7 +182,11 @@ def is_admin(update):
     uname = (update.effective_user.username or "").lower()
     if uname in ADMIN_USERNAMES:
         # Admin chat_id'ini eslab qolamiz — to'lov xabarnomalari uchun
-        ADMIN_CHAT_ID["id"] = update.effective_user.id
+        new_id = update.effective_user.id
+        if ADMIN_CHAT_ID["id"] != new_id:
+            ADMIN_CHAT_ID["id"] = new_id
+            _save_user_data()  # Doimiy saqlash — deploy'lardan o'tib ham qolsin
+            logging.info(f"👑 ADMIN_CHAT_ID saqlandi: {new_id}")
         return True
     return False
 
