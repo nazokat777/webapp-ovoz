@@ -1147,6 +1147,7 @@ def webapp_keyboard(chat_id=None):
             [KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))],
             [KeyboardButton(text="📊 Balansim"), KeyboardButton(text="💎 Tariflar")],
             [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="❓ Yordam")],
+            [KeyboardButton(text="🔄 /start")],
         ],
         resize_keyboard=True,
     )
@@ -1164,6 +1165,8 @@ def fresh_webapp_url(chat_id=None):
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_user.id
+    # Admin /start yuborgan bo'lsa ADMIN_CHAT_ID ni darrov saqlash
+    is_admin(update)
     # Menu button'ni har gal yangi URL bilan o'rnatish — eski cache buziladi
     try:
         await context.bot.set_chat_menu_button(
@@ -1972,6 +1975,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if text == "❓ Yordam":
         await help_cmd(update, context)
+        return
+    if text == "🔄 /start" or text == "/start":
+        await start(update, context)
         return
     url = extract_url(text)
     if url:
