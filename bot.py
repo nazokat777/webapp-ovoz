@@ -1233,7 +1233,10 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if file_type == "url" and url:
             url = extract_url(url) or url
-            await process_url(update, context, url)
+            url_lang = (data.get("language") or "").lower()
+            if url_lang not in ("uz", "ru", "en"):
+                url_lang = _chat_lang(context, update)
+            await process_url(update, context, url, language=url_lang)
             return
 
         if file_type == "webapp_voice" and data.get("audio"):
@@ -1247,8 +1250,11 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
             if not ext.startswith('.'):
                 ext = '.' + ext
             tmp_path = save_base64_audio(audio_data, ext)
+            wa_lang = (data.get("language") or "").lower()
+            if wa_lang not in ("uz", "ru", "en"):
+                wa_lang = _chat_lang(context, update)
             try:
-                await process_local_audio(update, context, tmp_path, data.get("duration", 0))
+                await process_local_audio(update, context, tmp_path, data.get("duration", 0), language=wa_lang)
             finally:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
@@ -1317,8 +1323,9 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if cnt > 0:
                 tariff_lines.append(f"• {t['name']}: {cnt} ta")
         tariff_text = "\n".join(tariff_lines) if tariff_lines else "• 🌸 Bepul (default): hamma"
+        admin_uname_md = (update.effective_user.username or "").replace("_", "\\_").replace("*", "\\*")
         await update.message.reply_text(
-            f"👑 *ADMIN PANEL* — @{update.effective_user.username}\n\n"
+            f"👑 *ADMIN PANEL* — @{admin_uname_md}\n\n"
             f"🧪 Test rejimi: *{test_status}*\n"
             f"👥 Foydalanuvchilar: {total_users}\n"
             f"⏱ Jami O'zbek STT: {total_sec/60:.1f} daqiqa\n"
@@ -1328,8 +1335,9 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• /test — test rejimi\n"
             f"• /stats — userlar statistikasi\n"
             f"• /grant <user_id> <tarif> — tarif berish\n"
-            f"• /reset — limitlarni tiklash\n"
-            f"• /tariflar — tariflar ro'yxati",
+            f"• /setcard <karta> — karta raqamini sozlash\n"
+            f"• /setholder <ism> — karta egasini sozlash\n"
+            f"• /reset — limitlarni tiklash",
             parse_mode="Markdown"
         )
         return
@@ -1633,16 +1641,19 @@ async def paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User chek (rasm) yuborganda — agar to'lov kutilayotgan bo'lsa adminga uzatamiz."""
     user_id = update.effective_user.id if update.effective_user else None
-    # Ikkala joydan tekshiramiz: context.user_data (joriy session) yoki pending_payments (deploy'dan o'tgan)
+    # Atomik pop — bir vaqtning o'zida ikkita rasm yuborilsa, faqat bittasi qabul qilinadi
     tariff_key = None
-    if context.user_data:
-        tariff_key = context.user_data.get("awaiting_payment_for")
-    if not tariff_key and user_id in pending_payments:
-        tariff_key = pending_payments[user_id]
+    with _save_lock:
+        if context.user_data:
+            tariff_key = context.user_data.pop("awaiting_payment_for", None)
+        if not tariff_key and user_id in pending_payments:
+            tariff_key = pending_payments.pop(user_id, None)
     if not tariff_key or tariff_key not in TARIFFS:
         # Boshqa rasm yuborilgan — javob bermaymiz (o'tkazib yuboramiz)
         logging.info(f"📸 Photo (chek emas) user_id={user_id} — pending_payments'da yo'q")
         return
+    # State allaqachon olib tashlandi — faylga yozish (deploy'da yo'qolmasligi uchun)
+    _save_user_data()
     logging.info(f"📸 Chek qabul qilindi: user_id={user_id}, tariff_key={tariff_key}")
 
     if not ADMIN_CHAT_ID["id"]:
@@ -1701,6 +1712,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except Exception as e2:
             logging.error(f"Chekni adminga (plain) yuborishda xato: {e2}, ADMIN_CHAT_ID={ADMIN_CHAT_ID['id']}")
+            # Xato bo'ldi — state'ni qaytaramiz, user qayta urinib ko'rsin
+            with _save_lock:
+                pending_payments[user_id] = tariff_key
+            _save_user_data()
             await update.message.reply_text(
                 f"❌ Chekni yuborishda xato. Iltimos keyinroq urinib ko'ring.\n\n"
                 f"Texnik ma'lumot: {str(e2)[:100]}"
@@ -1712,12 +1727,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "To'lov tekshirilmoqda. Tasdiqlanganidan keyin tarif avtomat faollashadi.\n"
         "Odatda 5-30 daqiqa ichida xabar olasiz."
     )
-    # Holatni tozalash — qayta chek yuborilmasin (ikkala joydan ham)
-    if context.user_data:
-        context.user_data.pop("awaiting_payment_for", None)
-    if user_id in pending_payments:
-        pending_payments.pop(user_id, None)
-        _save_user_data()
+    # State allaqachon yuqorida (atomik pop bloki ichida) tozalangan, qayta tozalash shart emas
 
 
 def _is_admin_callback(query):
@@ -1938,7 +1948,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     audio_exts = [".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".wma", ".opus"]
     video_exts = [".mp4", ".avi", ".mov", ".mkv", ".webm", ".3gp"]
     if any(e in mime for e in ["audio", "video"]) or ext in audio_exts + video_exts:
-        await process_file(update, context, doc.file_id, ext or ".mp3", 0)
+        lang = _chat_lang(context, update)
+        await process_file(update, context, doc.file_id, ext or ".mp3", 0, language=lang)
         return
     if ext == ".pdf" or "pdf" in mime:
         await process_pdf_to_voice(update, context, doc.file_id)
