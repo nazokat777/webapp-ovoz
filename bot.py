@@ -115,6 +115,9 @@ user_tariffs = {}
 # "Men to'ladim" tugmasini bosgan foydalanuvchilar — keyingi rasmni chek deb qabul qilamiz
 # {user_id: tariff_key}. Deploy'larda yo'qolmasligi uchun JSON'ga saqlanadi.
 pending_payments = {}
+# Admin tomonidan /setcard va /setholder orqali sozlanadigan karta ma'lumotlari
+# Env variable yo'q bo'lsa yoki adminb buyruq bilan yangilangan bo'lsa shu ishlatiladi.
+runtime_settings = {"payment_card": "", "payment_card_holder": ""}
 # Admin /test buyrug'i bilan yoqadigan rejim — Muxlisa chaqirilmaydi
 TEST_MODE = {"on": False}
 # Muxlisa tarifi (so'm/daqiqa) — statistika uchun
@@ -161,7 +164,13 @@ def _load_user_data():
                     pending_payments[int(k)] = v
             except (ValueError, TypeError):
                 pass
-        logging.info(f"📂 user_data.json yuklandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif, {len(pending_payments)} pending, admin_chat_id={ADMIN_CHAT_ID['id']}")
+        # Runtime settings (karta raqami va boshqalar) — admin /setcard orqali yangilaydi
+        rs = data.get("runtime_settings") or {}
+        if isinstance(rs, dict):
+            for k in ("payment_card", "payment_card_holder"):
+                if k in rs and isinstance(rs[k], str):
+                    runtime_settings[k] = rs[k]
+        logging.info(f"📂 user_data.json yuklandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif, {len(pending_payments)} pending, admin_chat_id={ADMIN_CHAT_ID['id']}, card_set={bool(runtime_settings['payment_card'])}")
     except Exception as e:
         logging.warning(f"user_data.json o'qishda xato: {e}")
 
@@ -175,6 +184,7 @@ def _save_user_data():
                 "tariffs": {str(k): v for k, v in user_tariffs.items()},
                 "admin_chat_id": ADMIN_CHAT_ID["id"],
                 "pending_payments": {str(k): v for k, v in pending_payments.items()},
+                "runtime_settings": dict(runtime_settings),
             }
             tmp_path = DATA_FILE + ".tmp"
             os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
@@ -1454,8 +1464,11 @@ async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # PROVIDER_TOKEN sozlanmagan bo'lsa — manual to'lov rejimi
     # (karta raqami ko'rsatiladi, foydalanuvchi to'laydi va chek yuboradi)
     if not PAYMENT_PROVIDER_TOKEN:
-        card = PAYMENT_CARD or "(karta raqami sozlanmagan)"
-        holder_line = f"👤 Karta egasi: *{PAYMENT_CARD_HOLDER}*\n" if PAYMENT_CARD_HOLDER else ""
+        # Karta ma'lumotlarini olish — runtime_settings (admin /setcard orqali) ustivor,
+        # bo'lmasa env variable, oxirgi chora — placeholder
+        card = runtime_settings.get("payment_card") or PAYMENT_CARD or "(karta raqami sozlanmagan)"
+        holder = runtime_settings.get("payment_card_holder") or PAYMENT_CARD_HOLDER
+        holder_line = f"👤 Karta egasi: *{holder}*\n" if holder else ""
         text = (
             f"💳 *To'lov*\n\n"
             f"🌸 Tarif: *{t['name']}*\n"
@@ -1843,6 +1856,55 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     except Exception as e:
         logging.warning(f"Userga ({target_id}) tarif xabari yuborilmadi: {e}")
+
+
+async def setcard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /setcard <karta raqami> — karta raqamini sozlash (faylga saqlanadi)."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    args = (update.message.text or "").split(None, 1)
+    if len(args) < 2 or not args[1].strip():
+        cur = runtime_settings.get("payment_card") or "(sozlanmagan)"
+        await update.message.reply_text(
+            f"*Foydalanish:*\n"
+            f"`/setcard 8600 1234 5678 9012`\n\n"
+            f"*Joriy karta:* `{cur}`",
+            parse_mode="Markdown"
+        )
+        return
+    card = args[1].strip()
+    runtime_settings["payment_card"] = card
+    _save_user_data()
+    await update.message.reply_text(
+        f"✅ Karta raqami saqlandi:\n`{card}`\n\n"
+        f"Endi /buy menyusida foydalanuvchilarga shu karta ko'rsatiladi.",
+        parse_mode="Markdown"
+    )
+
+
+async def setholder_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /setholder <ism> — karta egasini sozlash (faylga saqlanadi)."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    args = (update.message.text or "").split(None, 1)
+    if len(args) < 2 or not args[1].strip():
+        cur = runtime_settings.get("payment_card_holder") or "(sozlanmagan)"
+        await update.message.reply_text(
+            f"*Foydalanish:*\n"
+            f"`/setholder NAZOKAT ARABOVA`\n\n"
+            f"*Joriy egasi:* `{cur}`",
+            parse_mode="Markdown"
+        )
+        return
+    holder = args[1].strip()
+    runtime_settings["payment_card_holder"] = holder
+    _save_user_data()
+    await update.message.reply_text(
+        f"✅ Karta egasi saqlandi: *{holder}*",
+        parse_mode="Markdown"
+    )
 
 
 async def lang_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2497,6 +2559,8 @@ def main():
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(CommandHandler("grant", grant_cmd))
+    app.add_handler(CommandHandler("setcard", setcard_cmd))
+    app.add_handler(CommandHandler("setholder", setholder_cmd))
     app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
 
     # Manual to'lov rejimi handlerlari (chek + admin tasdiqlash)
