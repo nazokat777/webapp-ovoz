@@ -1334,9 +1334,11 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"*Admin buyruqlari:*\n"
             f"• /test — test rejimi\n"
             f"• /stats — userlar statistikasi\n"
-            f"• /grant <user_id> <tarif> — tarif berish\n"
-            f"• /setcard <karta> — karta raqamini sozlash\n"
-            f"• /setholder <ism> — karta egasini sozlash\n"
+            f"• /grant `<user id>` `<tarif>` — tarif berish\n"
+            f"• /setcard `<karta>` — karta raqamini sozlash\n"
+            f"• /setholder `<ism>` — karta egasini sozlash\n"
+            f"• /reply `<id>` `<xabar>` — javob berish\n"
+            f"• /debug — persistence holatini ko'rish\n"
             f"• /reset — limitlarni tiklash",
             parse_mode="Markdown"
         )
