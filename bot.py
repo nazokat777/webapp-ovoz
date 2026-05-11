@@ -1133,7 +1133,8 @@ def webapp_keyboard(chat_id=None):
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))],
-            [KeyboardButton(text="/start"), KeyboardButton(text="/help")],
+            [KeyboardButton(text="📊 Balansim"), KeyboardButton(text="💎 Tariflar")],
+            [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="❓ Yordam")],
         ],
         resize_keyboard=True,
     )
@@ -1947,6 +1948,19 @@ async def text_to_voice(update, context, text):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+    # Klaviatura tugmalari uchun yorliqlar
+    if text == "📊 Balansim":
+        await balance_cmd(update, context)
+        return
+    if text == "💎 Tariflar":
+        await tariflar_cmd(update, context)
+        return
+    if text == "💳 Sotib olish":
+        await buy_cmd(update, context)
+        return
+    if text == "❓ Yordam":
+        await help_cmd(update, context)
+        return
     url = extract_url(text)
     if url:
         await process_url(update, context, url, language=_chat_lang(context, update))
@@ -1961,9 +1975,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 🔗 YouTube / TikTok / Instagram havolasi\n"
         "• 📄 PDF fayl (matn ovozga aylanadi)\n"
         "• 📝 Matn (30+ belgi — ovozga aylanadi)\n\n"
-        "Yoki Web ilovani oching 👇",
+        "Yoki pastdagi tugmalardan birini bosing 👇",
         reply_markup=webapp_keyboard(chat_id=update.effective_user.id),
     )
+
+
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Foydalanuvchilar uchun yordam — admin bilan bog'lanish tugmasi bilan."""
+    text = (
+        "❓ *Yordam*\n\n"
+        "🌸 *Bot imkoniyatlari:*\n"
+        "• 🎤 Audio / video → matn\n"
+        "• 📄 PDF → ovoz (TTS)\n"
+        "• 📝 Matn → ovoz (TTS)\n"
+        "• 🔗 YouTube / TikTok / Instagram havolasi → matn\n\n"
+        "📌 *Buyruqlar:*\n"
+        "• /balance — balansim\n"
+        "• /tariflar — narxlar ro'yxati\n"
+        "• /buy — tarif sotib olish\n"
+        "• /lang uz/ru/en — bot tilini tanlash\n\n"
+        "Boshqa savol bo'lsa pastdagi tugma orqali admin bilan bog'laning 👇"
+    )
+    admin_user = (ADMIN_CONTACT or "@Nazokat_571").lstrip("@")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 Admin bilan bog'lanish", url=f"https://t.me/{admin_user}")]
+    ])
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
 # ── HTTP API (WebApp uchun) ─────────────────────────────────────────────────
@@ -2383,7 +2420,7 @@ def main():
     app.post_init = _setup_commands
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", start))
+    app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("lang", lang_command))
     app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CommandHandler("tariflar", tariflar_cmd))
