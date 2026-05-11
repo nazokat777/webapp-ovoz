@@ -2225,7 +2225,10 @@ async def _send_feedback_to_admin(update: Update, context: ContextTypes.DEFAULT_
                 f"👤 Kim: {username.replace('_', chr(92)+'_')}\n"
                 f"🆔 ID: `{user_id}`\n\n"
                 f"💬 Xabar:\n{msg_text}\n\n"
-                f"_Javob berish: shu xabarga reply qiling — bot user'ga uzatadi._"
+                f"━━━━━━━━━━━━━━\n"
+                f"💡 *Javob berish:*\n"
+                f"`/reply {user_id} Sizning javob matningiz`\n\n"
+                f"_yoki: shu xabarni ushlab turib Reply tanlang_"
             ),
             parse_mode="Markdown"
         )
@@ -2235,6 +2238,44 @@ async def _send_feedback_to_admin(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logging.error(f"feedback yuborishda xato: {e}")
         await update.message.reply_text("❌ Xabar yuborishda xato. Iltimos keyinroq urinib ko'ring.")
+
+
+async def reply_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /reply <user_id> <xabar> — foydalanuvchiga javob yuborish.
+    User admin'ning username'ini ko'rmaydi, faqat 'Xizmatdan javob' deb keladi."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    args = (update.message.text or "").split(None, 2)
+    if len(args) < 3:
+        await update.message.reply_text(
+            "*Foydalanish:*\n"
+            "`/reply <user_id> <xabar matni>`\n\n"
+            "*Misol:*\n"
+            "`/reply 629686772 Salom! Tarif faollashtirildi.`\n\n"
+            "User ID'ni foydalanuvchi murojaatidan oling.",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        target_id = int(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ user_id raqam bo'lishi kerak.")
+        return
+    msg_text = args[2].strip()
+    if not msg_text:
+        await update.message.reply_text("❌ Xabar bo'sh bo'lmasligi kerak.")
+        return
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=f"💬 *Xizmatdan javob:*\n\n{msg_text}",
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text(f"✅ Javob foydalanuvchiga (`{target_id}`) yuborildi.", parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"/reply xato: {e}")
+        await update.message.reply_text(f"❌ Yuborishda xato: {str(e)[:200]}")
 
 
 async def feedback_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2697,6 +2738,7 @@ def main():
     app.add_handler(CommandHandler("setholder", setholder_cmd))
     app.add_handler(CommandHandler("feedback", feedback_cmd))
     app.add_handler(CommandHandler("cancel", cancel_cmd))
+    app.add_handler(CommandHandler("reply", reply_cmd))
     app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
 
     # Manual to'lov rejimi handlerlari (chek + admin tasdiqlash)
