@@ -426,15 +426,86 @@ def download_audio_from_url(url):
 
 
 def get_duration(path):
+    """Audio/video davomiyligini soniyada qaytaradi. Uch xil strategiya:
+    1) ffprobe format=duration (eng tezkor, metadata bo'lsa)
+    2) ffprobe stream=duration (audio stream)
+    3) ffmpeg -i decode + stderr parse (eng aniq, lekin sekin)
+    Hech qaysisi ishlamasa 0 qaytaradi."""
+    # 1) Format-level duration
     try:
-        result = subprocess.run([
-            "ffprobe", "-v", "quiet", "-print_format", "json",
-            "-show_format", path
-        ], capture_output=True, text=True)
-        info = json.loads(result.stdout)
-        return float(info["format"]["duration"])
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, text=True, timeout=15
+        )
+        out = (result.stdout or "").strip()
+        if out and out.upper() != "N/A":
+            try:
+                d = float(out)
+                if d > 0:
+                    return d
+            except ValueError:
+                pass
+    except Exception as e:
+        logging.debug(f"get_duration strategy 1 xato: {e}")
+    # 2) Stream-level duration
+    try:
+        result = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, text=True, timeout=15
+        )
+        out = (result.stdout or "").strip()
+        if out and out.upper() != "N/A":
+            try:
+                d = float(out)
+                if d > 0:
+                    return d
+            except ValueError:
+                pass
+    except Exception as e:
+        logging.debug(f"get_duration strategy 2 xato: {e}")
+    # 3) ffmpeg decode — eng ishonchli, lekin sekin
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-i", path, "-f", "null", "-"],
+            capture_output=True, text=True, timeout=90
+        )
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr or "")
+        if m:
+            h, mm, ss = int(m.group(1)), int(m.group(2)), float(m.group(3))
+            d = h * 3600 + mm * 60 + ss
+            if d > 0:
+                return d
+    except Exception as e:
+        logging.warning(f"get_duration strategy 3 xato: {e}")
+    logging.warning(f"⚠️ get_duration({path}) hech qaysi strategiya bilan davomiylik aniqlanmadi")
+    return 0
+
+
+def estimate_duration_from_size(path):
+    """Davomiylik aniqlanmaganda fayl o'lchamidan taxminlaydi.
+    16KB/sek (~128kbps MP3) bo'yicha taxmin. Foydalanuvchi cheklov bypass qilolmasin."""
+    try:
+        size = os.path.getsize(path)
+        if size <= 0:
+            return 60  # default 1 daqiqa
+        est = max(int(size / 16000), 30)  # kamida 30 soniya
+        return est
     except Exception:
-        return 0
+        return 60
+
+
+def get_duration_or_estimate(path):
+    """get_duration ishlamasa fayl o'lchamidan taxminlaydi.
+    Bu cheklov bypass'ini yopadi — duration aniqlanmasa ham daqiqa hisoblanadi."""
+    d = get_duration(path)
+    if d > 0:
+        return d
+    est = estimate_duration_from_size(path)
+    logging.warning(f"⏱ Duration probe FAIL, fayl o'lchami taxmini = {est}s, path={path}")
+    return est
 
 
 def fmt_time(seconds):
@@ -873,7 +944,7 @@ async def process_local_audio(update, context, file_path, duration=0, language="
         actual_duration = duration
         if not is_admin(update) and (not duration or duration <= 0):
             try:
-                actual_duration = int(await asyncio.to_thread(get_duration, file_path))
+                actual_duration = int(await asyncio.to_thread(get_duration_or_estimate, file_path))
             except Exception:
                 actual_duration = 0
             if actual_duration > 0:
@@ -940,7 +1011,7 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
         actual_duration = duration
         if not is_admin(update) and (not duration or duration <= 0):
             try:
-                actual_duration = int(await asyncio.to_thread(get_duration, tmp_path))
+                actual_duration = int(await asyncio.to_thread(get_duration_or_estimate, tmp_path))
             except Exception:
                 actual_duration = 0
             if actual_duration > 0:
@@ -1779,7 +1850,7 @@ async def process_pdf_to_voice(update, context, file_id):
         actual_duration = 0
         if not is_admin(update):
             try:
-                actual_duration = int(await asyncio.to_thread(get_duration, tts_path))
+                actual_duration = int(await asyncio.to_thread(get_duration_or_estimate, tts_path))
             except Exception:
                 actual_duration = 0
             if actual_duration > 0:
@@ -1838,7 +1909,7 @@ async def text_to_voice(update, context, text):
         actual_duration = 0
         if not is_admin(update):
             try:
-                actual_duration = int(await asyncio.to_thread(get_duration, tts_path))
+                actual_duration = int(await asyncio.to_thread(get_duration_or_estimate, tts_path))
             except Exception:
                 actual_duration = 0
             if actual_duration > 0:
@@ -2016,7 +2087,7 @@ def process_pdf_for_user(user_id, pdf_path):
         actual_duration = 0
         if not _is_admin_id(user_id):
             try:
-                actual_duration = int(get_duration(tts_path))
+                actual_duration = int(get_duration_or_estimate(tts_path))
             except Exception:
                 actual_duration = 0
             if not check_limit_by_user_id(user_id, actual_duration):
@@ -2045,7 +2116,7 @@ def process_audio_for_user(user_id, file_path, language="uz"):
         actual_duration = 0
         if not _is_admin_id(user_id):
             try:
-                actual_duration = int(get_duration(file_path))
+                actual_duration = int(get_duration_or_estimate(file_path))
             except Exception:
                 actual_duration = 0
             # Limit (davomiylik bilan)
@@ -2087,7 +2158,7 @@ def process_url_for_user(user_id, url, language="uz"):
         actual_duration = 0
         if not _is_admin_id(user_id):
             try:
-                actual_duration = int(get_duration(audio_path))
+                actual_duration = int(get_duration_or_estimate(audio_path))
             except Exception:
                 actual_duration = 0
             if not check_limit_by_user_id(user_id, actual_duration):
