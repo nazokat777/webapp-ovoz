@@ -162,8 +162,9 @@ def _save_user_data():
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
             os.replace(tmp_path, DATA_FILE)
+            logging.info(f"💾 user_data.json saqlandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif → {DATA_FILE}")
         except Exception as e:
-            logging.warning(f"user_data.json yozishda xato: {e}")
+            logging.error(f"❌ user_data.json yozishda xato: {e} | DATA_FILE={DATA_FILE}")
 
 
 def is_admin(update):
@@ -192,9 +193,13 @@ def get_user_usage_sec(user_id):
 
 
 def add_user_usage(user_id, seconds):
+    logging.info(f"➕ add_user_usage(user_id={user_id}, seconds={seconds}, joriy={user_uzbek_usage.get(user_id, 0)})")
     if seconds and seconds > 0:
         user_uzbek_usage[user_id] = user_uzbek_usage.get(user_id, 0) + seconds
+        logging.info(f"   ✅ Yangi total: {user_uzbek_usage[user_id]} sek")
         _save_user_data()
+    else:
+        logging.warning(f"   ⚠️ seconds={seconds} musbat emas, daqiqa qo'shilmadi")
 
 
 def format_tariffs_text():
@@ -902,6 +907,9 @@ async def process_local_audio(update, context, file_path, duration=0, language="
 
 async def process_file(update, context, file_id, suffix, duration=0, language="uz"):
     # Tarif limiti — barcha tillarda qo'llanadi
+    uid = update.effective_user.id if update.effective_user else None
+    uname = (update.effective_user.username if update.effective_user else None) or ""
+    logging.info(f"📥 process_file: user_id={uid}, username='{uname}', is_admin={is_admin(update)}, duration={duration}, language={language}")
     if not await can_process_uzbek(update, duration):
         return
 
