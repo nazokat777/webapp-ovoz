@@ -2086,6 +2086,9 @@ async def text_to_voice(update, context, text):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+    # Admin /feedback xabariga reply qilgan bo'lsa — user'ga uzatamiz
+    if await handle_admin_reply(update, context):
+        return
     # Klaviatura tugmalari uchun yorliqlar
     if text == "📊 Balansim":
         await balance_cmd(update, context)
@@ -2122,7 +2125,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Foydalanuvchilar uchun yordam — admin bilan bog'lanish tugmasi bilan."""
+    """Foydalanuvchilar uchun yordam — admin'ga to'g'ridan-to'g'ri chiqmaydi."""
     text = (
         "❓ *Yordam*\n\n"
         "🌸 *Bot imkoniyatlari:*\n"
@@ -2134,14 +2137,96 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• /balance — balansim\n"
         "• /tariflar — narxlar ro'yxati\n"
         "• /buy — tarif sotib olish\n"
-        "• /lang uz/ru/en — bot tilini tanlash\n\n"
-        "Boshqa savol bo'lsa pastdagi tugma orqali admin bilan bog'laning 👇"
+        "• /lang uz/ru/en — bot tilini tanlash\n"
+        "• /feedback <xabar> — bot xizmatiga murojaat (anonim)\n\n"
+        "💬 *Murojaat / shikoyat / taklif:*\n"
+        "`/feedback Sizning xabaringiz` buyrug'idan foydalaning.\n"
+        "Bot xabaringizni avtomat xizmatga uzatadi.\n"
+        "Javob shu chatga keladi."
     )
-    admin_user = (ADMIN_CONTACT or "@Nazokat_571").lstrip("@")
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💬 Admin bilan bog'lanish", url=f"https://t.me/{admin_user}")]
-    ])
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
+    await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin chatda /feedback xabariga reply qilsa — bot foydalanuvchiga uzatadi.
+    Bu yo'l bilan admin user'ga javob yozadi, lekin user adminning username'ini ko'rmaydi."""
+    if not is_admin(update):
+        return False  # boshqa handler ishlasin
+    msg = update.message
+    if not msg or not msg.reply_to_message:
+        return False
+    original = msg.reply_to_message
+    original_text = original.text or original.caption or ""
+    if "Foydalanuvchi murojaati" not in original_text:
+        return False
+    # User ID ni asl xabardan ajratib olamiz
+    m = re.search(r"ID:\s*`?(\d+)`?", original_text)
+    if not m:
+        return False
+    try:
+        target_id = int(m.group(1))
+    except ValueError:
+        return False
+    reply_text = (msg.text or msg.caption or "").strip()
+    if not reply_text:
+        return False
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=f"💬 *Xizmatdan javob:*\n\n{reply_text}",
+            parse_mode="Markdown"
+        )
+        await msg.reply_text("✅ Javob foydalanuvchiga yuborildi.")
+        return True
+    except Exception as e:
+        logging.error(f"Admin reply forward xato: {e}")
+        await msg.reply_text(f"❌ Yuborishda xato: {str(e)[:100]}")
+        return True
+
+
+async def feedback_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User /feedback orqali xabar yuborsa — bot adminga avtomat uzatadi.
+    User admin username'ini ko'rmaydi."""
+    args = (update.message.text or "").split(None, 1)
+    if len(args) < 2 or not args[1].strip():
+        await update.message.reply_text(
+            "*Foydalanish:*\n"
+            "`/feedback Sizning xabaringiz yoki savolingiz`\n\n"
+            "Misol:\n"
+            "`/feedback Salom, tarifim faollashmadi`\n\n"
+            "Xabaringiz xizmatga avtomat uzatiladi va javob shu chatga keladi.",
+            parse_mode="Markdown"
+        )
+        return
+    msg_text = args[1].strip()
+    user = update.effective_user
+    user_id = user.id
+    username = f"@{user.username}" if user.username else (user.first_name or "noma'lum")
+
+    if not ADMIN_CHAT_ID["id"]:
+        await update.message.reply_text("⚠️ Xizmat hozir vaqtinchalik mavjud emas. Iltimos keyinroq urinib ko'ring.")
+        return
+
+    # Adminga forward
+    try:
+        await context.bot.send_message(
+            chat_id=ADMIN_CHAT_ID["id"],
+            text=(
+                f"📩 *Foydalanuvchi murojaati*\n\n"
+                f"👤 Kim: {username.replace('_', chr(92)+'_')}\n"
+                f"🆔 ID: `{user_id}`\n\n"
+                f"💬 Xabar:\n{msg_text}\n\n"
+                f"_Javob berish: shu xabarga reply qiling — bot user'ga uzatadi (yoki /grant bilan tarif bering)._"
+            ),
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text(
+            "✅ Xabaringiz xizmatga yuborildi.\n"
+            "Javob shu chatga keladi (odatda 5-30 daqiqada)."
+        )
+    except Exception as e:
+        logging.error(f"feedback yuborishda xato: {e}")
+        await update.message.reply_text("❌ Xabar yuborishda xato. Iltimos keyinroq urinib ko'ring.")
 
 
 # ── HTTP API (WebApp uchun) ─────────────────────────────────────────────────
@@ -2532,6 +2617,7 @@ def main():
                 BotCommand("tariflar", "Tariflar ro'yxati"),
                 BotCommand("buy",      "Tarif sotib olish"),
                 BotCommand("lang",     "Til tanlash: uz / ru / en"),
+                BotCommand("feedback", "Murojaat / shikoyat"),
                 BotCommand("help",     "Yordam"),
             ])
             await application.bot.set_chat_menu_button()
@@ -2572,6 +2658,7 @@ def main():
     app.add_handler(CommandHandler("grant", grant_cmd))
     app.add_handler(CommandHandler("setcard", setcard_cmd))
     app.add_handler(CommandHandler("setholder", setholder_cmd))
+    app.add_handler(CommandHandler("feedback", feedback_cmd))
     app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
 
     # Manual to'lov rejimi handlerlari (chek + admin tasdiqlash)
