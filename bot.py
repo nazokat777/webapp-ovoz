@@ -1868,6 +1868,39 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"Userga ({target_id}) tarif xabari yuborilmadi: {e}")
 
 
+async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: persistence va saqlash holatini tekshirish."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    # Fayl mavjudligi va o'lchami
+    file_exists = os.path.exists(DATA_FILE)
+    file_size = os.path.getsize(DATA_FILE) if file_exists else 0
+    # Xotirada saqlangan ma'lumotlar
+    lines = [
+        f"🔧 *Debug — persistence holati*\n",
+        f"📁 DATA\\_FILE: `{DATA_FILE}`",
+        f"📂 Fayl mavjud: {'✅' if file_exists else '❌'}",
+        f"📏 Fayl o'lchami: {file_size} bayt",
+        f"",
+        f"💾 *Xotirada:*",
+        f"• user\\_uzbek\\_usage: {len(user_uzbek_usage)} ta user",
+        f"• user\\_tariffs: {len(user_tariffs)} ta user",
+        f"• pending\\_payments: {len(pending_payments)} ta user",
+        f"• admin\\_chat\\_id: `{ADMIN_CHAT_ID['id']}`",
+        f"• runtime\\_settings.payment\\_card: {'sozlangan' if runtime_settings.get('payment_card') else 'yo`q'}",
+        f"",
+    ]
+    # Eng ko'p ishlatgan 5 ta user
+    if user_uzbek_usage:
+        top = sorted(user_uzbek_usage.items(), key=lambda x: x[1], reverse=True)[:5]
+        lines.append("*Eng ko'p ishlatganlar:*")
+        for uid, sec in top:
+            tariff = TARIFFS.get(user_tariffs.get(uid, "free"), TARIFFS["free"])
+            lines.append(f"• `{uid}` — {sec/60:.1f} / {tariff['minutes']} daq ({tariff['name']})")
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def setcard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /setcard <karta raqami> — karta raqamini sozlash (faylga saqlanadi)."""
     if not is_admin(update):
@@ -2790,6 +2823,7 @@ def main():
     app.add_handler(CommandHandler("feedback", feedback_cmd))
     app.add_handler(CommandHandler("cancel", cancel_cmd))
     app.add_handler(CommandHandler("reply", reply_cmd))
+    app.add_handler(CommandHandler("debug", debug_cmd))
     app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
 
     # Manual to'lov rejimi handlerlari (chek + admin tasdiqlash)
