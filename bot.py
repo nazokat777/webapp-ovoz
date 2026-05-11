@@ -2119,7 +2119,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await help_cmd(update, context)
         return
     if text == "💬 Murojaat":
-        await feedback_cmd(update, context)
+        # Tugma bosilgan — to'g'ridan-to'g'ri rejimga o'tamiz (komanda parsing'ga kirmasin)
+        context.user_data["awaiting_feedback"] = True
+        await update.message.reply_text(
+            "💬 *Murojaat yozish*\n\n"
+            "Endi xabaringizni shu chatga oddiy yozib yuboring.\n"
+            "Xizmatga avtomat uzatiladi va javob shu yerga keladi.\n\n"
+            "Bekor qilish: /cancel",
+            parse_mode="Markdown"
+        )
         return
     if text == "🔄 /start" or text == "/start":
         await start(update, context)
