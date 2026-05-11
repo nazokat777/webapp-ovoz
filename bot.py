@@ -1168,7 +1168,7 @@ def webapp_keyboard(chat_id=None):
             [KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))],
             [KeyboardButton(text="📊 Balansim"), KeyboardButton(text="💎 Tariflar")],
             [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="❓ Yordam")],
-            [KeyboardButton(text="🔄 /start")],
+            [KeyboardButton(text="💬 Murojaat"), KeyboardButton(text="🔄 /start")],
         ],
         resize_keyboard=True,
     )
@@ -2089,6 +2089,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Admin /feedback xabariga reply qilgan bo'lsa — user'ga uzatamiz
     if await handle_admin_reply(update, context):
         return
+    # Murojaat rejimi yoqilgan — keyingi text murojaat sifatida ketadi
+    if context.user_data and context.user_data.get("awaiting_feedback"):
+        # Tugma matnlari yoki /komandalar bekor qilmaydi murojaatni emas
+        if text in ("/cancel", "Bekor qilish"):
+            context.user_data.pop("awaiting_feedback", None)
+            await update.message.reply_text("✅ Murojaat bekor qilindi.")
+            return
+        # Tugmalarni bosgan bo'lsa ham — murojaat rejimini bekor qilamiz
+        if text in ("📊 Balansim", "💎 Tariflar", "💳 Sotib olish", "❓ Yordam",
+                    "💬 Murojaat", "🔄 /start", "/start"):
+            context.user_data.pop("awaiting_feedback", None)
+            # Pastdagi tugma handler'lari ishlasin
+        else:
+            context.user_data.pop("awaiting_feedback", None)
+            await _send_feedback_to_admin(update, context, text)
+            return
     # Klaviatura tugmalari uchun yorliqlar
     if text == "📊 Balansim":
         await balance_cmd(update, context)
@@ -2101,6 +2117,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if text == "❓ Yordam":
         await help_cmd(update, context)
+        return
+    if text == "💬 Murojaat":
+        await feedback_cmd(update, context)
         return
     if text == "🔄 /start" or text == "/start":
         await start(update, context)
@@ -2134,15 +2153,13 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 📝 Matn → ovoz (TTS)\n"
         "• 🔗 YouTube / TikTok / Instagram havolasi → matn\n\n"
         "📌 *Buyruqlar:*\n"
-        "• /balance — balansim\n"
-        "• /tariflar — narxlar ro'yxati\n"
-        "• /buy — tarif sotib olish\n"
-        "• /lang uz/ru/en — bot tilini tanlash\n"
-        "• /feedback <xabar> — bot xizmatiga murojaat (anonim)\n\n"
-        "💬 *Murojaat / shikoyat / taklif:*\n"
-        "`/feedback Sizning xabaringiz` buyrug'idan foydalaning.\n"
-        "Bot xabaringizni avtomat xizmatga uzatadi.\n"
-        "Javob shu chatga keladi."
+        "• 📊 Balansim — qoldiq daqiqalarim\n"
+        "• 💎 Tariflar — narxlar ro'yxati\n"
+        "• 💳 Sotib olish — tarif olish\n"
+        "• 💬 Murojaat — savol/taklif yuborish\n"
+        "• /lang uz/ru/en — bot tilini tanlash\n\n"
+        "💡 *Murojaat yuborish:*\n"
+        "Pastdagi 💬 *Murojaat* tugmasini bosing va xabar yozing — javob shu chatga keladi."
     )
     await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -2184,30 +2201,14 @@ async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return True
 
 
-async def feedback_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User /feedback orqali xabar yuborsa — bot adminga avtomat uzatadi.
-    User admin username'ini ko'rmaydi."""
-    args = (update.message.text or "").split(None, 1)
-    if len(args) < 2 or not args[1].strip():
-        await update.message.reply_text(
-            "*Foydalanish:*\n"
-            "`/feedback Sizning xabaringiz yoki savolingiz`\n\n"
-            "Misol:\n"
-            "`/feedback Salom, tarifim faollashmadi`\n\n"
-            "Xabaringiz xizmatga avtomat uzatiladi va javob shu chatga keladi.",
-            parse_mode="Markdown"
-        )
-        return
-    msg_text = args[1].strip()
+async def _send_feedback_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE, msg_text: str):
+    """Foydalanuvchi xabarini adminga avtomat yuboradi. User admin username'ini ko'rmaydi."""
     user = update.effective_user
     user_id = user.id
     username = f"@{user.username}" if user.username else (user.first_name or "noma'lum")
-
     if not ADMIN_CHAT_ID["id"]:
         await update.message.reply_text("⚠️ Xizmat hozir vaqtinchalik mavjud emas. Iltimos keyinroq urinib ko'ring.")
         return
-
-    # Adminga forward
     try:
         await context.bot.send_message(
             chat_id=ADMIN_CHAT_ID["id"],
@@ -2216,17 +2217,45 @@ async def feedback_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👤 Kim: {username.replace('_', chr(92)+'_')}\n"
                 f"🆔 ID: `{user_id}`\n\n"
                 f"💬 Xabar:\n{msg_text}\n\n"
-                f"_Javob berish: shu xabarga reply qiling — bot user'ga uzatadi (yoki /grant bilan tarif bering)._"
+                f"_Javob berish: shu xabarga reply qiling — bot user'ga uzatadi._"
             ),
             parse_mode="Markdown"
         )
         await update.message.reply_text(
-            "✅ Xabaringiz xizmatga yuborildi.\n"
-            "Javob shu chatga keladi (odatda 5-30 daqiqada)."
+            "✅ Xabaringiz yuborildi.\nJavob shu chatga keladi (5-30 daqiqada)."
         )
     except Exception as e:
         logging.error(f"feedback yuborishda xato: {e}")
         await update.message.reply_text("❌ Xabar yuborishda xato. Iltimos keyinroq urinib ko'ring.")
+
+
+async def feedback_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User /feedback bossa — keyingi xabarini admin'ga uzatadi (oddiy oqim)."""
+    args = (update.message.text or "").split(None, 1)
+    if len(args) >= 2 and args[1].strip():
+        # Agar /feedback xabar yozilgan bo'lsa, darrov yuboramiz
+        await _send_feedback_to_admin(update, context, args[1].strip())
+        return
+    # Aks holda — "rejimga kiramiz", keyingi text shu user'dan murojaat bo'ladi
+    context.user_data["awaiting_feedback"] = True
+    await update.message.reply_text(
+        "💬 *Murojaat yozish*\n\n"
+        "Endi xabaringizni shu chatga oddiy yozib yuboring.\n"
+        "Xizmatga avtomat uzatiladi va javob shu yerga keladi.\n\n"
+        "Bekor qilish: /cancel",
+        parse_mode="Markdown"
+    )
+
+
+async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Joriy rejimni bekor qilish (masalan, murojaat yozish)."""
+    if context.user_data:
+        was_fb = context.user_data.pop("awaiting_feedback", None)
+        was_pay = context.user_data.pop("awaiting_payment_for", None)
+        if was_fb or was_pay:
+            await update.message.reply_text("✅ Bekor qilindi.")
+            return
+    await update.message.reply_text("Hech qanday faol rejim yo'q.")
 
 
 # ── HTTP API (WebApp uchun) ─────────────────────────────────────────────────
@@ -2659,6 +2688,7 @@ def main():
     app.add_handler(CommandHandler("setcard", setcard_cmd))
     app.add_handler(CommandHandler("setholder", setholder_cmd))
     app.add_handler(CommandHandler("feedback", feedback_cmd))
+    app.add_handler(CommandHandler("cancel", cancel_cmd))
     app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
 
     # Manual to'lov rejimi handlerlari (chek + admin tasdiqlash)
