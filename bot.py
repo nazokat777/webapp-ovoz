@@ -2086,7 +2086,28 @@ async def text_to_voice(update, context, text):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
-    # Admin /feedback xabariga reply qilgan bo'lsa — user'ga uzatamiz
+    # Admin "Javob yozish" tugmasini bosgan va keyingi matnni yozyapti
+    if (context.user_data and context.user_data.get("awaiting_reply_for")
+            and is_admin(update)):
+        target_id = context.user_data.pop("awaiting_reply_for", None)
+        if text == "/cancel":
+            await update.message.reply_text("✅ Javob bekor qilindi.")
+            return
+        try:
+            await context.bot.send_message(
+                chat_id=target_id,
+                text=f"💬 *Xizmatdan javob:*\n\n{text}",
+                parse_mode="Markdown"
+            )
+            await update.message.reply_text(
+                f"✅ Javob foydalanuvchiga (`{target_id}`) yuborildi.",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            logging.error(f"reply tugma orqali yuborishda xato: {e}")
+            await update.message.reply_text(f"❌ Yuborishda xato: {str(e)[:200]}")
+        return
+    # Admin oddiy reply (xabarga Reply UI bilan) qilgan bo'lsa — user'ga uzatamiz
     if await handle_admin_reply(update, context):
         return
     # Murojaat rejimi yoqilgan — keyingi text murojaat sifatida ketadi
@@ -2217,6 +2238,9 @@ async def _send_feedback_to_admin(update: Update, context: ContextTypes.DEFAULT_
     if not ADMIN_CHAT_ID["id"]:
         await update.message.reply_text("⚠️ Xizmat hozir vaqtinchalik mavjud emas. Iltimos keyinroq urinib ko'ring.")
         return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 Javob yozish", callback_data=f"reply:{user_id}")]
+    ])
     try:
         await context.bot.send_message(
             chat_id=ADMIN_CHAT_ID["id"],
@@ -2226,11 +2250,10 @@ async def _send_feedback_to_admin(update: Update, context: ContextTypes.DEFAULT_
                 f"🆔 ID: `{user_id}`\n\n"
                 f"💬 Xabar:\n{msg_text}\n\n"
                 f"━━━━━━━━━━━━━━\n"
-                f"💡 *Javob berish:*\n"
-                f"`/reply {user_id} Sizning javob matningiz`\n\n"
-                f"_yoki: shu xabarni ushlab turib Reply tanlang_"
+                f"💡 Javob berish uchun pastdagi tugmani bosing 👇"
             ),
-            parse_mode="Markdown"
+            parse_mode="Markdown",
+            reply_markup=keyboard,
         )
         await update.message.reply_text(
             "✅ Xabaringiz yuborildi.\nJavob shu chatga keladi (5-30 daqiqada)."
@@ -2238,6 +2261,34 @@ async def _send_feedback_to_admin(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logging.error(f"feedback yuborishda xato: {e}")
         await update.message.reply_text("❌ Xabar yuborishda xato. Iltimos keyinroq urinib ko'ring.")
+
+
+async def reply_button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin 'Javob yozish' tugmasini bosgan — rejimga o'tib keyingi matnni user'ga uzatamiz."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    if not _is_admin_callback(query):
+        await query.answer("⛔ Faqat admin uchun.", show_alert=True)
+        return
+    await query.answer()
+    if not query.data.startswith("reply:"):
+        return
+    try:
+        target_id = int(query.data.split(":", 1)[1])
+    except ValueError:
+        return
+    context.user_data["awaiting_reply_for"] = target_id
+    await context.bot.send_message(
+        chat_id=query.from_user.id,
+        text=(
+            f"💬 *Javob yozing*\n\n"
+            f"Foydalanuvchiga (ID: `{target_id}`) javobingizni shu chatga oddiy yozib yuboring.\n"
+            f"Bot uni avtomat uzatadi.\n\n"
+            f"Bekor qilish: /cancel"
+        ),
+        parse_mode="Markdown"
+    )
 
 
 async def reply_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2744,6 +2795,7 @@ def main():
     # Manual to'lov rejimi handlerlari (chek + admin tasdiqlash)
     app.add_handler(CallbackQueryHandler(paid_callback, pattern=r"^paid:"))
     app.add_handler(CallbackQueryHandler(approve_reject_callback, pattern=r"^(approve|reject):"))
+    app.add_handler(CallbackQueryHandler(reply_button_callback, pattern=r"^reply:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Telegram Payments handlerlari (kelajakda PROVIDER_TOKEN qo'shilsa avtomat ishlaydi)
