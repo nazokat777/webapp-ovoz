@@ -112,6 +112,9 @@ TARIFFS = {
 user_uzbek_usage = {}
 # Foydalanuvchi tarifi {user_id: tariff_kalit}, default = "free"
 user_tariffs = {}
+# "Men to'ladim" tugmasini bosgan foydalanuvchilar — keyingi rasmni chek deb qabul qilamiz
+# {user_id: tariff_key}. Deploy'larda yo'qolmasligi uchun JSON'ga saqlanadi.
+pending_payments = {}
 # Admin /test buyrug'i bilan yoqadigan rejim — Muxlisa chaqirilmaydi
 TEST_MODE = {"on": False}
 # Muxlisa tarifi (so'm/daqiqa) — statistika uchun
@@ -151,7 +154,14 @@ def _load_user_data():
                 ADMIN_CHAT_ID["id"] = int(saved_admin)
             except (ValueError, TypeError):
                 pass
-        logging.info(f"📂 user_data.json yuklandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif, admin_chat_id={ADMIN_CHAT_ID['id']}")
+        # Pending payments — deploy'da yo'qolmasligi uchun
+        for k, v in (data.get("pending_payments") or {}).items():
+            try:
+                if v in TARIFFS:
+                    pending_payments[int(k)] = v
+            except (ValueError, TypeError):
+                pass
+        logging.info(f"📂 user_data.json yuklandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif, {len(pending_payments)} pending, admin_chat_id={ADMIN_CHAT_ID['id']}")
     except Exception as e:
         logging.warning(f"user_data.json o'qishda xato: {e}")
 
@@ -164,6 +174,7 @@ def _save_user_data():
                 "usage": {str(k): int(v) for k, v in user_uzbek_usage.items()},
                 "tariffs": {str(k): v for k, v in user_tariffs.items()},
                 "admin_chat_id": ADMIN_CHAT_ID["id"],
+                "pending_payments": {str(k): v for k, v in pending_payments.items()},
             }
             tmp_path = DATA_FILE + ".tmp"
             os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
@@ -1592,7 +1603,10 @@ async def paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if tariff_key not in TARIFFS:
         return
     # User holatini saqlaymiz — keyingi photo shu tarif uchun chek deb qabul qilinadi
+    # Ikkala joyga ham saqlaymiz: context.user_data (tezkor) va pending_payments (deploy'lardan o'tib qoladi)
     context.user_data["awaiting_payment_for"] = tariff_key
+    pending_payments[query.from_user.id] = tariff_key
+    _save_user_data()
     t = TARIFFS[tariff_key]
     await query.edit_message_text(
         f"📸 *{t['name']}* uchun chekni shu chatga yuboring (rasm/screenshot).\n\n"
@@ -1605,10 +1619,18 @@ async def paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User chek (rasm) yuborganda — agar to'lov kutilayotgan bo'lsa adminga uzatamiz."""
-    tariff_key = context.user_data.get("awaiting_payment_for") if context.user_data else None
+    user_id = update.effective_user.id if update.effective_user else None
+    # Ikkala joydan tekshiramiz: context.user_data (joriy session) yoki pending_payments (deploy'dan o'tgan)
+    tariff_key = None
+    if context.user_data:
+        tariff_key = context.user_data.get("awaiting_payment_for")
+    if not tariff_key and user_id in pending_payments:
+        tariff_key = pending_payments[user_id]
     if not tariff_key or tariff_key not in TARIFFS:
         # Boshqa rasm yuborilgan — javob bermaymiz (o'tkazib yuboramiz)
+        logging.info(f"📸 Photo (chek emas) user_id={user_id} — pending_payments'da yo'q")
         return
+    logging.info(f"📸 Chek qabul qilindi: user_id={user_id}, tariff_key={tariff_key}")
 
     if not ADMIN_CHAT_ID["id"]:
         await update.message.reply_text(
@@ -1677,8 +1699,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "To'lov tekshirilmoqda. Tasdiqlanganidan keyin tarif avtomat faollashadi.\n"
         "Odatda 5-30 daqiqa ichida xabar olasiz."
     )
-    # Holatni tozalash — qayta chek yuborilmasin
-    context.user_data.pop("awaiting_payment_for", None)
+    # Holatni tozalash — qayta chek yuborilmasin (ikkala joydan ham)
+    if context.user_data:
+        context.user_data.pop("awaiting_payment_for", None)
+    if user_id in pending_payments:
+        pending_payments.pop(user_id, None)
+        _save_user_data()
 
 
 def _is_admin_callback(query):
