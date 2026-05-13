@@ -2058,7 +2058,7 @@
       const app = document.querySelector('.app');
       if (app) app.insertBefore(banner, app.firstChild);
     }
-    banner.innerHTML = `🌐 Tarjima rejimi: <b>${langName}</b> tilidan O'zbekchaga &nbsp;&nbsp; <span style="opacity:0.85">✖ Bekor qilish</span>`;
+    banner.innerHTML = `🌐 Tarjima: <b>${langName}</b> → 🇺🇿 O'zbek<br><span style="font-size:11px;opacity:0.9;font-weight:600;">Tugmalar: 🎵 Audio • 🎬 Video • 🔗 Havola • 🎤 Mikrofon — har biri tarjima qiladi</span><br><span style="font-size:10px;opacity:0.8;margin-top:2px;display:inline-block;">✖ Bosing — bekor qilish</span>`;
   }
 
   function selectTranslateLang(lang) {
@@ -2095,9 +2095,17 @@
     if (selectedMsg) {
       selectedMsg.style.display = 'block';
       const langName = { auto: '🌐 Avto (har qanday til)', ru: '🇷🇺 Rus', en: '🇬🇧 Ingliz', ar: '🇸🇦 Arab' }[lang];
-      selectedMsg.innerHTML = `✅ <b>${langName}</b> tanlandi — endi audio/video yuboring`;
+      selectedMsg.innerHTML = `✅ <b>${langName}</b> tanlandi<br><br>⬆️ Endi <b>YUQORIGA chiqing</b> va birini tanlang:<br>🎵 Audio fayl • 🎬 Video • 🔗 YouTube/Instagram havola • 🎤 Mikrofondan ovoz yozish`;
     }
     if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.selectionChanged(); } catch (e) {} }
+    // === [TARJIMA] Til tanlangach yuqoriga (top kartalarga) qaytaramiz ===
+    setTimeout(() => {
+      try {
+        // Birinchi audio/video/youtube/voice kartiga scroll
+        const firstCard = document.querySelector('.type-card');
+        if (firstCard) firstCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } catch (e) {}
+    }, 800);
   }
 
   function selectType(el, type) {
@@ -2114,12 +2122,12 @@
     const tlangPicker = document.getElementById('translateLangPicker');
     if (tlangPicker) tlangPicker.style.display = (type === 'translate') ? '' : 'none';
     if (type === 'translate') {
-      // Til tanlashga qadar yashirin, til tanlangach upload ochiladi
+      // === [TARJIMA] Til tanlash UI faqat shu yerda ochiladi, qolgan zonalar saqlanadi ===
       uploadZone.style.display = '';
       urlZone.classList.remove('visible');
       fileInput.accept = 'audio/*,video/*';
-      uploadTitle.textContent = '🌐 Tarjima qilinadigan audio/video';
-      uploadHint.innerHTML = 'Yuqorida tilni tanlang, keyin fayl yuklang<br><span>💡 1 daqiqa = 1 daqiqa tarifdan</span>';
+      uploadTitle.textContent = '🌐 Tarjima — yuqorida tilni tanlang';
+      uploadHint.innerHTML = 'Til tanlagach <b>YUQORIDAGI 4 ta tugmadan birini</b> bosing:<br><span>🎵 Audio  •  🎬 Video  •  🔗 Havola  •  🎤 Mikrofon</span>';
       setMainBtn(selectedFile ? 'send' : 'mic');
       try { el.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch (e) {}
       return;
