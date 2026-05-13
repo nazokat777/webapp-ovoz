@@ -1288,8 +1288,8 @@
     <svg class="deco-flower md bl" style="animation-delay:1.2s"><use href="#sakura"/></svg>
     <div class="hero-content">
       <div class="hero-badge" data-i18n="hero_badge">Artificial Intelligence Solutions</div>
-      <div class="hero-title" data-i18n="hero_title" data-i18n-html>Istalgan <em>tildan</em><br>O'zbek <em>matn va PDF</em></div>
-      <div class="hero-desc" data-i18n="hero_desc">🌍 100+ til • 🎙 Audio, video, havola yoki ovozli yozuv — bir bosishda professional O'zbek matn va PDF formatga aylantiramiz.</div>
+      <div class="hero-title" data-i18n="hero_title" data-i18n-html>Istalgan <em>tildan</em><br>istalgan <em>tilga</em></div>
+      <div class="hero-desc" data-i18n="hero_desc">📄 PDF • 🔊 Audio • 📝 Matn<br>Istalgan tildan istalgan tilga PDF va PDFdan istalgan tilga audio — bir bosishda.</div>
     </div>
   </div>
 
@@ -1312,16 +1312,7 @@
           <button onclick="selectTranslateLang('ar')" id="tlangAr" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
         </div>
 
-        <!-- HOSIL TIL -->
-        <div style="font-size: 10px; font-weight: 800; color: rgba(255, 0, 110, 0.95); margin-bottom: 6px; margin-top: 14px; letter-spacing: 1px;">🎯 HOSIL TIL (qaysi tilga aylantirilsin)</div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
-          <button onclick="selectTargetLang('uz')" id="ttgtUz" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #ff006e, #8338ec); border: 2px solid #ff006e; color: #fff; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 0 18px rgba(255, 0, 110, 0.55);">🇺🇿 O'zbek</button>
-          <button onclick="selectTargetLang('ru')" id="ttgtRu" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-          <button onclick="selectTargetLang('en')" id="ttgtEn" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-          <button onclick="selectTargetLang('ar')" id="ttgtAr" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
-        </div>
-
-        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.55); text-align: center; margin-top: 12px;">💡 Audio/Video/PDF yuborilsa: tanlangan tilda matn + PDF + audio chiqadi</div>
+        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.55); text-align: center; margin-top: 8px;">💡 Audio/Video/PDF yuborilsa: tanlangan manba tildan O'zbekchaga aylantiramiz</div>
         <div id="tlangSelected" style="display:none;"></div>
       </div>
     </div>
@@ -1716,8 +1707,8 @@
   const I18N = {
     uz: {
       hero_badge: 'Artificial Intelligence Solutions',
-      hero_title: 'Istalgan <em>tildan</em><br>O\'zbek <em>matn va PDF</em>',
-      hero_desc: '🌍 100+ til • 🎙 Audio, video, havola yoki ovozli yozuv — bir bosishda professional O\'zbek matn va PDF formatga aylantiramiz.',
+      hero_title: 'Istalgan <em>tildan</em><br>istalgan <em>tilga</em>',
+      hero_desc: '📄 PDF • 🔊 Audio • 📝 Matn<br>Istalgan tildan istalgan tilga PDF va PDFdan istalgan tilga audio — bir bosishda.',
       section_files: 'Fayl turini tanlang',
       section_pdf: 'PDF → Ovoz',
       card1_title: '🎵 Audio fayl',     card1_sub: 'MP3, WAV, OGG yuborish',       card1_pill: '🎵 Audio',
@@ -1757,8 +1748,8 @@
     },
     ru: {
       hero_badge: 'Решения с искусственным интеллектом',
-      hero_title: '<em>Любой язык</em> →<br>узбекский <em>текст и PDF</em>',
-      hero_desc: '🌍 100+ языков • 🎙 Аудио, видео, ссылка или голосовая запись — одним кликом превращаем в профессиональный узбекский текст и PDF.',
+      hero_title: 'С <em>любого языка</em><br>на <em>любой язык</em>',
+      hero_desc: '📄 PDF • 🔊 Аудио • 📝 Текст<br>С любого языка на любой PDF, и из PDF аудио на любом языке — одним кликом.',
       section_files: 'Выберите тип файла',
       section_pdf: 'PDF → Аудио',
       card1_title: '🎵 Отправить аудио',  card1_sub: 'MP3, WAV, OGG → в текст',  card1_pill: '📁 Файл',
@@ -1796,8 +1787,8 @@
     },
     en: {
       hero_badge: 'Artificial Intelligence Solutions',
-      hero_title: '<em>Any language</em> →<br>Uzbek <em>text & PDF</em>',
-      hero_desc: '🌍 100+ languages • 🎙 Audio, video, link or voice message — one click to professional Uzbek text and PDF.',
+      hero_title: 'From <em>any language</em><br>to <em>any language</em>',
+      hero_desc: '📄 PDF • 🔊 Audio • 📝 Text<br>Any language to any language PDF, and from PDF to audio in any language — one click.',
       section_files: 'Choose file type',
       section_pdf: 'PDF → Audio',
       card1_title: '🎵 Send audio',  card1_sub: 'MP3, WAV, OGG → to text',   card1_pill: '📁 File',
