@@ -927,31 +927,109 @@ def save_base64_audio(data, suffix='.webm'):
 
 
 # === [TARJIMA MODULI — API HELPERS] =============================================
-def transcribe_whisper(file_path, source_lang):
+# Whisper: max 25 MB per request. 4 soatlik audio uchun bo'laklash kerak.
+# Claude: max 8192 output tokens. 30K+ so'zlar uchun bo'laklash kerak.
+
+WHISPER_CHUNK_SECONDS = 1200   # 20 daqiqa per chunk (~14 MB @ 96kbps MP3)
+WHISPER_MAX_FILE_MB = 24        # 24 MB dan oshganda bo'laklash
+CLAUDE_CHUNK_WORDS = 2000       # Claude'ga max 2000 so'zlik bo'lak
+
+
+def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
+    """Whisper uchun katta audio'ni bo'laklarga ajratish (ffmpeg orqali).
+    20 daqiqalik MP3 @ 96kbps ≈ 14 MB. Whisper 25 MB chegarasi ichida.
+    Returns: list of chunk file paths."""
+    if not have_cmd("ffmpeg"):
+        return [file_path]
+    total_dur = 0
+    try:
+        total_dur = get_duration_or_estimate(file_path)
+    except Exception:
+        pass
+    if total_dur <= 0 or total_dur <= chunk_seconds:
+        return [file_path]
+    n_chunks = int(total_dur // chunk_seconds) + (1 if total_dur % chunk_seconds > 0 else 0)
+    chunks = []
+    tmp_dir = tempfile.mkdtemp(prefix="whisper_chunks_")
+    for i in range(n_chunks):
+        start = i * chunk_seconds
+        out_path = os.path.join(tmp_dir, f"chunk_{i:03d}.mp3")
+        cmd = [
+            "ffmpeg", "-y", "-v", "error",
+            "-ss", str(start),
+            "-i", file_path,
+            "-t", str(chunk_seconds),
+            "-vn", "-acodec", "libmp3lame", "-b:a", "96k",
+            out_path
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                chunks.append(out_path)
+        except Exception as e:
+            logging.warning(f"Whisper chunk {i} yaratish xatosi: {e}")
+    return chunks if chunks else [file_path]
+
+
+def transcribe_whisper(file_path, source_lang, progress_cb=None):
     """OpenAI Whisper API orqali audio'ni original tilida matnga aylantirish.
-    response_format='verbose_json' — segment'lar bilan to'liq natija."""
+    Katta fayl avtomatik bo'laklanadi (24 MB / 25 daq chegara).
+    progress_cb(current_chunk, total_chunks) — async progress callback."""
     if not OPENAI_API_KEY:
         raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing.")
+
+    # Fayl o'lchami va davomiyligi
+    try:
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+    except Exception:
+        size_mb = 0
+    duration = get_duration_or_estimate(file_path)
+
+    # Bo'laklashga ehtiyoj bormi?
+    chunks_to_process = [file_path]
+    chunk_dir_to_cleanup = None
+    if size_mb > WHISPER_MAX_FILE_MB or duration > (WHISPER_CHUNK_SECONDS + 60):
+        logging.info(f"🔪 Whisper bo'laklash: size={size_mb:.1f}MB, dur={duration}s")
+        chunks = split_audio_for_whisper(file_path, WHISPER_CHUNK_SECONDS)
+        if chunks and chunks[0] != file_path:
+            chunks_to_process = chunks
+            chunk_dir_to_cleanup = os.path.dirname(chunks[0])
+            logging.info(f"   → {len(chunks)} bo'lak yaratildi")
+
+    # Har bir bo'lakni Whisper'ga yuborish
     url = "https://api.openai.com/v1/audio/transcriptions"
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
-    with open(file_path, "rb") as f:
-        files = {"file": (os.path.basename(file_path), f, "application/octet-stream")}
-        data = {
-            "model": "whisper-1",
-            "language": source_lang,
-            "response_format": "verbose_json",
-        }
-        resp = requests.post(url, headers=headers, files=files, data=data, timeout=300)
-    if resp.status_code != 200:
-        raise Exception(f"Whisper xato: HTTP {resp.status_code} — {resp.text[:200]}")
-    result = resp.json()
-    return result.get("text", "").strip()
+    results = []
+    total = len(chunks_to_process)
+    try:
+        for idx, chunk_path in enumerate(chunks_to_process, 1):
+            if progress_cb:
+                try: progress_cb(idx, total)
+                except Exception: pass
+            with open(chunk_path, "rb") as f:
+                files = {"file": (os.path.basename(chunk_path), f, "application/octet-stream")}
+                data = {
+                    "model": "whisper-1",
+                    "language": source_lang,
+                    "response_format": "verbose_json",
+                }
+                resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
+            if resp.status_code != 200:
+                raise Exception(f"Whisper xato (bo'lak {idx}/{total}): HTTP {resp.status_code} — {resp.text[:200]}")
+            result = resp.json()
+            text = (result.get("text") or "").strip()
+            if text:
+                results.append(text)
+    finally:
+        if chunk_dir_to_cleanup:
+            try: shutil.rmtree(chunk_dir_to_cleanup, ignore_errors=True)
+            except Exception: pass
+
+    return "\n\n".join(results)
 
 
-def translate_with_claude(text, source_lang):
-    """Claude 3.5 Sonnet orqali xorijiy matnni O'zbekchaga professional tarjima."""
-    if not ANTHROPIC_API_KEY:
-        raise Exception("ANTHROPIC_API_KEY sozlanmagan. Railway env qo'shing.")
+def _claude_translate_one(text, source_lang):
+    """Bir bo'lakni Claude 3.5 Sonnet bilan tarjima qilish."""
     src_name = TRANSLATION_LANG_NAMES.get(source_lang, source_lang)
     url = "https://api.anthropic.com/v1/messages"
     headers = {
@@ -967,10 +1045,10 @@ def translate_with_claude(text, source_lang):
     )
     payload = {
         "model": "claude-3-5-sonnet-20241022",
-        "max_tokens": 4096,
+        "max_tokens": 8000,  # Claude 3.5 Sonnet max output
         "messages": [{"role": "user", "content": prompt}],
     }
-    resp = requests.post(url, headers=headers, json=payload, timeout=180)
+    resp = requests.post(url, headers=headers, json=payload, timeout=300)
     if resp.status_code != 200:
         raise Exception(f"Claude xato: HTTP {resp.status_code} — {resp.text[:200]}")
     data = resp.json()
@@ -978,6 +1056,38 @@ def translate_with_claude(text, source_lang):
     if not content:
         raise Exception("Claude bo'sh javob qaytardi.")
     return content[0].get("text", "").strip()
+
+
+def translate_with_claude(text, source_lang, progress_cb=None):
+    """Claude orqali tarjima — uzun matn bo'laklarga ajratiladi (Claude 8K output chegarasi).
+    progress_cb(current_chunk, total_chunks) — async progress callback."""
+    if not ANTHROPIC_API_KEY:
+        raise Exception("ANTHROPIC_API_KEY sozlanmagan. Railway env qo'shing.")
+
+    words = text.split()
+    # Kichik matn — bir martada tarjima
+    if len(words) <= CLAUDE_CHUNK_WORDS:
+        if progress_cb:
+            try: progress_cb(1, 1)
+            except Exception: pass
+        return _claude_translate_one(text, source_lang)
+
+    # Uzun matn — bo'laklarga ajratamiz (so'zlar chegarasida)
+    chunks = []
+    for i in range(0, len(words), CLAUDE_CHUNK_WORDS):
+        chunks.append(" ".join(words[i:i + CLAUDE_CHUNK_WORDS]))
+    logging.info(f"🔪 Claude bo'laklash: {len(words)} so'z → {len(chunks)} bo'lak")
+    translations = []
+    for idx, chunk in enumerate(chunks, 1):
+        if progress_cb:
+            try: progress_cb(idx, len(chunks))
+            except Exception: pass
+        try:
+            translations.append(_claude_translate_one(chunk, source_lang))
+        except Exception as e:
+            logging.warning(f"Claude bo'lak {idx}/{len(chunks)} xato: {e}")
+            translations.append(f"[Bo'lak {idx} tarjima xatosi]")
+    return "\n\n".join(translations)
 # === [/TARJIMA MODULI — API HELPERS] ============================================
 
 
@@ -2217,20 +2327,47 @@ async def process_translation(update, context, file_path, duration_sec, source_l
             except Exception:
                 actual_duration = 60
 
-        # 2) Whisper STT — verbose_json
-        original_text = await asyncio.to_thread(transcribe_whisper, file_path, source_lang)
+        # 2) Whisper STT — katta fayl avtomatik bo'laklanadi
+        loop = asyncio.get_running_loop()
+        last_progress = {"text": "", "ts": 0}
+        def whisper_cb(cur, total):
+            if total > 1:
+                txt = (f"🌐 *Tarjima jarayoni*\n\n"
+                       f"📡 Manba til: {src_label}\n"
+                       f"⏱ Davomiylik: ~{actual_duration//60} daqiqa\n"
+                       f"📝 1/2 — Whisper transkripsiya ({cur}/{total} bo'lak)...")
+                now = time.time()
+                if txt != last_progress["text"] and now - last_progress["ts"] > 1.5:
+                    last_progress["text"] = txt
+                    last_progress["ts"] = now
+                    asyncio.run_coroutine_threadsafe(msg.edit_text(txt, parse_mode="Markdown"), loop)
+        original_text = await asyncio.to_thread(transcribe_whisper, file_path, source_lang, whisper_cb)
         if not original_text or not original_text.strip():
             await msg.edit_text("❌ Audiodan matn topilmadi yoki tan olinmadi.")
             return
 
-        # 3) Claude tarjima
+        # 3) Claude tarjima — uzun matn avtomatik bo'laklanadi
+        word_count = len(original_text.split())
         await msg.edit_text(
             f"🌐 *Tarjima jarayoni*\n\n"
             f"📡 Manba til: {src_label}\n"
-            f"✨ 2/2 — Tarjima qilinmoqda (Claude 3.5 Sonnet)...",
+            f"📊 Matn: ~{word_count} so'z\n"
+            f"✨ 2/2 — Claude tarjima qilmoqda...",
             parse_mode="Markdown"
         )
-        translated = await asyncio.to_thread(translate_with_claude, original_text, source_lang)
+        last_claude = {"text": "", "ts": 0}
+        def claude_cb(cur, total):
+            if total > 1:
+                txt = (f"🌐 *Tarjima jarayoni*\n\n"
+                       f"📡 Manba til: {src_label}\n"
+                       f"📊 Matn: ~{word_count} so'z\n"
+                       f"✨ 2/2 — Claude tarjima ({cur}/{total} bo'lak)...")
+                now = time.time()
+                if txt != last_claude["text"] and now - last_claude["ts"] > 1.5:
+                    last_claude["text"] = txt
+                    last_claude["ts"] = now
+                    asyncio.run_coroutine_threadsafe(msg.edit_text(txt, parse_mode="Markdown"), loop)
+        translated = await asyncio.to_thread(translate_with_claude, original_text, source_lang, claude_cb)
         if not translated or not translated.strip():
             await msg.edit_text("❌ Tarjima bo'sh qaytdi.")
             return
@@ -2877,15 +3014,26 @@ def process_translation_for_user(user_id, file_path, source_lang):
             if not check_limit_by_user_id(user_id, cost):
                 return
         src_label = TRANSLATION_LANGS[source_lang]
-        telegram_send_message(user_id, f"🌐 Tarjima boshlandi ({src_label})\n📝 1/2 — Whisper transkripsiya...")
-        # 1) Whisper STT
-        original_text = transcribe_whisper(file_path, source_lang)
+        telegram_send_message(user_id, f"🌐 Tarjima boshlandi ({src_label})\n⏱ Davomiylik: ~{actual_duration//60} daqiqa\n📝 1/2 — Whisper transkripsiya...")
+        # 1) Whisper STT — katta fayl bo'laklanadi
+        last_w = {"sent": 0}
+        def whisper_progress(cur, total):
+            if total > 1 and cur != last_w["sent"]:
+                last_w["sent"] = cur
+                telegram_send_message(user_id, f"📝 Whisper: {cur}/{total} bo'lak transkripsiya qilindi...")
+        original_text = transcribe_whisper(file_path, source_lang, whisper_progress)
         if not original_text or not original_text.strip():
             telegram_send_message(user_id, "❌ Audiodan matn topilmadi.")
             return
-        # 2) Claude tarjima
-        telegram_send_message(user_id, "✨ 2/2 — Claude 3.5 Sonnet tarjima qilmoqda...")
-        translated = translate_with_claude(original_text, source_lang)
+        # 2) Claude tarjima — uzun matn bo'laklanadi
+        word_count = len(original_text.split())
+        telegram_send_message(user_id, f"✨ 2/2 — Claude tarjima qilmoqda... (~{word_count} so'z)")
+        last_c = {"sent": 0}
+        def claude_progress(cur, total):
+            if total > 1 and cur != last_c["sent"]:
+                last_c["sent"] = cur
+                telegram_send_message(user_id, f"✨ Claude tarjima: {cur}/{total} bo'lak...")
+        translated = translate_with_claude(original_text, source_lang, claude_progress)
         if not translated or not translated.strip():
             telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
             return
