@@ -1738,9 +1738,8 @@ def webapp_keyboard(chat_id=None):
         [
             [KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))],
             [KeyboardButton(text="📊 Balansim"), KeyboardButton(text="💎 Tariflar")],
-            [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="🌐 Tarjima")],
-            [KeyboardButton(text="❓ Yordam"), KeyboardButton(text="💬 Murojaat")],
-            [KeyboardButton(text="🔄 /start")],
+            [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="❓ Yordam")],
+            [KeyboardButton(text="💬 Murojaat"), KeyboardButton(text="🔄 /start")],
         ],
         resize_keyboard=True,
     )
