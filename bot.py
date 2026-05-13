@@ -3505,11 +3505,16 @@ async def handle_webapp_upload(request):
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
             tmp.write(file_data)
             tmp_path = tmp.name
-        # === [TARJIMA] Tarjima rejimi (translation_lang + target_lang) ===
-        if translation_lang and ext != ".pdf":
-            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang), daemon=True).start()
+        # === [TARJIMA] PDF + translation_lang/target -> PDF tarjima (matn+PDF+audio target tilda) ===
+        if ext == ".pdf" and translation_lang:
+            threading.Thread(target=process_pdf_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang), daemon=True).start()
+        # PDF tarjimasiz — oddiy PDF -> ovoz (default O'zbekcha)
         elif ext == ".pdf":
             threading.Thread(target=process_pdf_for_user, args=(int(user_id), tmp_path), daemon=True).start()
+        # Audio/video + translation_lang -> tarjima
+        elif translation_lang:
+            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang), daemon=True).start()
+        # Oddiy audio/video -> oddiy STT
         else:
             threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
