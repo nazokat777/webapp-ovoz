@@ -1360,8 +1360,19 @@
       <div class="pdf-icon"><svg><use href="#i-pdf"/></svg></div>
       <div class="pdf-info">
         <div class="pdf-title" data-i18n="pdf_title">📄 Istalgan PDF → audio MP3</div>
-        <div class="pdf-sub" data-i18n="pdf_sub">⬆️ Yuqoridan tilni tanlang. PDF hujjatni yuklang — tanlangan tilda ovozli MP3 qilib qaytaramiz.</div>
+        <div class="pdf-sub" data-i18n="pdf_sub">PDF tili avtomatik aniqlanadi. Audio MP3 qaysi tilda bo'lishini pastdan tanlang.</div>
         <span class="card-pill pill-blossom" data-i18n="pdf_pill">Yangi xizmat</span>
+      </div>
+    </div>
+
+    <!-- PDF → MP3 til tanlash (faqat audio output tili) -->
+    <div onclick="event.stopPropagation();" style="margin-top: 12px; padding: 16px; border-radius: 18px; background: linear-gradient(135deg, rgba(20, 18, 14, 0.85), rgba(10, 9, 6, 0.95)); border: 1px solid rgba(212, 175, 55, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);">
+      <div style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; letter-spacing: 1.5px; text-transform: uppercase;">🔊 MP3 audio tili (qaysi tilda olasiz?)</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
+        <button onclick="selectPdfLang('uz')" id="pdflangUz" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);">🇺🇿 O'zbek</button>
+        <button onclick="selectPdfLang('ru')" id="pdflangRu" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
+        <button onclick="selectPdfLang('en')" id="pdflangEn" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
+        <button onclick="selectPdfLang('ar')" id="pdflangAr" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
       </div>
     </div>
   </div>
@@ -1993,6 +2004,32 @@
   // === [TARJIMA] WebApp tarjima holatlari ===
   let translateLang = null;  // SOURCE manba til (ru/en/ar/auto)
   let targetLang = 'uz';     // TARGET hosil til (default O'zbek)
+  let pdfLang = 'uz';        // PDF → MP3 audio til (default O'zbek)
+
+  // === [PDF→MP3] Audio til tanlash (faqat PDF kart uchun) ===
+  function selectPdfLang(lang) {
+    pdfLang = lang;
+    ['uz', 'ru', 'en', 'ar'].forEach(code => {
+      const btn = document.getElementById('pdflang' + code.charAt(0).toUpperCase() + code.slice(1));
+      if (!btn) return;
+      if (code === lang) {
+        btn.style.background = 'linear-gradient(135deg, #d4af37, #b8941f)';
+        btn.style.borderColor = '#d4af37';
+        btn.style.color = '#0a0a0a';
+        btn.style.boxShadow = '0 6px 18px rgba(212, 175, 55, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25)';
+        btn.style.fontWeight = '900';
+        btn.style.transform = 'scale(1.04)';
+      } else {
+        btn.style.background = 'rgba(245, 240, 224, 0.04)';
+        btn.style.borderColor = 'rgba(212, 175, 55, 0.20)';
+        btn.style.color = 'rgba(245, 240, 224, 0.72)';
+        btn.style.boxShadow = 'none';
+        btn.style.fontWeight = '700';
+        btn.style.transform = 'scale(1)';
+      }
+    });
+    if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.selectionChanged(); } catch (e) {} }
+  }
   // Default: hammasi kulrang. Tanlanganda — vivid gradient + glow.
   const TLANG_ACTIVE = {
     auto: { color: '#d4af37', gradient: 'linear-gradient(135deg, #f0d878, #d4af37, #b8941f)' },
@@ -2251,6 +2288,17 @@
       if (translateLang) {
         fd.append('translation_lang', translateLang);
         fd.append('target_lang', targetLang || 'uz');
+      }
+      // === [PDF→MP3] PDF uchun audio til (avto-detect manba, output til tanlangan) ===
+      const isPdfFile = (selectedFile.name || '').toLowerCase().endsWith('.pdf')
+                         || (selectedFile.type || '').includes('pdf');
+      if (isPdfFile) {
+        fd.append('pdf_audio_lang', pdfLang || 'uz');
+        // PDF uchun source = auto, target = MP3 til
+        if (!translateLang) {
+          fd.append('translation_lang', 'auto');
+          fd.append('target_lang', pdfLang || 'uz');
+        }
       }
       fd.append('file', selectedFile, selectedFile.name);
       const r = await fetch(window.location.origin + '/upload', { method: 'POST', body: fd });
