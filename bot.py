@@ -840,38 +840,87 @@ def transcribe(file_path, progress_cb=None, language="uz"):
 
 
 FONT_CANDIDATES = [
+    # Linux (Docker) — DejaVu Sans (o'/g' va kengaytirilgan Unicode'ni qo'llab-quvvatlaydi)
+    r"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    r"/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    # Linux — Noto Sans (Unicode standart)
+    r"/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
+    # Windows fallback
     r"C:\Windows\Fonts\arial.ttf",
     r"C:\Windows\Fonts\segoeui.ttf",
-    r"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    # macOS fallback
     r"/Library/Fonts/Arial.ttf",
 ]
 
+# Arabcha matn uchun alohida font (DejaVu arabcha qo'llab-quvvatlamasa, Noto Naskh)
+ARABIC_FONT_CANDIDATES = [
+    r"/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
+    r"/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+    r"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # qisman arabcha bor
+    r"C:\Windows\Fonts\arial.ttf",
+]
 
-def _find_font():
-    for p in FONT_CANDIDATES:
+
+def _find_font(candidates=None):
+    cands = candidates if candidates is not None else FONT_CANDIDATES
+    for p in cands:
         if os.path.exists(p):
             return p
     return None
 
 
+def _normalize_uzbek_apostrophes(text):
+    """O'zbek tilidagi noto'g'ri apostroflarni to'g'rilash:
+    `o``, `o'` → `o'` (tipografik); `g`` → `g'`. Bu PDF/matn sifati uchun.
+    """
+    if not text:
+        return text
+    replacements = [
+        ("o`", "o'"), ("O`", "O'"),
+        ("g`", "g'"), ("G`", "G'"),
+        ("o´", "o'"), ("O´", "O'"),
+        ("g´", "g'"), ("G´", "G'"),
+        # ' (asciidan keyin) → ' qoldiramiz, tipograf bo'lsa o'tib ketadi
+    ]
+    out = text
+    for a, b in replacements:
+        out = out.replace(a, b)
+    return out
+
+
 def make_pdf(text, title="Audio & Konspekt — Matn"):
-    """Matnni PDF qiladi va vaqtinchalik fayl yo'lini qaytaradi."""
+    """Matnni PDF qiladi va vaqtinchalik fayl yo'lini qaytaradi.
+    DejaVuSans yoki Noto Sans Unicode fontidan foydalanadi —
+    o'zbek o'/g', arab yozuvi va boshqa Unicode belgilarini to'g'ri ko'rsatadi."""
+    text = _normalize_uzbek_apostrophes(text)
     pdf = FPDF()
     pdf.add_page()
     pdf.set_title(title)
-    font_path = _find_font()
-    if font_path:
-        pdf.add_font("Body", "", font_path)
+
+    body_font = _find_font()
+    arabic_font = _find_font(ARABIC_FONT_CANDIDATES)
+
+    if body_font:
+        pdf.add_font("Body", "", body_font)
+        # Agar arabcha font alohida bo'lsa, qo'shib qo'yamiz
+        if arabic_font and arabic_font != body_font:
+            try:
+                pdf.add_font("Arabic", "", arabic_font)
+            except Exception:
+                pass
         pdf.set_font("Body", size=14)
         pdf.cell(0, 12, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         pdf.ln(4)
         pdf.set_font("Body", size=11)
     else:
+        # Hech qanday Unicode font topilmadi — Helvetica (faqat ASCII)
+        # Bu holda o'/g' va arabcha buziladi, lekin hech qaytmaslikdan ko'ra yaxshi
+        logging.warning("Unicode font topilmadi (DejaVu/Noto). PDF buzilishi mumkin.")
         pdf.set_font("Helvetica", size=14)
         pdf.cell(0, 12, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         pdf.ln(4)
         pdf.set_font("Helvetica", size=11)
-    # multi_cell uzun matnni avtomatik o'rab beradi
+
     pdf.multi_cell(0, 7, text)
     out_path = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False).name
     pdf.output(out_path)
