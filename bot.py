@@ -78,7 +78,7 @@ PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 PAYMENT_CURRENCY = os.getenv("PAYMENT_CURRENCY", "UZS")
 
 # === [TARJIMA MODULI — YANGI] ====================================================
-# Whisper (OpenAI) + Claude 3.5 Sonnet (Anthropic) orqali xorijiy tildan tarjima
+# Whisper (OpenAI) + GPT-4o-mini (Anthropic) orqali xorijiy tildan tarjima
 # Railway'da quyidagi env'larni qo'shing:
 #   OPENAI_API_KEY=sk-...
 #   ANTHROPIC_API_KEY=sk-ant-...
@@ -1028,41 +1028,46 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
     return "\n\n".join(results)
 
 
-def _claude_translate_one(text, source_lang):
-    """Bir bo'lakni Claude 3.5 Sonnet bilan tarjima qilish."""
+def _gpt_translate_one(text, source_lang):
+    """Bir bo'lakni OpenAI GPT-4o-mini bilan tarjima qilish.
+    GPT-4o-mini Claude darajasida sifatli, lekin 25x arzonroq."""
     src_name = TRANSLATION_LANG_NAMES.get(source_lang, source_lang)
-    url = "https://api.anthropic.com/v1/messages"
+    url = "https://api.openai.com/v1/chat/completions"
     headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
     }
-    prompt = (
-        f"Quyidagi {src_name} tilidagi matnni O'zbek tiliga professional, "
-        f"adabiy uslubda tarjima qil. Faqat tarjimani qaytar — boshqa hech qanday "
-        f"izoh, sarlavha yoki kirish so'zi yozma.\n\n"
-        f"Matn:\n{text}"
+    system_prompt = (
+        "Sen professional tarjimon — xorijiy tildan O'zbek tiliga adabiy, "
+        "tabiiy va aniq tarjima qilasan. Faqat tarjimani qaytar — boshqa "
+        "izoh, sarlavha yoki kirish so'zi yozma."
     )
+    user_prompt = f"{src_name.capitalize()} tilidagi matnni O'zbekchaga tarjima qil:\n\n{text}"
     payload = {
-        "model": "claude-3-5-sonnet-20241022",
-        "max_tokens": 8000,  # Claude 3.5 Sonnet max output
-        "messages": [{"role": "user", "content": prompt}],
+        "model": "gpt-4o-mini",
+        "max_tokens": 16000,
+        "temperature": 0.3,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
     }
     resp = requests.post(url, headers=headers, json=payload, timeout=300)
     if resp.status_code != 200:
-        raise Exception(f"Claude xato: HTTP {resp.status_code} — {resp.text[:200]}")
+        raise Exception(f"GPT xato: HTTP {resp.status_code} — {resp.text[:200]}")
     data = resp.json()
-    content = data.get("content", [])
-    if not content:
-        raise Exception("Claude bo'sh javob qaytardi.")
-    return content[0].get("text", "").strip()
+    choices = data.get("choices", [])
+    if not choices:
+        raise Exception("GPT bo'sh javob qaytardi.")
+    return choices[0].get("message", {}).get("content", "").strip()
 
 
 def translate_with_claude(text, source_lang, progress_cb=None):
-    """Claude orqali tarjima — uzun matn bo'laklarga ajratiladi (Claude 8K output chegarasi).
+    """Tarjima — OpenAI GPT-4o-mini orqali (avval Claude edi).
+    Funksiya nomi mavjud chaqiruvchilarga mos qoldirildi.
     progress_cb(current_chunk, total_chunks) — async progress callback."""
-    if not ANTHROPIC_API_KEY:
-        raise Exception("ANTHROPIC_API_KEY sozlanmagan. Railway env qo'shing.")
+    if not OPENAI_API_KEY:
+        raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing.")
 
     words = text.split()
     # Kichik matn — bir martada tarjima
@@ -1070,22 +1075,22 @@ def translate_with_claude(text, source_lang, progress_cb=None):
         if progress_cb:
             try: progress_cb(1, 1)
             except Exception: pass
-        return _claude_translate_one(text, source_lang)
+        return _gpt_translate_one(text, source_lang)
 
     # Uzun matn — bo'laklarga ajratamiz (so'zlar chegarasida)
     chunks = []
     for i in range(0, len(words), CLAUDE_CHUNK_WORDS):
         chunks.append(" ".join(words[i:i + CLAUDE_CHUNK_WORDS]))
-    logging.info(f"🔪 Claude bo'laklash: {len(words)} so'z → {len(chunks)} bo'lak")
+    logging.info(f"🔪 GPT bo'laklash: {len(words)} so'z → {len(chunks)} bo'lak")
     translations = []
     for idx, chunk in enumerate(chunks, 1):
         if progress_cb:
             try: progress_cb(idx, len(chunks))
             except Exception: pass
         try:
-            translations.append(_claude_translate_one(chunk, source_lang))
+            translations.append(_gpt_translate_one(chunk, source_lang))
         except Exception as e:
-            logging.warning(f"Claude bo'lak {idx}/{len(chunks)} xato: {e}")
+            logging.warning(f"GPT bo'lak {idx}/{len(chunks)} xato: {e}")
             translations.append(f"[Bo'lak {idx} tarjima xatosi]")
     return "\n\n".join(translations)
 # === [/TARJIMA MODULI — API HELPERS] ============================================
@@ -2303,7 +2308,7 @@ async def process_pdf_to_voice(update, context, file_id):
 # === [TARJIMA MODULI — ASOSIY WORKFLOW] =========================================
 async def process_translation(update, context, file_path, duration_sec, source_lang):
     """Audio'ni xorijiy tildan O'zbekchaga tarjima qilish.
-    Workflow: Whisper STT (verbose_json) → Claude 3.5 Sonnet (translation) → matn + PDF.
+    Workflow: Whisper STT (verbose_json) → GPT-4o-mini (translation) → matn + PDF.
     Tarif: duration * TRANSLATION_MULTIPLIER (2x) ga sanaydi.
     Original transkripsiya user'ga ko'rsatilmaydi — faqat tarjima."""
     if not is_admin(update):
@@ -2352,7 +2357,7 @@ async def process_translation(update, context, file_path, duration_sec, source_l
             f"🌐 *Tarjima jarayoni*\n\n"
             f"📡 Manba til: {src_label}\n"
             f"📊 Matn: ~{word_count} so'z\n"
-            f"✨ 2/2 — Claude tarjima qilmoqda...",
+            f"✨ 2/2 — GPT tarjima qilmoqda...",
             parse_mode="Markdown"
         )
         last_claude = {"text": "", "ts": 0}
@@ -2361,7 +2366,7 @@ async def process_translation(update, context, file_path, duration_sec, source_l
                 txt = (f"🌐 *Tarjima jarayoni*\n\n"
                        f"📡 Manba til: {src_label}\n"
                        f"📊 Matn: ~{word_count} so'z\n"
-                       f"✨ 2/2 — Claude tarjima ({cur}/{total} bo'lak)...")
+                       f"✨ 2/2 — GPT tarjima ({cur}/{total} bo'lak)...")
                 now = time.time()
                 if txt != last_claude["text"] and now - last_claude["ts"] > 1.5:
                     last_claude["text"] = txt
@@ -2779,7 +2784,7 @@ async def translate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌐 *Xorijiy tildan tarjima*\n\n"
         "Audio yoki videoni xorijiy tildan O'zbek tiliga tarjima qilamiz.\n"
-        "Whisper (transkripsiya) + Claude 3.5 Sonnet (tarjima).\n\n"
+        "Whisper (transkripsiya) + GPT-4o-mini (tarjima).\n\n"
         f"⚠️ *Diqqat:* tarjima xizmati uchun daqiqalar *{TRANSLATION_MULTIPLIER}x* sanaydi "
         f"(masalan 1 daqiqalik audio = {TRANSLATION_MULTIPLIER} daqiqa tarifdan ayriladi).\n\n"
         "Qaysi tildan tarjima qilamiz?",
@@ -3027,7 +3032,7 @@ def process_translation_for_user(user_id, file_path, source_lang):
             return
         # 2) Claude tarjima — uzun matn bo'laklanadi
         word_count = len(original_text.split())
-        telegram_send_message(user_id, f"✨ 2/2 — Claude tarjima qilmoqda... (~{word_count} so'z)")
+        telegram_send_message(user_id, f"✨ 2/2 — GPT tarjima qilmoqda... (~{word_count} so'z)")
         last_c = {"sent": 0}
         def claude_progress(cur, total):
             if total > 1 and cur != last_c["sent"]:
