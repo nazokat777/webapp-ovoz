@@ -123,7 +123,7 @@ ADMIN_USERNAMES = {"nazokat_571"}
 
 # Tariflar (O'zbek STT uchun)
 TARIFFS = {
-    "free":     {"name": "🌸 Bepul",    "minutes": 5,   "price": 0},
+    "free":     {"name": "🌸 Bepul",    "minutes": 3,   "price": 0},
     "standart": {"name": "🌿 Standart", "minutes": 180, "price": 170000},  # 3 soat
     "premium":  {"name": "🌺 Premium",  "minutes": 360, "price": 300000},  # 6 soat
     "pro":      {"name": "💎 Pro",      "minutes": 600, "price": 500000},  # 10 soat
