@@ -139,6 +139,8 @@ pending_payments = {}
 # === [TARJIMA STATE] Foydalanuvchi tilini tanlagach audio kutamiz ===
 # {user_id: source_lang} — JSON'ga saqlanadi (deploy'larda yo'qolmaydi)
 pending_translations = {}
+# === [USERS] Admin ko'rishi uchun user info: {user_id: {"username": "@x", "first_name": "Ali", "last_seen": 1234567890}} ===
+user_info = {}
 # Admin tomonidan /setcard va /setholder orqali sozlanadigan karta ma'lumotlari
 # Env variable yo'q bo'lsa yoki adminb buyruq bilan yangilangan bo'lsa shu ishlatiladi.
 runtime_settings = {"payment_card": "", "payment_card_holder": ""}
@@ -195,6 +197,13 @@ def _load_user_data():
                     pending_translations[int(k)] = v
             except (ValueError, TypeError):
                 pass
+        # === [USERS] user info (username, first_name, last_seen) ===
+        for k, v in (data.get("user_info") or {}).items():
+            try:
+                if isinstance(v, dict):
+                    user_info[int(k)] = v
+            except (ValueError, TypeError):
+                pass
         # Runtime settings (karta raqami va boshqalar) — admin /setcard orqali yangilaydi
         rs = data.get("runtime_settings") or {}
         if isinstance(rs, dict):
@@ -217,6 +226,8 @@ def _save_user_data():
                 "pending_payments": {str(k): v for k, v in pending_payments.items()},
                 # === [TARJIMA] pending translations ham saqlanadi ===
                 "pending_translations": {str(k): v for k, v in pending_translations.items()},
+                # === [USERS] user_info ham saqlanadi (deploy'larda yo'qolmasligi uchun) ===
+                "user_info": {str(k): v for k, v in user_info.items()},
                 "runtime_settings": dict(runtime_settings),
             }
             tmp_path = DATA_FILE + ".tmp"
@@ -229,8 +240,39 @@ def _save_user_data():
             logging.error(f"❌ user_data.json yozishda xato: {e} | DATA_FILE={DATA_FILE}")
 
 
+def track_user(update):
+    """=== [USERS] Foydalanuvchi ma'lumotlarini saqlash (admin keyinroq ko'rishi uchun) ===
+    Har handler chaqirilganda chaqiriladi — username, first_name, last_seen yangilanadi."""
+    if not update or not getattr(update, "effective_user", None):
+        return
+    u = update.effective_user
+    user_id = u.id
+    prev = user_info.get(user_id, {})
+    new_info = {
+        "username": u.username or "",
+        "first_name": u.first_name or "",
+        "last_name": u.last_name or "",
+        "language_code": u.language_code or "",
+        "last_seen": int(time.time()),
+        "first_seen": prev.get("first_seen") or int(time.time()),
+    }
+    # Faqat o'zgargan bo'lsa saqlaymiz (har xabarda yozish optimal emas)
+    if (prev.get("username") != new_info["username"] or
+        prev.get("first_name") != new_info["first_name"] or
+        prev.get("last_name") != new_info["last_name"] or
+        not prev.get("first_seen")):
+        user_info[user_id] = new_info
+        _save_user_data()
+    else:
+        # last_seen yangilanadi, lekin har safar diskga yozmaymiz (har 10 daqiqada)
+        if new_info["last_seen"] - prev.get("last_seen", 0) > 600:
+            user_info[user_id] = new_info
+            _save_user_data()
+
+
 def is_admin(update):
     """Foydalanuvchi adminmi tekshiradi (username asosida)."""
+    track_user(update)  # === [USERS] Har chaqiruvda user'ni saqlaymiz ===
     if not update or not getattr(update, "effective_user", None):
         return False
     uname = (update.effective_user.username or "").lower()
@@ -1628,23 +1670,113 @@ async def test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+def _user_label(user_id):
+    """=== [USERS] Foydalanuvchi nomini chiroyli ko'rsatish ===
+    Format: '@username (Ism)' yoki agar username yo'q bo'lsa 'Ism' yoki shunchaki ID."""
+    info = user_info.get(user_id) or {}
+    uname = info.get("username") or ""
+    fname = info.get("first_name") or ""
+    lname = info.get("last_name") or ""
+    full_name = (fname + " " + lname).strip()
+    if uname and full_name:
+        return f"@{uname} ({full_name})"
+    if uname:
+        return f"@{uname}"
+    if full_name:
+        return full_name
+    return f"ID:{user_id}"
+
+
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin: barcha userlar statistikasi."""
+    """Admin: barcha userlar statistikasi (username bilan)."""
     if not is_admin(update):
         await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
         return
-    if not user_uzbek_usage:
-        await update.message.reply_text("📊 Hozircha foydalanuvchilar STT ishlatmagan.")
+    if not user_uzbek_usage and not user_info:
+        await update.message.reply_text("📊 Hozircha foydalanuvchilar bot'ni ishlatmagan.")
         return
     lines = ["📊 *Foydalanuvchi statistikasi:*\n"]
-    sorted_users = sorted(user_uzbek_usage.items(), key=lambda x: x[1], reverse=True)
-    for user_id, sec in sorted_users[:20]:
-        cost = int(sec / 60 * MUXLISA_PRICE_PER_MIN)
-        lines.append(f"• `{user_id}` — {sec/60:.1f} daq (~{cost:,} so'm)")
+    # Userlarni tarif daqiqalari bo'yicha tartiblash
+    all_user_ids = set(list(user_uzbek_usage.keys()) + list(user_info.keys()))
+    user_data_list = [(uid, user_uzbek_usage.get(uid, 0)) for uid in all_user_ids]
+    user_data_list.sort(key=lambda x: x[1], reverse=True)
+    for user_id, sec in user_data_list[:30]:
+        label = _user_label(user_id)
+        # Markdown'da xavfsiz qilamiz (underscore, asterisk)
+        safe_label = label.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+        tariff_key = get_user_tariff(user_id)
+        tariff_name = TARIFFS.get(tariff_key, TARIFFS["free"])["name"]
+        lines.append(f"• {safe_label}\n  `{user_id}` — {sec/60:.1f} daq — {tariff_name}")
     total_sec = sum(user_uzbek_usage.values())
-    total_cost = int(total_sec / 60 * MUXLISA_PRICE_PER_MIN)
-    lines.append(f"\n*Jami:* {total_sec/60:.1f} daqiqa = ~{total_cost:,} so'm")
+    lines.append(f"\n*Jami:* {len(all_user_ids)} ta user, {total_sec/60:.1f} daqiqa ishlatilgan")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /user <user_id> — foydalanuvchining batafsil ma'lumotini ko'rish."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    args = (update.message.text or "").split()
+    if len(args) < 2:
+        await update.message.reply_text(
+            "*Foydalanish:*\n"
+            "`/user <user_id>`\n\n"
+            "*Misol:*\n"
+            "`/user 629686772`\n\n"
+            "Yoki `/stats` orqali barcha foydalanuvchilar ro'yxatini ko'ring.",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        target_id = int(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ user_id raqam bo'lishi kerak.")
+        return
+    info = user_info.get(target_id) or {}
+    if not info and target_id not in user_uzbek_usage:
+        await update.message.reply_text(f"❌ `{target_id}` user topilmadi.", parse_mode="Markdown")
+        return
+    # Ma'lumotlarni yig'ish
+    uname = info.get("username") or "(yo'q)"
+    fname = info.get("first_name") or "(yo'q)"
+    lname = info.get("last_name") or ""
+    lang_code = info.get("language_code") or "(yo'q)"
+    first_seen = info.get("first_seen", 0)
+    last_seen = info.get("last_seen", 0)
+    used_sec = user_uzbek_usage.get(target_id, 0)
+    tariff_key = get_user_tariff(target_id)
+    tariff = TARIFFS.get(tariff_key, TARIFFS["free"])
+    full_name = (fname + " " + lname).strip() if lname else fname
+    # Vaqtni formatga aylantirish
+    import datetime
+    fs = datetime.datetime.fromtimestamp(first_seen).strftime("%Y-%m-%d %H:%M") if first_seen else "noma'lum"
+    ls = datetime.datetime.fromtimestamp(last_seen).strftime("%Y-%m-%d %H:%M") if last_seen else "noma'lum"
+    # Markdown escape
+    uname_safe = uname.replace("_", "\\_") if uname != "(yo'q)" else uname
+    fname_safe = full_name.replace("_", "\\_").replace("*", "\\*") if full_name else "(yo'q)"
+    # Telegram URL (agar username bor bo'lsa)
+    profile_url = f"https://t.me/{uname}" if uname not in ("(yo'q)", "") else None
+    text = (
+        f"👤 *Foydalanuvchi ma'lumoti*\n\n"
+        f"🆔 ID: `{target_id}`\n"
+        f"👤 Ism: *{fname_safe}*\n"
+        f"📛 Username: @{uname_safe}\n"
+        f"🌐 Til kodi: {lang_code}\n\n"
+        f"🌸 Tarif: *{tariff['name']}* ({tariff['minutes']} daqiqa/oy)\n"
+        f"⏱ Ishlatilgan: *{used_sec/60:.1f} daqiqa*\n"
+        f"📉 Qoldiq: *{max(0, tariff['minutes']*60 - used_sec)/60:.1f} daqiqa*\n\n"
+        f"📅 Birinchi marta: {fs}\n"
+        f"🕐 Oxirgi marta: {ls}\n\n"
+        f"💡 Tarif berish: `/grant {target_id} <tarif>`\n"
+        f"💬 Xabar yuborish: `/reply {target_id} <xabar>`"
+    )
+    keyboard = None
+    if profile_url:
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"💬 @{uname} bilan yozish", url=profile_url)]
+        ])
+    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
 
 
 async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3428,6 +3560,7 @@ def main():
     app.add_handler(CommandHandler("cancel", cancel_cmd))
     app.add_handler(CommandHandler("reply", reply_cmd))
     app.add_handler(CommandHandler("debug", debug_cmd))
+    app.add_handler(CommandHandler("user", user_cmd))
     app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
 
     # Manual to'lov rejimi handlerlari (chek + admin tasdiqlash)
