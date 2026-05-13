@@ -103,11 +103,12 @@ TRANSLATION_MULTIPLIER = 1
 # Tarjima qilinadigan manba tillar (auto — Whisper o'zi aniqlaydi, har qanday til)
 TRANSLATION_LANGS = {
     "auto": "🌐 Har qanday til (Avto)",
+    "uz": "🇺🇿 O'zbek tilidan",
     "ru": "🇷🇺 Rus tilidan",
     "en": "🇬🇧 Ingliz tilidan",
     "ar": "🇸🇦 Arab tilidan",
 }
-TRANSLATION_LANG_NAMES = {"ru": "rus", "en": "ingliz", "ar": "arab", "auto": "xorijiy"}
+TRANSLATION_LANG_NAMES = {"uz": "o'zbek", "ru": "rus", "en": "ingliz", "ar": "arab", "auto": "xorijiy"}
 # === [/TARJIMA MODULI] ==========================================================
 
 # Web App URL — ngrok yoki o'z serveringiz URL'ini kiriting
