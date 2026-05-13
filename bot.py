@@ -203,10 +203,14 @@ def _load_user_data():
             except (ValueError, TypeError):
                 pass
         # === [TARJIMA] pending translations — til tanlash holatini saqlash ===
+        # Format: {user_id: {"source": "ru", "target": "uz"}} yoki eski format: "ru"
         for k, v in (data.get("pending_translations") or {}).items():
             try:
-                if v in TRANSLATION_LANGS:
+                if isinstance(v, dict) and v.get("source") in TRANSLATION_LANGS:
                     pending_translations[int(k)] = v
+                elif isinstance(v, str) and v in TRANSLATION_LANGS:
+                    # Eski format — backward compat
+                    pending_translations[int(k)] = {"source": v, "target": "uz"}
             except (ValueError, TypeError):
                 pass
         # === [USERS] user info (username, first_name, last_seen) ===
@@ -1837,11 +1841,34 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 def _pop_translation_lang(user_id):
-    """=== [TARJIMA] User tarjima rejimida bo'lsa source_lang qaytaradi va state'ni o'chiradi. ==="""
+    """=== [TARJIMA] Eski helper — source_lang ni qaytaradi va state'ni o'chiradi. ==="""
+    state = _pop_translation_state(user_id)
+    if state:
+        return state.get("source")
+    return None
+
+
+def _pop_translation_state(user_id):
+    """=== [TARJIMA] User tarjima rejimida bo'lsa {source, target} qaytaradi. ===
+    Backward compat: agar eski format (string) bo'lsa, target='uz' deb qaytariladi.
+    """
     if user_id and user_id in pending_translations:
-        lang = pending_translations.pop(user_id, None)
+        val = pending_translations.pop(user_id, None)
         _save_user_data()
-        return lang
+        if isinstance(val, dict):
+            return val
+        if isinstance(val, str):
+            return {"source": val, "target": "uz"}
+    return None
+
+
+def _peek_translation_state(user_id):
+    """Holatni o'chirmasdan qaytaradi (faqat o'qish)."""
+    val = pending_translations.get(user_id)
+    if isinstance(val, dict):
+        return val
+    if isinstance(val, str):
+        return {"source": val, "target": "uz"}
     return None
 
 
@@ -1851,9 +1878,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Ovozli xabaringiz topilmadi. Iltimos qayta yuboring.")
         return
     # === [TARJIMA INTEGRATSIYASI] ===
-    src_lang = _pop_translation_lang(update.effective_user.id)
-    if src_lang:
-        await process_translation_from_file_id(update, context, v.file_id, ".ogg", v.duration or 0, src_lang)
+    state = _pop_translation_state(update.effective_user.id)
+    if state and state.get("source"):
+        await process_translation_from_file_id(
+            update, context, v.file_id, ".ogg", v.duration or 0,
+            state["source"], state.get("target") or "uz"
+        )
         return
     # === [/TARJIMA INTEGRATSIYASI] ===
     lang = _chat_lang(context, update)
@@ -1864,9 +1894,12 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = update.message.audio
     ext = os.path.splitext(a.file_name or "audio.mp3")[1] or ".mp3"
     # === [TARJIMA INTEGRATSIYASI] ===
-    src_lang = _pop_translation_lang(update.effective_user.id)
-    if src_lang:
-        await process_translation_from_file_id(update, context, a.file_id, ext, a.duration or 0, src_lang)
+    state = _pop_translation_state(update.effective_user.id)
+    if state and state.get("source"):
+        await process_translation_from_file_id(
+            update, context, a.file_id, ext, a.duration or 0,
+            state["source"], state.get("target") or "uz"
+        )
         return
     # === [/TARJIMA INTEGRATSIYASI] ===
     lang = _chat_lang(context, update)
@@ -1877,9 +1910,12 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     v = update.message.video
     ext = os.path.splitext(v.file_name or "video.mp4")[1] or ".mp4"
     # === [TARJIMA INTEGRATSIYASI] ===
-    src_lang = _pop_translation_lang(update.effective_user.id)
-    if src_lang:
-        await process_translation_from_file_id(update, context, v.file_id, ext, v.duration or 0, src_lang)
+    state = _pop_translation_state(update.effective_user.id)
+    if state and state.get("source"):
+        await process_translation_from_file_id(
+            update, context, v.file_id, ext, v.duration or 0,
+            state["source"], state.get("target") or "uz"
+        )
         return
     # === [/TARJIMA INTEGRATSIYASI] ===
     lang = _chat_lang(context, update)
@@ -1889,9 +1925,12 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_video_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     v = update.message.video_note
     # === [TARJIMA INTEGRATSIYASI] ===
-    src_lang = _pop_translation_lang(update.effective_user.id)
-    if src_lang:
-        await process_translation_from_file_id(update, context, v.file_id, ".mp4", v.duration or 0, src_lang)
+    state = _pop_translation_state(update.effective_user.id)
+    if state and state.get("source"):
+        await process_translation_from_file_id(
+            update, context, v.file_id, ".mp4", v.duration or 0,
+            state["source"], state.get("target") or "uz"
+        )
         return
     # === [/TARJIMA INTEGRATSIYASI] ===
     lang = _chat_lang(context, update)
@@ -2001,6 +2040,223 @@ def _user_label(user_id):
     if full_name:
         return full_name
     return f"ID:{user_id}"
+
+
+async def admin_panel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin uchun tugmali panel — userlarni boshqarish onsonroq.
+    /admin yoki /panel komandasi."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    total_users = len(set(list(user_uzbek_usage.keys()) + list(user_info.keys())))
+    total_min = sum(user_uzbek_usage.values()) / 60
+    paid_users = sum(1 for uid in user_tariffs if user_tariffs.get(uid) != "free")
+    buttons = [
+        [InlineKeyboardButton("📊 Statistika (top 30)", callback_data="adm:stats")],
+        [InlineKeyboardButton("👥 Tarifli userlar (manage)", callback_data="adm:paid_users")],
+        [InlineKeyboardButton("💳 Kutilayotgan to'lovlar", callback_data="adm:pending_payments")],
+        [InlineKeyboardButton("🔍 User qidirish (ID/username)", callback_data="adm:search_help")],
+        [InlineKeyboardButton("ℹ️ Komandalar ro'yxati", callback_data="adm:help")],
+    ]
+    await update.message.reply_text(
+        f"🔐 *Admin Panel*\n\n"
+        f"👥 Jami userlar: *{total_users}*\n"
+        f"💎 Tarif sotib olgan: *{paid_users}*\n"
+        f"⏱ Ishlatilgan: *{total_min:.1f}* daqiqa\n\n"
+        f"Quyidan tanlang:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin panel tugmalari uchun callback."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+    if not is_admin(update):
+        await query.edit_message_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    action = query.data.split(":", 1)[1] if ":" in query.data else ""
+
+    if action == "stats":
+        lines = ["📊 *Statistika (top 30 — ishlatish bo'yicha):*\n"]
+        all_ids = set(list(user_uzbek_usage.keys()) + list(user_info.keys()))
+        data_list = [(uid, user_uzbek_usage.get(uid, 0)) for uid in all_ids]
+        data_list.sort(key=lambda x: x[1], reverse=True)
+        for uid, sec in data_list[:30]:
+            label = _user_label(uid).replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+            tariff_name = TARIFFS.get(get_user_tariff(uid), TARIFFS["free"])["name"]
+            lines.append(f"• {label}\n  `{uid}` — {sec/60:.1f} daq — {tariff_name}")
+        back = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")]]
+        await query.edit_message_text(
+            "\n".join(lines) if len(data_list) > 0 else "Hech qanday user yo'q.",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(back),
+        )
+        return
+
+    if action == "paid_users":
+        # Tarifli userlar ro'yxati — har biriga "Bekor qilish" tugmasi
+        paid_list = [(uid, t) for uid, t in user_tariffs.items() if t != "free"]
+        if not paid_list:
+            back = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")]]
+            await query.edit_message_text(
+                "💎 Hozircha tarifli user yo'q.",
+                reply_markup=InlineKeyboardMarkup(back),
+            )
+            return
+        text_lines = ["💎 *Tarifli userlar* (test uchun bergan bo'lsangiz — bekor qilish tugmasini bosing):\n"]
+        buttons = []
+        for uid, tkey in paid_list[:20]:
+            tariff = TARIFFS.get(tkey, TARIFFS["free"])
+            label = _user_label(uid).replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+            used = user_uzbek_usage.get(uid, 0) / 60
+            text_lines.append(
+                f"• {label}\n  `{uid}` — {tariff['name']} ({used:.1f}/{tariff['minutes']} daq)"
+            )
+            buttons.append([InlineKeyboardButton(
+                f"❌ {label[:25]} ({tariff['name'][:10]}) bekor",
+                callback_data=f"adm_revoke:{uid}"
+            )])
+        buttons.append([InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")])
+        await query.edit_message_text(
+            "\n".join(text_lines),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return
+
+    if action == "pending_payments":
+        if not pending_payments:
+            back = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")]]
+            await query.edit_message_text(
+                "💳 Kutilayotgan to'lov yo'q.",
+                reply_markup=InlineKeyboardMarkup(back),
+            )
+            return
+        lines = ["💳 *Kutilayotgan to'lovlar:*\n"]
+        for uid, tariff_key in list(pending_payments.items())[:20]:
+            label = _user_label(uid).replace("_", "\\_").replace("*", "\\*")
+            tname = TARIFFS.get(tariff_key, {}).get("name", tariff_key)
+            lines.append(f"• {label} → `{uid}` → *{tname}*")
+        back = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")]]
+        await query.edit_message_text(
+            "\n".join(lines),
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(back),
+        )
+        return
+
+    if action == "search_help":
+        back = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")]]
+        await query.edit_message_text(
+            "🔍 *User qidirish*\n\n"
+            "Quyidagi komandalardan biri:\n"
+            "• `/user 629686772` — ID bo'yicha\n"
+            "• `/user @username` — username bo'yicha\n"
+            "• `/stats` — barcha userlar ro'yxati\n\n"
+            "Manage:\n"
+            "• `/grant 629686772 premium` — tarif berish\n"
+            "• `/revoke 629686772` — tarif bekor qilish\n"
+            "• `/reset 629686772` — daqiqalarni 0 ga tiklash",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(back),
+        )
+        return
+
+    if action == "help":
+        back = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")]]
+        await query.edit_message_text(
+            "📖 *Admin komandalar:*\n\n"
+            "*User boshqaruvi:*\n"
+            "• `/user <id>` — ma'lumot ko'rish\n"
+            "• `/grant <id> <tariff>` — tarif berish\n"
+            "• `/revoke <id>` — tarif bekor qilish\n"
+            "• `/reset <id>` — daqiqalarni tiklash\n"
+            "• `/stats` — top 30 user\n\n"
+            "*To'lovlar:*\n"
+            "• `/setcard <card>` — to'lov kartasi\n"
+            "• `/setholder <name>` — karta egasi\n\n"
+            "*Murojaat:*\n"
+            "• `/reply <id> <matn>` — userga javob\n\n"
+            "*Boshqa:*\n"
+            "• `/debug` — debug ma'lumot\n"
+            "• `/feedback` — fidbeklar\n"
+            "• `/admin` — bu panel",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(back),
+        )
+        return
+
+    if action == "back":
+        # Asosiy panelga qaytish
+        total_users = len(set(list(user_uzbek_usage.keys()) + list(user_info.keys())))
+        total_min = sum(user_uzbek_usage.values()) / 60
+        paid_users = sum(1 for uid in user_tariffs if user_tariffs.get(uid) != "free")
+        buttons = [
+            [InlineKeyboardButton("📊 Statistika (top 30)", callback_data="adm:stats")],
+            [InlineKeyboardButton("👥 Tarifli userlar (manage)", callback_data="adm:paid_users")],
+            [InlineKeyboardButton("💳 Kutilayotgan to'lovlar", callback_data="adm:pending_payments")],
+            [InlineKeyboardButton("🔍 User qidirish (ID/username)", callback_data="adm:search_help")],
+            [InlineKeyboardButton("ℹ️ Komandalar ro'yxati", callback_data="adm:help")],
+        ]
+        await query.edit_message_text(
+            f"🔐 *Admin Panel*\n\n"
+            f"👥 Jami userlar: *{total_users}*\n"
+            f"💎 Tarif sotib olgan: *{paid_users}*\n"
+            f"⏱ Ishlatilgan: *{total_min:.1f}* daqiqa\n\n"
+            f"Quyidan tanlang:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+        return
+
+
+async def admin_revoke_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin panel orqali user tarifini 1 bosishda bekor qilish."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+    if not is_admin(update):
+        await query.edit_message_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    try:
+        target_id = int(query.data.split(":", 1)[1])
+    except (ValueError, IndexError):
+        await query.edit_message_text("❌ Noto'g'ri user ID.")
+        return
+    old_tariff = TARIFFS.get(get_user_tariff(target_id), TARIFFS["free"])
+    label = _user_label(target_id).replace("_", "\\_").replace("*", "\\*")
+    user_tariffs[target_id] = "free"
+    user_uzbek_usage[target_id] = 0
+    _save_user_data()
+    back = [[InlineKeyboardButton("⬅️ Panelga qaytish", callback_data="adm:back")]]
+    await query.edit_message_text(
+        f"✅ *Tarif bekor qilindi*\n\n"
+        f"👤 {label}\n"
+        f"🆔 `{target_id}`\n"
+        f"❌ Eski: {old_tariff['name']}\n"
+        f"🌸 Yangi: Bepul (3 daq)\n"
+        f"⏱ Daqiqalar tiklandi: 0",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(back),
+    )
+    # Userga ham xabar (best-effort)
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "ℹ️ *Tarifingiz yangilandi*\n\n"
+                "Hozir 🌸 Bepul tarifdasiz (3 daqiqa/oy).\n"
+                "Yangi tarif olish: /tariflar"
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        logging.warning(f"User'ga ({target_id}) tarif bekor qilish xabari yetmadi: {e}")
 
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2729,18 +2985,66 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video_exts = [".mp4", ".avi", ".mov", ".mkv", ".webm", ".3gp"]
     if any(e in mime for e in ["audio", "video"]) or ext in audio_exts + video_exts:
         # === [TARJIMA INTEGRATSIYASI] document audio/video ham tarjima qilinishi mumkin ===
-        src_lang = _pop_translation_lang(update.effective_user.id)
-        if src_lang:
-            await process_translation_from_file_id(update, context, doc.file_id, ext or ".mp3", 0, src_lang)
+        state = _pop_translation_state(update.effective_user.id)
+        if state and state.get("source"):
+            await process_translation_from_file_id(
+                update, context, doc.file_id, ext or ".mp3", 0,
+                state["source"], state.get("target") or "uz"
+            )
             return
         # === [/TARJIMA INTEGRATSIYASI] ===
         lang = _chat_lang(context, update)
         await process_file(update, context, doc.file_id, ext or ".mp3", 0, language=lang)
         return
     if ext == ".pdf" or "pdf" in mime:
+        # === [TARJIMA INTEGRATSIYASI] PDF + tarjima rejimi → tarjima qilingan PDF + audio ===
+        state = _pop_translation_state(update.effective_user.id)
+        if state and state.get("source"):
+            await process_pdf_via_translation(
+                update, context, doc.file_id,
+                state["source"], state.get("target") or "uz"
+            )
+            return
+        # === [/TARJIMA INTEGRATSIYASI] ===
         await process_pdf_to_voice(update, context, doc.file_id)
         return
     await update.message.reply_text("⚠️ Bu fayl turi qo'llab-quvvatlanmaydi.\n\nQo'llab-quvvatlanadi: audio, video, PDF.")
+
+
+async def process_pdf_via_translation(update, context, file_id, source_lang, target_lang="uz"):
+    """Chat'dan kelgan PDF + tarjima rejimi: PDF yuklab olinadi va
+    process_pdf_translation_for_user (HTTP yo'l bilan ishlaydigan) chaqiriladi.
+    Natija: matn + tarjima PDF + audio (target tilda)."""
+    user_id = update.effective_user.id
+    if not is_admin(update):
+        if not await can_process_uzbek(update, 0):
+            return
+    await update.message.reply_text(
+        f"📄 PDF tarjima rejimida qabul qilindi.\n"
+        f"📥 Manba: {TRANSLATION_LANGS.get(source_lang, source_lang)}\n"
+        f"🎯 Natija: {TRANSLATION_TARGETS.get(target_lang, target_lang)}\n\n"
+        f"⏳ Biroz kuting..."
+    )
+    tmp_path = None
+    try:
+        file = await context.bot.get_file(file_id)
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+            tmp_path = tmp.name
+        await file.download_to_drive(tmp_path)
+        # process_pdf_translation_for_user — sinxron, threadda ishlatamiz
+        threading.Thread(
+            target=process_pdf_translation_for_user,
+            args=(int(user_id), tmp_path, source_lang, target_lang),
+            daemon=True,
+        ).start()
+    except Exception as e:
+        logging.error(f"PDF tarjima yuklash xato: {e}")
+        await update.message.reply_text(
+            f"❌ PDF tayyorlashda xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+        )
+        if tmp_path and os.path.exists(tmp_path):
+            try: os.remove(tmp_path)
+            except Exception: pass
 
 
 async def process_pdf_to_voice(update, context, file_id):
@@ -3268,7 +3572,7 @@ async def translate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def translation_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Manba til tanlangach — keyingi audio/video shu til bilan tarjima qilinadi."""
+    """1-bosqich: Manba til tanlangach — 2-bosqich (natija til) menyusi ko'rsatiladi."""
     query = update.callback_query
     if not query or not query.data:
         return
@@ -3284,16 +3588,81 @@ async def translation_lang_callback(update: Update, context: ContextTypes.DEFAUL
         return
     if choice not in TRANSLATION_LANGS:
         return
-    # User holatini saqlaymiz (deploy'larda yo'qolmaydi)
-    pending_translations[user_id] = choice
+
+    # 1-bosqich tamomlandi — manba til vaqtinchalik saqlanadi, target hali yo'q
+    pending_translations[user_id] = {"source": choice, "target": None}
     _save_user_data()
-    label = TRANSLATION_LANGS[choice]
+    src_label = TRANSLATION_LANGS[choice]
+
+    # 2-bosqich: Natija tilini tanlash
+    target_buttons = [
+        [InlineKeyboardButton("🇺🇿 O'zbek tiliga", callback_data="transltgt:uz")],
+        [InlineKeyboardButton("🇷🇺 Rus tiliga",    callback_data="transltgt:ru")],
+        [InlineKeyboardButton("🇬🇧 Ingliz tiliga", callback_data="transltgt:en")],
+        [InlineKeyboardButton("🇸🇦 Arab tiliga",   callback_data="transltgt:ar")],
+        [InlineKeyboardButton("❌ Bekor qilish",    callback_data="transltgt:cancel")],
+    ]
     await query.edit_message_text(
-        f"✅ {label} tanlandi.\n\n"
-        f"📥 Endi audio yoki video yuboring (voice xabar, audio fayl, video).\n"
-        f"💡 1 daqiqa audio = 1 daqiqa tarifdan ayriladi.\n\n"
-        f"Bekor qilish uchun: /cancel",
-        parse_mode="Markdown"
+        f"✅ Manba til: *{src_label}*\n\n"
+        f"🎯 *Natija tilini tanlang*\n\n"
+        f"Audio/video matni va PDF qaysi tilda chiqsin?\n"
+        f"📄 PDF va matn ham shu tilda tayyorlanadi.\n\n"
+        f"💡 1 daqiqa audio = 1 daqiqa tarifdan ayriladi.",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(target_buttons),
+    )
+
+
+async def translation_target_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """2-bosqich: Natija til tanlangach, user audio/video/PDF yuborishi mumkin."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+    if not query.data.startswith("transltgt:"):
+        return
+    target = query.data.split(":", 1)[1]
+    user_id = query.from_user.id
+    if target == "cancel":
+        pending_translations.pop(user_id, None)
+        _save_user_data()
+        await query.edit_message_text("❌ Tarjima rejimi bekor qilindi.")
+        return
+    if target not in TRANSLATION_TARGETS:
+        return
+
+    # 1-bosqichdagi manba tilni o'qiymiz
+    state = pending_translations.get(user_id)
+    source = None
+    if isinstance(state, dict):
+        source = state.get("source")
+    elif isinstance(state, str):
+        source = state
+    if not source or source not in TRANSLATION_LANGS:
+        await query.edit_message_text(
+            "⚠️ Manba til topilmadi. Iltimos /tarjima orqali qaytadan boshlang."
+        )
+        pending_translations.pop(user_id, None)
+        _save_user_data()
+        return
+
+    # To'liq state saqlanadi
+    pending_translations[user_id] = {"source": source, "target": target}
+    _save_user_data()
+
+    src_label = TRANSLATION_LANGS.get(source, source)
+    tgt_label = TRANSLATION_TARGETS.get(target, target)
+    await query.edit_message_text(
+        f"✅ *Tarjima sozlandi*\n\n"
+        f"📥 Manba: {src_label}\n"
+        f"🎯 Natija: {tgt_label}\n\n"
+        f"📤 Endi quyidagilardan birini yuboring:\n"
+        f"• 🎤 Ovozli xabar / audio fayl\n"
+        f"• 🎬 Video / dumaloq video\n"
+        f"• 📄 PDF fayl\n\n"
+        f"💡 1 daqiqa = 1 daqiqa tarifdan ayriladi.\n"
+        f"Bekor qilish: /cancel",
+        parse_mode="Markdown",
     )
 # === [/TARJIMA MODULI — KOMANDA HANDLERS] =======================================
 
@@ -4098,6 +4467,11 @@ def main():
     app.add_handler(CommandHandler("debug", debug_cmd))
     app.add_handler(CommandHandler("user", user_cmd))
     app.add_handler(CommandHandler("revoke", revoke_cmd))
+    # === Admin panel — onsonroq boshqaruv ===
+    app.add_handler(CommandHandler("admin", admin_panel_cmd))
+    app.add_handler(CommandHandler("panel", admin_panel_cmd))
+    app.add_handler(CallbackQueryHandler(admin_panel_callback, pattern=r"^adm:"))
+    app.add_handler(CallbackQueryHandler(admin_revoke_callback, pattern=r"^adm_revoke:"))
     app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
 
     # Manual to'lov rejimi handlerlari (chek + admin tasdiqlash)
@@ -4106,6 +4480,7 @@ def main():
     app.add_handler(CallbackQueryHandler(reply_button_callback, pattern=r"^reply:"))
     # === [TARJIMA] callback handler (manba til tanlash) ===
     app.add_handler(CallbackQueryHandler(translation_lang_callback, pattern=r"^transl:"))
+    app.add_handler(CallbackQueryHandler(translation_target_callback, pattern=r"^transltgt:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Telegram Payments handlerlari (kelajakda PROVIDER_TOKEN qo'shilsa avtomat ishlaydi)
