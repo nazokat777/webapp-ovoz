@@ -1965,6 +1965,17 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 tariff_lines.append(f"• {t['name']}: {cnt} ta")
         tariff_text = "\n".join(tariff_lines) if tariff_lines else "• 🌸 Bepul (default): hamma"
         admin_uname_md = (update.effective_user.username or "").replace("_", "\\_").replace("*", "\\*")
+        # Tarifli userlar uchun "Bekor qilish" tugmalarini tayyorlash
+        paid_users_list = [(uid, t) for uid, t in user_tariffs.items() if t != "free"]
+        admin_buttons = []
+        if paid_users_list:
+            admin_buttons.append([InlineKeyboardButton(
+                f"👥 Tarifli userlar: {len(paid_users_list)} ta — boshqarish",
+                callback_data="adm:paid_users"
+            )])
+        admin_buttons.append([InlineKeyboardButton("📊 Statistika (top 30)", callback_data="adm:stats")])
+        admin_buttons.append([InlineKeyboardButton("💳 Kutilayotgan to'lovlar", callback_data="adm:pending_payments")])
+        admin_buttons.append([InlineKeyboardButton("ℹ️ Komandalar ro'yxati", callback_data="adm:help")])
         await update.message.reply_text(
             f"👑 *ADMIN PANEL* — @{admin_uname_md}\n\n"
             f"🧪 Test rejimi: *{test_status}*\n"
@@ -1972,16 +1983,9 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⏱ Jami O'zbek STT: {total_sec/60:.1f} daqiqa\n"
             f"💰 Jami xarajat: ~{total_cost:,} so'm\n\n"
             f"*Tariflar bo'yicha:*\n{tariff_text}\n\n"
-            f"*Admin buyruqlari:*\n"
-            f"• /test — test rejimi\n"
-            f"• /stats — userlar statistikasi\n"
-            f"• /grant `<user id>` `<tarif>` — tarif berish\n"
-            f"• /setcard `<karta>` — karta raqamini sozlash\n"
-            f"• /setholder `<ism>` — karta egasini sozlash\n"
-            f"• /reply `<id>` `<xabar>` — javob berish\n"
-            f"• /debug — persistence holatini ko'rish\n"
-            f"• /reset — limitlarni tiklash",
-            parse_mode="Markdown"
+            f"💡 Quyidagi tugmalardan foydalaning:",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(admin_buttons),
         )
         return
 
