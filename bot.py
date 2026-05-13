@@ -2596,17 +2596,6 @@ async def process_translation(update, context, file_path, duration_sec, source_l
             except Exception: pass
         except Exception as e:
             logging.warning(f"Tarjima PDF xato: {e}")
-        # TTS — tarjima audio (target tilda yoki manba tilda agar 'auto' bo'lsa)
-        try:
-            tts_lang = audio_lang if target_lang == "auto" else target_lang
-            tts_path = await asyncio.to_thread(make_tts, translated, tts_lang)
-            if tts_path:
-                with open(tts_path, "rb") as f:
-                    await update.message.reply_voice(voice=f, caption=f"🔊 Audio versiya ({tgt_label})")
-                try: os.remove(tts_path)
-                except Exception: pass
-        except Exception as e:
-            logging.warning(f"Tarjima TTS xato: {e}")
 
         # 5) Tarif daqiqalari
         if not is_admin(update) and actual_duration > 0:
@@ -3256,15 +3245,6 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
             except Exception: pass
         except Exception as e:
             logging.warning(f"Tarjima PDF xato (HTTP): {e}")
-        # Audio (TTS — target yoki manba tilda agar auto)
-        try:
-            tts_path = make_tts(translated, tts_lang_used)
-            if tts_path:
-                telegram_send_voice(user_id, tts_path, caption=f"🔊 Audio versiya ({tgt_label})")
-                try: os.remove(tts_path)
-                except Exception: pass
-        except Exception as e:
-            logging.warning(f"Tarjima TTS xato (HTTP): {e}")
         # 4) Tarif daqiqalari
         if not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
@@ -3393,15 +3373,6 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
             except Exception: pass
         except Exception as e:
             logging.warning(f"URL tarjima PDF xato: {e}")
-        # Audio (TTS — target yoki manba tilda agar auto)
-        try:
-            tts_path = make_tts(translated, tts_lang_used)
-            if tts_path:
-                telegram_send_voice(user_id, tts_path, caption=f"🔊 Audio versiya ({tgt_label})")
-                try: os.remove(tts_path)
-                except Exception: pass
-        except Exception as e:
-            logging.warning(f"URL tarjima TTS xato: {e}")
         # 6) Tarif daqiqalari
         if not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
