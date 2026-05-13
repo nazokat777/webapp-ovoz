@@ -1314,6 +1314,7 @@
 
         <!-- HOSIL TIL -->
         <div style="font-size: 10px; font-weight: 800; color: rgba(255, 0, 110, 0.95); margin-bottom: 6px; margin-top: 14px; letter-spacing: 1px;">🎯 HOSIL TIL</div>
+        <button onclick="selectTargetLang('auto')" id="ttgtAuto" class="ttgt-btn" style="width: 100%; padding: 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.85); font-weight: 800; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 6px;">🌐 Avto — manba tilida qoldirish (tarjima qilmaslik)</button>
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
           <button onclick="selectTargetLang('uz')" id="ttgtUz" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #ff006e, #8338ec); border: 2px solid #ff006e; color: #fff; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 0 18px rgba(255, 0, 110, 0.55);">🇺🇿 O'zbek</button>
           <button onclick="selectTargetLang('ru')" id="ttgtRu" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
@@ -2029,10 +2030,10 @@
     uz: { color: '#00f5ff', gradient: 'linear-gradient(135deg, #ff006e, #8338ec)' }
   };
 
-  // === [TARJIMA] Target til tanlash (UZ/RU/EN/AR) ===
+  // === [TARJIMA] Target til tanlash (Avto/UZ/RU/EN/AR) ===
   function selectTargetLang(lang) {
     targetLang = lang;
-    ['uz', 'ru', 'en', 'ar'].forEach(code => {
+    ['auto', 'uz', 'ru', 'en', 'ar'].forEach(code => {
       const btn = document.getElementById('ttgt' + code.charAt(0).toUpperCase() + code.slice(1));
       if (!btn) return;
       if (code === lang) {

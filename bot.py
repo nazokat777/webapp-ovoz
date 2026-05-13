@@ -42,13 +42,15 @@ VOICES = {
 }
 
 # Tarjima yo'nalishi — manba til avto, hosil til foydalanuvchi tanlaydi
+# 'auto' — tarjima qilmaslik (manba tilda qoldirish)
 TRANSLATION_TARGETS = {
+    "auto": "🌐 Manba tilida (tarjimasiz)",
     "uz": "🇺🇿 O'zbekcha",
     "ru": "🇷🇺 Rus tiliga",
     "en": "🇬🇧 Ingliz tiliga",
     "ar": "🇸🇦 Arab tiliga",
 }
-TRANSLATION_TARGET_NAMES = {"uz": "O'zbek", "ru": "rus", "en": "ingliz", "ar": "arab"}
+TRANSLATION_TARGET_NAMES = {"uz": "O'zbek", "ru": "rus", "en": "ingliz", "ar": "arab", "auto": "asl"}
 
 # STT lang codes (Google Speech uchun)
 GOOGLE_LANG = {
@@ -2559,13 +2561,18 @@ async def process_translation(update, context, file_path, duration_sec, source_l
             await msg.edit_text("❌ Audiodan matn topilmadi.")
             return
 
-        # 3) GPT tarjima (target_lang ga)
-        translated = await asyncio.to_thread(translate_with_claude, original_text, source_lang, None, target_lang)
+        # 3) GPT tarjima (target_lang ga) — Avto bo'lsa tarjima qilmaymiz
+        if target_lang == "auto":
+            translated = original_text  # asl matnda qoldiramiz
+            audio_lang = "uz"  # default TTS uchun (manba tilini bilmasak)
+        else:
+            translated = await asyncio.to_thread(translate_with_claude, original_text, source_lang, None, target_lang)
+            audio_lang = target_lang
         if not translated or not translated.strip():
             await msg.edit_text("❌ Tarjima bo'sh qaytdi.")
             return
 
-        # 4) Natija — matn + PDF + audio (target tilda)
+        # 4) Natija — matn + PDF + audio
         await msg.delete()
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
         src_label = TRANSLATION_LANGS.get(source_lang, source_lang) if source_lang else "🌐 Avto"
@@ -2587,9 +2594,10 @@ async def process_translation(update, context, file_path, duration_sec, source_l
             except Exception: pass
         except Exception as e:
             logging.warning(f"Tarjima PDF xato: {e}")
-        # TTS — tarjima audio (target tilda)
+        # TTS — tarjima audio (target tilda yoki manba tilda agar 'auto' bo'lsa)
         try:
-            tts_path = await asyncio.to_thread(make_tts, translated, target_lang)
+            tts_lang = audio_lang if target_lang == "auto" else target_lang
+            tts_path = await asyncio.to_thread(make_tts, translated, tts_lang)
             if tts_path:
                 with open(tts_path, "rb") as f:
                     await update.message.reply_voice(voice=f, caption=f"🔊 Audio versiya ({tgt_label})")
@@ -3222,12 +3230,17 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
         if not original_text or not original_text.strip():
             telegram_send_message(user_id, "❌ Audiodan matn topilmadi.")
             return
-        # 2) GPT tarjima (target_lang ga)
-        translated = translate_with_claude(original_text, source_lang, None, target_lang)
+        # 2) GPT tarjima (target_lang ga) — Avto bo'lsa tarjima qilmaymiz
+        if target_lang == "auto":
+            translated = original_text
+            tts_lang_used = "uz"
+        else:
+            translated = translate_with_claude(original_text, source_lang, None, target_lang)
+            tts_lang_used = target_lang
         if not translated or not translated.strip():
             telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
             return
-        # 3) Natija — matn + PDF + audio (target tilda)
+        # 3) Natija — matn + PDF + audio
         src_label = TRANSLATION_LANGS.get(source_lang, source_lang)
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
         telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
@@ -3241,9 +3254,9 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
             except Exception: pass
         except Exception as e:
             logging.warning(f"Tarjima PDF xato (HTTP): {e}")
-        # Audio (TTS target tilda)
+        # Audio (TTS — target yoki manba tilda agar auto)
         try:
-            tts_path = make_tts(translated, target_lang)
+            tts_path = make_tts(translated, tts_lang_used)
             if tts_path:
                 telegram_send_voice(user_id, tts_path, caption=f"🔊 Audio versiya ({tgt_label})")
                 try: os.remove(tts_path)
@@ -3354,12 +3367,17 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
         if not original_text or not original_text.strip():
             telegram_send_message(user_id, "❌ Audiodan matn topilmadi.")
             return
-        # 4) GPT tarjima (target_lang ga)
-        translated = translate_with_claude(original_text, source_lang, None, target_lang)
+        # 4) GPT tarjima (target_lang ga) — Avto bo'lsa tarjima qilmaymiz
+        if target_lang == "auto":
+            translated = original_text
+            tts_lang_used = "uz"
+        else:
+            translated = translate_with_claude(original_text, source_lang, None, target_lang)
+            tts_lang_used = target_lang
         if not translated or not translated.strip():
             telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
             return
-        # 5) Natija — matn + PDF + audio (target tilda)
+        # 5) Natija — matn + PDF + audio
         src_label = TRANSLATION_LANGS[source_lang]
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
         telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
@@ -3373,9 +3391,9 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
             except Exception: pass
         except Exception as e:
             logging.warning(f"URL tarjima PDF xato: {e}")
-        # Audio (TTS target tilda)
+        # Audio (TTS — target yoki manba tilda agar auto)
         try:
-            tts_path = make_tts(translated, target_lang)
+            tts_path = make_tts(translated, tts_lang_used)
             if tts_path:
                 telegram_send_voice(user_id, tts_path, caption=f"🔊 Audio versiya ({tgt_label})")
                 try: os.remove(tts_path)
