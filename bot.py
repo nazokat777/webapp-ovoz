@@ -994,8 +994,8 @@ def _clean_pdf_text(text):
     return "\n".join(cleaned).strip()
 
 
-def make_tts(text, lang=None):
-    """Matnni ovozli MP3 ga aylantiradi (edge-tts) — vaqt cheklovsiz."""
+def make_tts_edge(text, lang=None):
+    """Matnni Edge TTS (Microsoft, bepul) bilan MP3 ga aylantiradi."""
     if not text or not text.strip():
         return None
     if lang is None:
@@ -1014,6 +1014,127 @@ def make_tts(text, lang=None):
     finally:
         loop.close()
     return out_path
+
+
+# OpenAI TTS uchun ovozlar (har til uchun mos)
+OPENAI_TTS_VOICES = {
+    "uz": "nova",      # o'zbek uchun yumshoq ayol ovoz (Edge ham xizmat qiladi)
+    "ru": "onyx",      # rus uchun chuqur erkak ovoz
+    "en": "alloy",     # ingliz neyutral
+    "ar": "shimmer",   # arab uchun yumshoq
+}
+
+
+def _openai_tts_chunk(text_chunk, voice, model="tts-1-hd"):
+    """OpenAI TTS bitta bo'lakka so'rov yuboradi (max 4096 belgi)."""
+    url = "https://api.openai.com/v1/audio/speech"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "input": text_chunk,
+        "voice": voice,
+        "response_format": "mp3",
+    }
+    resp = requests.post(url, headers=headers, json=payload, timeout=300)
+    if resp.status_code != 200:
+        raise Exception(f"OpenAI TTS xato: HTTP {resp.status_code} — {resp.text[:200]}")
+    return resp.content  # MP3 bytes
+
+
+def make_tts_openai(text, lang=None):
+    """Matnni OpenAI TTS (premium tabiiy ovoz) bilan MP3 ga aylantiradi.
+    Uzun matn 4000 belgili bo'laklarga bo'linadi va MP3'lar birlashtiriladi.
+    Returns: MP3 fayl yo'li yoki None (agar API_KEY yo'q yoki xato)."""
+    if not text or not text.strip():
+        return None
+    if not OPENAI_API_KEY:
+        return None
+    if lang is None:
+        lang = detect_lang(text)
+    voice = OPENAI_TTS_VOICES.get(lang, OPENAI_TTS_VOICES["en"])
+    snippet = text.strip()
+
+    # 4000 belgili bo'laklarga ajratish (gap chegaralarida)
+    CHUNK_SIZE = 4000
+    chunks = []
+    if len(snippet) <= CHUNK_SIZE:
+        chunks = [snippet]
+    else:
+        cur = 0
+        while cur < len(snippet):
+            end = min(cur + CHUNK_SIZE, len(snippet))
+            # Yaqindagi gap oxirini izlash (. ! ? \n)
+            if end < len(snippet):
+                for delim in [".", "!", "?", "\n"]:
+                    idx = snippet.rfind(delim, cur, end)
+                    if idx > cur + CHUNK_SIZE // 2:
+                        end = idx + 1
+                        break
+            chunks.append(snippet[cur:end].strip())
+            cur = end
+
+    out_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
+    try:
+        # Har bir bo'lakni TTS qilib, MP3 bytes'larni ketma-ket yozamiz
+        with open(out_path, "wb") as out_f:
+            for i, ch in enumerate(chunks, 1):
+                if not ch:
+                    continue
+                try:
+                    mp3_bytes = _openai_tts_chunk(ch, voice)
+                    out_f.write(mp3_bytes)
+                except Exception as e:
+                    logging.warning(f"OpenAI TTS bo'lak {i}/{len(chunks)} xato: {e}")
+                    # Agar 1 ta bo'lak buzilsa, qolganlari hali yozilgan
+                    if i == 1:
+                        raise  # birinchi bo'lak ham yiqilsa, butun fayl yo'q
+        # Tekshiramiz — fayl bo'sh emasmi
+        if os.path.getsize(out_path) < 100:
+            try: os.remove(out_path)
+            except Exception: pass
+            return None
+        return out_path
+    except Exception as e:
+        logging.error(f"OpenAI TTS to'liq xato: {e}")
+        try: os.remove(out_path)
+        except Exception: pass
+        return None
+
+
+def make_tts(text, lang=None, force_engine=None):
+    """Matnni ovozli MP3 ga aylantiradi.
+    Strategiya (premium sifat):
+      • O'zbek (uz) → Edge TTS (Microsoft) — bepul, sifati yaxshi
+      • Boshqa tillar (ru/en/ar) → OpenAI TTS (premium, tabiiy ovoz)
+      • OpenAI yiqilsa yoki API_KEY yo'q → Edge TTS fallback
+
+    force_engine: 'edge' yoki 'openai' — ixtiyoriy, sinov uchun.
+    """
+    if not text or not text.strip():
+        return None
+    if lang is None:
+        lang = detect_lang(text)
+
+    # Force override
+    if force_engine == "edge":
+        return make_tts_edge(text, lang)
+    if force_engine == "openai":
+        return make_tts_openai(text, lang) or make_tts_edge(text, lang)
+
+    # Default strategiya: chet tilda OpenAI, o'zbekda Edge
+    if lang in ("ru", "en", "ar") and OPENAI_API_KEY:
+        try:
+            path = make_tts_openai(text, lang)
+            if path:
+                logging.info(f"✅ OpenAI TTS ({lang}) muvaffaqiyatli")
+                return path
+        except Exception as e:
+            logging.warning(f"OpenAI TTS yiqildi ({lang}), Edge fallback: {e}")
+    # O'zbek yoki OpenAI yiqilgan holatda — Edge TTS
+    return make_tts_edge(text, lang)
 
 
 def save_base64_audio(data, suffix='.webm'):
@@ -1035,21 +1156,76 @@ def save_base64_audio(data, suffix='.webm'):
 # Sabab: Whisper arzonroq ($0.006/daq), barcha tillarni qo'llab-quvvatlaydi,
 # va sifati yuqori. Bitta model bilan ish soddaroq.
 
+def _uzbek_transcription_quality(text):
+    """O'zbek transkripsiyaning sifatini 0.0-1.0 oraliqda baholaydi.
+    Past ball — sifat past, Muxlisa fallback'ga arziydi.
+
+    Tekshiriladi:
+      • Kirill harflari ulushi (uzbek lotin alifbosi — kirill bo'lmasligi kerak)
+      • So'roq belgisi `?` ulushi (Whisper biror so'zni o'qiy olmasa shu chiqaradi)
+      • Lotin harflari ulushi (juda kam bo'lsa, transkripsiya buzuq)
+      • o'/g' apostroflarning normal nisbat
+    """
+    if not text or len(text) < 20:
+        return 0.0  # juda qisqa — ishonchsiz
+    total = len(text)
+    cyrillic = sum(1 for ch in text if 'Ѐ' <= ch <= 'ӿ' or 'а' <= ch <= 'я' or 'А' <= ch <= 'Я')
+    qmarks = text.count('?')
+    latin = sum(1 for ch in text if ('a' <= ch <= 'z') or ('A' <= ch <= 'Z'))
+
+    score = 1.0
+    # Kirill harflari ko'p bo'lsa, lotin alifbo o'zbekcha buzuq deb hisoblanadi
+    if cyrillic / total > 0.20:
+        score -= 0.5
+    # So'roq belgilari haddan tashqari ko'p bo'lsa
+    if qmarks / total > 0.05:
+        score -= 0.3
+    # Lotin harflari juda kam (matn bo'sh yoki belgilar)
+    if latin / total < 0.40:
+        score -= 0.3
+    return max(0.0, score)
+
+
 def transcribe_unified(file_path, progress_cb=None, language="uz"):
     """Audio/video'ni matnga aylantirish — Whisper (OpenAI) orqali.
-    Eski transcribe() ning o'rnini bosadi (Muxlisa va Google'ga muhtoj emas).
+    O'zbek tilida sifat past bo'lsa, Muxlisa AI orqali qayta tekshiriladi.
     Katta fayllar avtomatik bo'laklanadi (transcribe_whisper ichida)."""
     if not OPENAI_API_KEY:
-        # Fallback — agar Whisper sozlanmagan bo'lsa, eski transcribe (Muxlisa/Google) ishlatamiz
         logging.warning("OPENAI_API_KEY yo'q, Muxlisa/Google fallback ishlatiladi")
         return transcribe(file_path, progress_cb, language)
-    # Whisper 'uz', 'ru', 'en' va boshqa tillarni qo'llab-quvvatlaydi
+
+    # 1) Asosiy yo'l: Whisper STT
+    whisper_text = None
     try:
-        return transcribe_whisper(file_path, language, None)
+        whisper_text = transcribe_whisper(file_path, language, None)
     except Exception as e:
-        logging.error(f"Whisper xato, Muxlisa fallback: {e}")
-        # Agar Whisper xato bersa — eski transcribe ishlatamiz (Muxlisa fallback)
+        logging.error(f"Whisper xato, Muxlisa fallback ishga tushadi: {e}")
+        # Whisper xato — to'g'ridan-to'g'ri Muxlisa'ga o'tamiz (eski transcribe)
         return transcribe(file_path, progress_cb, language)
+
+    # 2) Sifat nazorati — faqat o'zbek (uz) uchun
+    if language == "uz" and whisper_text and whisper_text.strip():
+        try:
+            quality = _uzbek_transcription_quality(whisper_text)
+            logging.info(f"📊 O'zbek transkripsiya sifati: {quality:.2f}")
+            if quality < 0.55:
+                logging.warning(
+                    f"⚠️ Whisper o'zbek sifati past ({quality:.2f}), Muxlisa qayta tekshirish..."
+                )
+                # Muxlisa orqali alohida transkripsiya
+                try:
+                    muxlisa_text = transcribe(file_path, progress_cb, language)
+                    if muxlisa_text and muxlisa_text.strip():
+                        # Muxlisa natijasi mavjud — uni qaytaramiz (sifati ko'pincha o'zbek uchun yaxshiroq)
+                        logging.info("✅ Muxlisa fallback natijasi ishlatildi")
+                        return muxlisa_text
+                except Exception as me:
+                    logging.warning(f"Muxlisa fallback ham yiqildi: {me}")
+                    # Whisper natijasini qaytaramiz, hech bo'lmaganda bor
+        except Exception as e:
+            logging.warning(f"Sifat tekshirish xato (Whisper natijasi qaytariladi): {e}")
+
+    return whisper_text or ""
 # === [/WHISPER UNIFIED STT] =====================================================
 
 
@@ -1159,6 +1335,9 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
 
 def _gpt_translate_one(text, source_lang, target_lang="uz"):
     """Bir bo'lakni OpenAI GPT-4o bilan tarjima qilish — Claude darajasida sifat.
+    Diniy darslar uchun maxsus mantiq: Qur'on oyatlari arab tilida qoldiriladi,
+    diniy terminlar va shahar nomlari o'zbek ilmiy shaklida yoziladi.
+
     source_lang: manba til (yoki 'auto' — avto aniqlash)
     target_lang: hosil til ('uz', 'ru', 'en', 'ar')"""
     src_name = TRANSLATION_LANG_NAMES.get(source_lang, source_lang)
@@ -1168,18 +1347,67 @@ def _gpt_translate_one(text, source_lang, target_lang="uz"):
         "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json",
     }
-    system_prompt = (
-        f"Sen {tgt_name} tilini mukammal biladigan professional tarjimon. "
-        f"Xorijiy tildagi matnni {tgt_name} tiliga adabiy, tabiiy va to'liq aniq "
-        f"ma'noni saqlagan holda tarjima qil. Iboralar va idiomalarni "
-        f"{tgt_name}cha ekvivalent bilan almashtir, so'zma-so'z tarjima qilma. "
+
+    # Diniy darslar uchun maxsus yo'riqnoma (target=uz holatida kuchliroq)
+    religious_rules_uz = (
+        "\n\nMUHIM QOIDALAR (diniy va ilmiy matnlar uchun):\n"
+        "1) Qur'on oyatlari (arab tilidagi original matn) — ASLO TARJIMA QILMA. "
+        "Ularni asl arab tilida qoldir (يَا أَيُّهَا الَّذِينَ آمَنُوا kabi). "
+        "Agar oyat keltirilgan bo'lsa va undan keyin tarjima/sharh kelsa, "
+        "faqat sharh qismini tarjima qil.\n"
+        "2) Hadis matnlari (arabcha) ham asl shaklida qoldir, faqat sharhlarni tarjima qil.\n"
+        "3) Diniy atamalar — o'zbek ilmiy/rasmiy shaklida yoz:\n"
+        "   • Allah / Olloh → Alloh\n"
+        "   • Muhammed / Muhammad → Muhammad (s.a.v.)\n"
+        "   • salavat → salovat / sallallohu alayhi va sallam (s.a.v.)\n"
+        "   • Quran / Qur'on → Qur'on\n"
+        "   • imom (Imam) → imom\n"
+        "   • hadis → hadis\n"
+        "   • salat → namoz (kontekstga qarab)\n"
+        "   • du'a → duo\n"
+        "   • sajda → sajda\n"
+        "   • Ka'aba → Ka'ba\n"
+        "   • Madina, Makka, Quds, Misr — o'zbekcha rasmiy nomlar bilan\n"
+        "4) Sahobalar va olimlar ismlari — o'zbek ilmiy translit:\n"
+        "   • Abu Bakr (r.a.), Umar (r.a.), Usmon (r.a.), Ali (r.a.)\n"
+        "   • Imom Buxoriy, Imom Muslim, Imom Termiziy, Imom Abu Hanifa\n"
+        "5) Arab shahar va joy nomlari — o'zbekcha rasmiy variant ishlatilsin:\n"
+        "   • Mecca → Makka, Medina → Madina, Jerusalem → Quds, Cairo → Qohira\n"
+        "6) Agar matnda arab harflari (Qur'on yoki hadis) bo'lsa, ularni o'rinda qoldir, "
+        "transliteratsiya qilma.\n"
+    )
+
+    base_system = (
+        f"Sen {tgt_name} tilini mukammal biladigan professional tarjimon va "
+        f"diniy/akademik matnlar mutaxassisi. Xorijiy tildagi matnni {tgt_name} "
+        f"tiliga adabiy, tabiiy va to'liq aniq ma'noni saqlagan holda tarjima qil. "
+        f"Iboralar va idiomalarni {tgt_name}cha ekvivalent bilan almashtir, "
+        f"so'zma-so'z tarjima qilma. "
         f"Faqat tarjimani qaytar — boshqa hech qanday izoh, sarlavha yoki "
         f"kirish so'zi yozma."
     )
-    if source_lang == "auto":
-        user_prompt = f"Quyidagi xorijiy tildagi matnni avval qaysi tilda ekanini aniqla, keyin {tgt_name} tiliga tarjima qil. Faqat tarjimani qaytar:\n\n{text}"
+
+    # Diniy qoidalar faqat o'zbek tilga tarjima qilganda kuchli, boshqalarda yumshoq
+    if target_lang == "uz":
+        system_prompt = base_system + religious_rules_uz
     else:
-        user_prompt = f"{src_name.capitalize()} tilidagi matnni {tgt_name} tiliga tarjima qil:\n\n{text}"
+        system_prompt = (
+            base_system +
+            "\n\nESLATMA: Agar matnda Qur'on oyatlari (arab tilidagi original) bo'lsa, "
+            "ularni tarjima qilma — asl arab tilida qoldir."
+        )
+
+    if source_lang == "auto":
+        user_prompt = (
+            f"Quyidagi xorijiy tildagi matnni avval qaysi tilda ekanini aniqla, "
+            f"keyin {tgt_name} tiliga tarjima qil. Diniy terminlarga va asl arabcha "
+            f"oyatlarga e'tibor ber. Faqat tarjimani qaytar:\n\n{text}"
+        )
+    else:
+        user_prompt = (
+            f"{src_name.capitalize()} tilidagi matnni {tgt_name} tiliga tarjima qil. "
+            f"Diniy terminlarga va asl arabcha oyatlarga e'tibor ber:\n\n{text}"
+        )
     payload = {
         "model": "gpt-4o",
         "max_tokens": 16000,
@@ -3168,27 +3396,50 @@ def check_limit_by_user_id(user_id, duration_seconds=0):
 
 
 def process_pdf_for_user(user_id, pdf_path):
-    """PDF dan matn ajratib, faqat audio sifatida qaytaradi (matn ko'rsatilmaydi).
-    Tarif limiti qo'llanadi — TTS audio davomiyligi ishlatilgan daqiqaga qo'shiladi."""
+    """PDF dan matn ajratib, audio sifatida qaytaradi.
+    XAVFSIZ TO'LOV: daqiqa faqat audio yuborilgandan keyin yechiladi."""
     tts_path = None
+    success = False
+    actual_duration = 0
     try:
         # Limit dastlabki tekshiruvi — qoldiq daqiqalari bormi
         if not check_limit_by_user_id(user_id, 0):
             return
 
         telegram_send_message(user_id, "📄 PDF qabul qilindi. Ovozga aylantirilmoqda...")
-        text = extract_pdf_text(pdf_path)
+        try:
+            text = extract_pdf_text(pdf_path)
+        except Exception as e:
+            logging.error(f"PDF o'qish xato: {e}")
+            telegram_send_message(
+                user_id,
+                f"❌ PDF o'qib bo'lmadi: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+            return
         if not text or not text.strip():
-            telegram_send_message(user_id, "❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).")
+            telegram_send_message(
+                user_id,
+                "❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
             return
 
-        tts_path = make_tts(text)
+        try:
+            tts_path = make_tts(text)
+        except Exception as e:
+            logging.error(f"PDF TTS xato: {e}")
+            telegram_send_message(
+                user_id,
+                f"❌ Ovoz yaratilmadi: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+            return
         if not tts_path:
-            telegram_send_message(user_id, "❌ Ovoz yaratib bo'lmadi.")
+            telegram_send_message(
+                user_id,
+                "❌ Ovoz yaratilmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
             return
 
         # Audio davomiyligini aniqlash va limitni qayta tekshirish
-        actual_duration = 0
         if not _is_admin_id(user_id):
             try:
                 actual_duration = int(get_duration_or_estimate(tts_path))
@@ -3198,12 +3449,16 @@ def process_pdf_for_user(user_id, pdf_path):
                 return
 
         telegram_send_voice(user_id, tts_path, caption="🔊 PDF ovoz shaklida")
+        success = True
 
-        if not _is_admin_id(user_id) and actual_duration > 0:
+        if success and not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration)
     except Exception as e:
         logging.error(f"process_pdf_for_user xato: {e}")
-        telegram_send_message(user_id, f"❌ Xato: {str(e)[:300]}")
+        telegram_send_message(
+            user_id,
+            f"❌ Xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+        )
     finally:
         if tts_path and os.path.exists(tts_path):
             try: os.remove(tts_path)
@@ -3214,7 +3469,9 @@ def process_pdf_for_user(user_id, pdf_path):
 
 
 def process_audio_for_user(user_id, file_path, language="uz"):
-    """WebApp orqali yuborilgan audio'ni matnga aylantirish — tarif limiti qo'llanadi."""
+    """WebApp orqali yuborilgan audio'ni matnga aylantirish — tarif limiti qo'llanadi.
+    XAVFSIZ TO'LOV: daqiqa faqat muvaffaqiyatli natija yuborilgandan keyin yechiladi."""
+    success = False  # natija userga yetkazilganmi
     try:
         # Audio davomiyligini avval aniqlaymiz va limitni tekshiramiz
         actual_duration = 0
@@ -3229,16 +3486,25 @@ def process_audio_for_user(user_id, file_path, language="uz"):
 
         telegram_send_message(user_id, "🎙 Web ilova yuborgan fayl tanilmoqda...")
         text = transcribe_unified(file_path, language=language)
-        if text and text.strip() != "Matn aniqlanmadi.":
+        if text and text.strip() and text.strip() != "Matn aniqlanmadi.":
             _send_text_and_pdf(user_id, text)
+            success = True
         else:
-            telegram_send_message(user_id, "Matn aniqlanmadi.")
+            telegram_send_message(
+                user_id,
+                "❌ Matn aniqlanmadi. Daqiqa hisobingizdan yechilmadi."
+            )
 
-        if not _is_admin_id(user_id) and actual_duration > 0:
+        # Faqat success bo'lsa balansdan yechamiz
+        if success and not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration)
     except Exception as e:
         logging.error(f"process_audio_for_user xato: {e}")
-        telegram_send_message(user_id, f"❌ Xato: {str(e)[:300]}")
+        telegram_send_message(
+            user_id,
+            f"❌ Xato yuz berdi: {str(e)[:200]}\n\n"
+            f"💚 Daqiqa hisobingizdan yechilmadi."
+        )
     finally:
         if file_path and os.path.exists(file_path):
             try:
@@ -3250,7 +3516,10 @@ def process_audio_for_user(user_id, file_path, language="uz"):
 # === [TARJIMA — WEBAPP THREAD MODE] ============================================
 def process_translation_for_user(user_id, file_path, source_lang, target_lang="uz"):
     """WebApp orqali yuborilgan audio'ni xorijiy tildan tanlangan tilga tarjima.
-    Hosil: matn + PDF + audio (target tilda)."""
+    Hosil: matn + PDF (audio yo'q).
+    XAVFSIZ TO'LOV: daqiqa faqat tarjima muvaffaqiyatli yetkazilgandan keyin yechiladi."""
+    success = False
+    actual_duration = 0
     try:
         if source_lang not in TRANSLATION_LANGS:
             telegram_send_message(user_id, "❌ Noma'lum manba til.")
@@ -3266,27 +3535,49 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
                 return
         telegram_send_message(user_id, "⏳ Biroz kuting, tarjima qilinmoqda...")
         # 1) Whisper STT
-        original_text = transcribe_whisper(file_path, source_lang, None)
+        try:
+            original_text = transcribe_whisper(file_path, source_lang, None)
+        except Exception as e:
+            logging.error(f"Whisper STT xato: {e}")
+            telegram_send_message(
+                user_id,
+                f"❌ Audio matnga aylanmadi: {str(e)[:200]}\n\n"
+                f"💚 Daqiqa hisobingizdan yechilmadi."
+            )
+            return
         if not original_text or not original_text.strip():
-            telegram_send_message(user_id, "❌ Audiodan matn topilmadi.")
+            telegram_send_message(
+                user_id,
+                "❌ Audiodan matn topilmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
             return
         # 2) GPT tarjima (target_lang ga) — Avto bo'lsa tarjima qilmaymiz
         if target_lang == "auto":
             translated = original_text
-            tts_lang_used = "uz"
         else:
-            translated = translate_with_claude(original_text, source_lang, None, target_lang)
-            tts_lang_used = target_lang
+            try:
+                translated = translate_with_claude(original_text, source_lang, None, target_lang)
+            except Exception as e:
+                logging.error(f"GPT tarjima xato: {e}")
+                telegram_send_message(
+                    user_id,
+                    f"❌ Tarjima xato: {str(e)[:200]}\n\n"
+                    f"💚 Daqiqa hisobingizdan yechilmadi."
+                )
+                return
         if not translated or not translated.strip():
-            telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
+            telegram_send_message(
+                user_id,
+                "❌ Tarjima bo'sh qaytdi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
             return
-        # 3) Natija — matn + PDF + audio
+        # 3) Natija — matn + PDF
         src_label = TRANSLATION_LANGS.get(source_lang, source_lang)
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
         telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
         for i in range(0, len(translated), 4000):
             telegram_send_message(user_id, translated[i:i+4000])
-        # PDF
+        # PDF (best-effort — agar PDF buzilsa ham matn yetkazilgan, hisoblanadi)
         try:
             pdf_path = make_pdf(translated, f"Tarjima — {tgt_label}")
             telegram_send_document(user_id, pdf_path, filename=f"tarjima_{target_lang}.pdf", caption=f"📎 Tarjima PDF ({tgt_label})")
@@ -3294,12 +3585,17 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
             except Exception: pass
         except Exception as e:
             logging.warning(f"Tarjima PDF xato (HTTP): {e}")
-        # 4) Tarif daqiqalari
-        if not _is_admin_id(user_id) and actual_duration > 0:
+        success = True  # matn yuborildi — to'lov haqli
+        # 4) Tarif daqiqalari — faqat success'da
+        if success and not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
     except Exception as e:
         logging.error(f"process_translation_for_user xato: {e}")
-        telegram_send_message(user_id, f"❌ Tarjima xato: {str(e)[:300]}")
+        telegram_send_message(
+            user_id,
+            f"❌ Tarjima xato: {str(e)[:200]}\n\n"
+            f"💚 Daqiqa hisobingizdan yechilmadi."
+        )
     finally:
         if file_path and os.path.exists(file_path):
             try: os.remove(file_path)
@@ -3309,17 +3605,24 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
 
 def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", target_lang="uz"):
     """PDF'ni xorijiy tildan tanlangan tilga tarjima qilib audio + PDF chiqarish.
-    User PDF yuklaydi → matn ajratiladi → GPT-4o target tilga tarjima qiladi →
-    Edge TTS audio yaratadi → 3 ta natija: matn + tarjima PDF + audio."""
+    XAVFSIZ TO'LOV: faqat audio MUVAFFAQIYATLI yuborilgandan keyin daqiqa yechiladi."""
+    success = False
+    estimated_audio_sec = 0
     try:
         # 1) PDF dan matn ajratish
         try:
             original_text = extract_pdf_text(pdf_path)
         except Exception as e:
-            telegram_send_message(user_id, f"❌ PDF o'qib bo'lmadi: {str(e)[:200]}")
+            telegram_send_message(
+                user_id,
+                f"❌ PDF o'qib bo'lmadi: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
             return
         if not original_text or not original_text.strip():
-            telegram_send_message(user_id, "❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).")
+            telegram_send_message(
+                user_id,
+                "❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
             return
         # 2) PDF uzunligi (so'z) tarif uchun — taxminiy 1 so'z = 0.4 sek audio
         word_count = len(original_text.split())
@@ -3329,20 +3632,30 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
                 return
         telegram_send_message(user_id, "⏳ Biroz kuting, PDF tarjima qilinmoqda...")
         # 3) GPT tarjima (agar source != target bo'lsa)
-        if source_lang and source_lang != target_lang and source_lang != "":
-            translated = translate_with_claude(original_text, source_lang, None, target_lang)
-        else:
-            # Agar source berilmagan bo'lsa, auto-detect orqali tarjima
-            translated = translate_with_claude(original_text, "auto", None, target_lang)
+        try:
+            if source_lang and source_lang != target_lang and source_lang != "":
+                translated = translate_with_claude(original_text, source_lang, None, target_lang)
+            else:
+                translated = translate_with_claude(original_text, "auto", None, target_lang)
+        except Exception as e:
+            logging.error(f"PDF GPT tarjima xato: {e}")
+            telegram_send_message(
+                user_id,
+                f"❌ Tarjima xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+            return
         if not translated or not translated.strip():
-            telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
+            telegram_send_message(
+                user_id,
+                "❌ Tarjima bo'sh qaytdi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
             return
         # 4) Natija — matn + PDF + audio (target tilda)
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
         telegram_send_message(user_id, f"🌐 PDF tarjima ({tgt_label}):")
         for i in range(0, len(translated), 4000):
             telegram_send_message(user_id, translated[i:i+4000])
-        # PDF
+        # PDF (best-effort)
         try:
             pdf_out = make_pdf(translated, f"Tarjima — {tgt_label}")
             telegram_send_document(user_id, pdf_out, filename=f"tarjima_pdf_{target_lang}.pdf", caption=f"📎 Tarjima PDF ({tgt_label})")
@@ -3350,21 +3663,34 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
             except Exception: pass
         except Exception as e:
             logging.warning(f"PDF tarjima PDF yaratishda xato: {e}")
-        # Audio (TTS target tilda)
+        # 5) Audio (TTS target tilda) — bu asosiy natija, success bunga bog'liq
         try:
             tts_path = make_tts(translated, target_lang)
             if tts_path:
                 telegram_send_voice(user_id, tts_path, caption=f"🔊 Audio versiya ({tgt_label})")
                 try: os.remove(tts_path)
                 except Exception: pass
+                success = True
+            else:
+                telegram_send_message(
+                    user_id,
+                    "⚠️ Audio yaratilmadi, lekin matn va PDF yetkazildi.\n💚 Daqiqa hisobingizdan yechilmadi."
+                )
         except Exception as e:
             logging.warning(f"PDF tarjima TTS xato: {e}")
-        # 5) Tarif daqiqalari
-        if not _is_admin_id(user_id) and estimated_audio_sec > 0:
+            telegram_send_message(
+                user_id,
+                f"⚠️ Audio yaratilmadi: {str(e)[:150]}\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+        # 6) Tarif daqiqalari — faqat audio yetkazilgan bo'lsa
+        if success and not _is_admin_id(user_id) and estimated_audio_sec > 0:
             add_user_usage(user_id, estimated_audio_sec)
     except Exception as e:
         logging.error(f"process_pdf_translation_for_user xato: {e}")
-        telegram_send_message(user_id, f"❌ PDF tarjima xato: {str(e)[:300]}")
+        telegram_send_message(
+            user_id,
+            f"❌ PDF tarjima xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+        )
     finally:
         if pdf_path and os.path.exists(pdf_path):
             try: os.remove(pdf_path)
@@ -3372,8 +3698,11 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
 
 
 def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"):
-    """URL'dan video yuklab xorijiy tildan tanlangan tilga tarjima — matn + PDF + audio."""
+    """URL'dan video yuklab xorijiy tildan tanlangan tilga tarjima — matn + PDF.
+    XAVFSIZ TO'LOV: faqat matn yetkazilgandan keyin daqiqa yechiladi."""
     audio_path = None
+    success = False
+    actual_duration = 0
     try:
         if source_lang not in TRANSLATION_LANGS:
             telegram_send_message(user_id, "❌ Noma'lum manba til.")
@@ -3383,7 +3712,15 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
             return
         telegram_send_message(user_id, "⏳ Biroz kuting, tarjima qilinmoqda...")
         # 1) Video yuklab olish
-        audio_path = download_audio_from_url(url)
+        try:
+            audio_path = download_audio_from_url(url)
+        except Exception as e:
+            logging.error(f"URL yuklab olish xato: {e}")
+            telegram_send_message(
+                user_id,
+                f"❌ Video yuklanmadi: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+            return
         # 2) Davomiylik va limit tekshiruvi
         try:
             actual_duration = int(get_duration_or_estimate(audio_path))
@@ -3394,27 +3731,47 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
             if not check_limit_by_user_id(user_id, cost):
                 return
         # 3) Whisper STT
-        original_text = transcribe_whisper(audio_path, source_lang, None)
+        try:
+            original_text = transcribe_whisper(audio_path, source_lang, None)
+        except Exception as e:
+            logging.error(f"URL Whisper STT xato: {e}")
+            telegram_send_message(
+                user_id,
+                f"❌ Audio matnga aylanmadi: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+            return
         if not original_text or not original_text.strip():
-            telegram_send_message(user_id, "❌ Audiodan matn topilmadi.")
+            telegram_send_message(
+                user_id,
+                "❌ Audiodan matn topilmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
             return
         # 4) GPT tarjima (target_lang ga) — Avto bo'lsa tarjima qilmaymiz
         if target_lang == "auto":
             translated = original_text
-            tts_lang_used = "uz"
         else:
-            translated = translate_with_claude(original_text, source_lang, None, target_lang)
-            tts_lang_used = target_lang
+            try:
+                translated = translate_with_claude(original_text, source_lang, None, target_lang)
+            except Exception as e:
+                logging.error(f"URL GPT tarjima xato: {e}")
+                telegram_send_message(
+                    user_id,
+                    f"❌ Tarjima xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+                )
+                return
         if not translated or not translated.strip():
-            telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
+            telegram_send_message(
+                user_id,
+                "❌ Tarjima bo'sh qaytdi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
             return
-        # 5) Natija — matn + PDF + audio
+        # 5) Natija — matn + PDF
         src_label = TRANSLATION_LANGS[source_lang]
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
         telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
         for i in range(0, len(translated), 4000):
             telegram_send_message(user_id, translated[i:i+4000])
-        # PDF
+        # PDF (best-effort)
         try:
             pdf_path = make_pdf(translated, f"Tarjima — {tgt_label}")
             telegram_send_document(user_id, pdf_path, filename=f"tarjima_{target_lang}.pdf", caption=f"📎 Tarjima PDF ({tgt_label})")
@@ -3422,12 +3779,16 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
             except Exception: pass
         except Exception as e:
             logging.warning(f"URL tarjima PDF xato: {e}")
-        # 6) Tarif daqiqalari
-        if not _is_admin_id(user_id) and actual_duration > 0:
+        success = True
+        # 6) Tarif daqiqalari — faqat success'da
+        if success and not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
     except Exception as e:
         logging.error(f"process_url_translation_for_user xato: {e}")
-        telegram_send_message(user_id, f"❌ URL tarjima xato: {str(e)[:300]}")
+        telegram_send_message(
+            user_id,
+            f"❌ URL tarjima xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+        )
     finally:
         if audio_path:
             try: shutil.rmtree(os.path.dirname(audio_path), ignore_errors=True)
