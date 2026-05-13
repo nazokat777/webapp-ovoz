@@ -88,13 +88,14 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 # Tarjima narxi koeffitsienti — sarflangan vaqt 2x sanaydi (STT + tarjima)
 TRANSLATION_MULTIPLIER = 2
 
-# Tarjima qilinadigan manba tillar
+# Tarjima qilinadigan manba tillar (auto — Whisper o'zi aniqlaydi, har qanday til)
 TRANSLATION_LANGS = {
+    "auto": "🌐 Har qanday til (Avto)",
     "ru": "🇷🇺 Rus tilidan",
     "en": "🇬🇧 Ingliz tilidan",
     "ar": "🇸🇦 Arab tilidan",
 }
-TRANSLATION_LANG_NAMES = {"ru": "rus", "en": "ingliz", "ar": "arab"}
+TRANSLATION_LANG_NAMES = {"ru": "rus", "en": "ingliz", "ar": "arab", "auto": "xorijiy"}
 # === [/TARJIMA MODULI] ==========================================================
 
 # Web App URL — ngrok yoki o'z serveringiz URL'ini kiriting
@@ -1010,9 +1011,11 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
                 files = {"file": (os.path.basename(chunk_path), f, "application/octet-stream")}
                 data = {
                     "model": "whisper-1",
-                    "language": source_lang,
                     "response_format": "verbose_json",
                 }
+                # === 'auto' bo'lsa language yuborilmaydi (Whisper o'zi aniqlaydi) ===
+                if source_lang and source_lang != "auto":
+                    data["language"] = source_lang
                 resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
             if resp.status_code != 200:
                 raise Exception(f"Whisper xato (bo'lak {idx}/{total}): HTTP {resp.status_code} — {resp.text[:200]}")
@@ -1045,7 +1048,10 @@ def _gpt_translate_one(text, source_lang):
         "Faqat tarjimani qaytar — boshqa hech qanday izoh, sarlavha yoki "
         "kirish so'zi yozma."
     )
-    user_prompt = f"{src_name.capitalize()} tilidagi matnni O'zbekchaga tarjima qil:\n\n{text}"
+    if source_lang == "auto":
+        user_prompt = f"Quyidagi xorijiy tildagi matnni avval qaysi tilda ekanini aniqla, keyin O'zbekchaga tarjima qil. Faqat O'zbekcha tarjimani qaytar:\n\n{text}"
+    else:
+        user_prompt = f"{src_name.capitalize()} tilidagi matnni O'zbekchaga tarjima qil:\n\n{text}"
     payload = {
         "model": "gpt-4o",
         "max_tokens": 16000,
@@ -3069,6 +3075,76 @@ def process_translation_for_user(user_id, file_path, source_lang):
 # === [/TARJIMA — WEBAPP THREAD MODE] ===========================================
 
 
+def process_url_translation_for_user(user_id, url, source_lang):
+    """URL (YouTube/Instagram/TikTok) dan video yuklab xorijiy tildan O'zbekchaga tarjima.
+    Thread-mode, 2x tarif koeffitsienti bilan."""
+    audio_path = None
+    try:
+        if source_lang not in TRANSLATION_LANGS:
+            telegram_send_message(user_id, "❌ Noma'lum manba til.")
+            return
+        # Limit dastlabki tekshiruvi
+        if not check_limit_by_user_id(user_id, 0):
+            return
+        src_label = TRANSLATION_LANGS[source_lang]
+        telegram_send_message(user_id, f"🌐 Tarjima jarayoni boshlandi ({src_label})\n📥 Video yuklanmoqda...\n🔗 {url[:80]}")
+        # 1) Video yuklab olish
+        audio_path = download_audio_from_url(url)
+        # 2) Davomiylik va 2x limit tekshiruvi
+        try:
+            actual_duration = int(get_duration_or_estimate(audio_path))
+        except Exception:
+            actual_duration = 60
+        cost = actual_duration * TRANSLATION_MULTIPLIER
+        if not _is_admin_id(user_id):
+            if not check_limit_by_user_id(user_id, cost):
+                return
+        telegram_send_message(user_id, f"✅ Yuklanidi ({actual_duration//60} daq)\n📝 1/2 — Whisper transkripsiya...")
+        # 3) Whisper STT (katta fayl bo'laklanadi)
+        last_w = {"sent": 0}
+        def whisper_progress(cur, total):
+            if total > 1 and cur != last_w["sent"]:
+                last_w["sent"] = cur
+                telegram_send_message(user_id, f"📝 Whisper: {cur}/{total} bo'lak...")
+        original_text = transcribe_whisper(audio_path, source_lang, whisper_progress)
+        if not original_text or not original_text.strip():
+            telegram_send_message(user_id, "❌ Audiodan matn topilmadi.")
+            return
+        # 4) GPT-4o tarjima (uzun matn bo'laklanadi)
+        word_count = len(original_text.split())
+        telegram_send_message(user_id, f"✨ 2/2 — GPT tarjima qilmoqda... (~{word_count} so'z)")
+        last_c = {"sent": 0}
+        def gpt_progress(cur, total):
+            if total > 1 and cur != last_c["sent"]:
+                last_c["sent"] = cur
+                telegram_send_message(user_id, f"✨ GPT tarjima: {cur}/{total} bo'lak...")
+        translated = translate_with_claude(original_text, source_lang, gpt_progress)
+        if not translated or not translated.strip():
+            telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
+            return
+        # 5) Natija — matn + PDF
+        telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → 🇺🇿 O'zbek):")
+        for i in range(0, len(translated), 4000):
+            telegram_send_message(user_id, translated[i:i+4000])
+        try:
+            pdf_path = make_pdf(translated, "Tarjima — O'zbek")
+            telegram_send_document(user_id, pdf_path, filename="tarjima.pdf", caption="📎 Tarjima PDF")
+            try: os.remove(pdf_path)
+            except Exception: pass
+        except Exception as e:
+            logging.warning(f"URL tarjima PDF xato: {e}")
+        # 6) Tarif daqiqalari (2x)
+        if not _is_admin_id(user_id) and actual_duration > 0:
+            add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
+    except Exception as e:
+        logging.error(f"process_url_translation_for_user xato: {e}")
+        telegram_send_message(user_id, f"❌ URL tarjima xato: {str(e)[:300]}")
+    finally:
+        if audio_path:
+            try: shutil.rmtree(os.path.dirname(audio_path), ignore_errors=True)
+            except Exception: pass
+
+
 def process_url_for_user(user_id, url, language="uz"):
     """WebApp URL'idan video yuklab matnga aylantirish — tarif limiti qo'llanadi."""
     audio_path = None
@@ -3184,7 +3260,7 @@ async def handle_webapp_upload(request):
 
 
 async def handle_webapp_url_post(request):
-    """WebApp dan URL yuborish (YouTube/Instagram/TikTok)."""
+    """WebApp dan URL yuborish (YouTube/Instagram/TikTok). === [TARJIMA] translation_lang ==="""
     try:
         data = await request.json()
         user_id = data.get("user_id")
@@ -3193,9 +3269,17 @@ async def handle_webapp_url_post(request):
         language = (data.get("language") or "uz").lower()
         if language not in ("uz", "ru", "en"):
             language = "uz"
+        # === [TARJIMA] manba til (RU/EN/AR) ===
+        translation_lang = (data.get("translation_lang") or "").lower()
+        if translation_lang and translation_lang not in TRANSLATION_LANGS:
+            translation_lang = ""
         if not user_id or not url:
             return web.json_response({"error": "user_id yoki url yo'q"}, status=400, headers=cors_headers())
-        threading.Thread(target=process_url_for_user, args=(int(user_id), url, language), daemon=True).start()
+        # === [TARJIMA] Agar til berilgan bo'lsa, URL'ni tarjima qilishga uzatamiz ===
+        if translation_lang:
+            threading.Thread(target=process_url_translation_for_user, args=(int(user_id), url, translation_lang), daemon=True).start()
+        else:
+            threading.Thread(target=process_url_for_user, args=(int(user_id), url, language), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP URL xatosi: {e}")

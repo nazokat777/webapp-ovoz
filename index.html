@@ -1382,11 +1382,13 @@
     <div style="background: linear-gradient(135deg, rgba(45, 27, 94, 0.65), rgba(20, 10, 50, 0.85)); backdrop-filter: blur(22px); border: 1px solid rgba(0, 245, 255, 0.35); border-radius: 22px; padding: 22px; margin-bottom: 22px;">
       <div style="font-family:'Playfair Display',serif; font-size:18px; font-weight:800; color: var(--text); margin-bottom: 8px; text-align: center;">🌐 Manba tilini tanlang</div>
       <div style="font-size: 12px; color: var(--text-2); text-align: center; margin-bottom: 18px;">Audio yoki video qaysi tildan O'zbekchaga tarjima qilinsin?</div>
+      <button onclick="selectTranslateLang('auto')" id="tlangAuto" class="tlang-btn" style="width: 100%; padding: 16px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.75); font-weight: 800; font-size: 14px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 10px;">🌐 Har qanday tilni avto aniqlash</button>
       <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
         <button onclick="selectTranslateLang('ru')" id="tlangRu" class="tlang-btn" style="padding: 16px 8px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.65); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
         <button onclick="selectTranslateLang('en')" id="tlangEn" class="tlang-btn" style="padding: 16px 8px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.65); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
         <button onclick="selectTranslateLang('ar')" id="tlangAr" class="tlang-btn" style="padding: 16px 8px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.65); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
       </div>
+      <div style="font-size: 11px; color: var(--text-3); text-align: center; margin-top: 10px;">💡 Aniq til biling — tezroq. Bilmaysizmi — "Avto" tanlang.</div>
       <div id="tlangSelected" style="display:none; margin-top: 14px; text-align: center; font-size: 12.5px; color: #00f5ff; font-weight: 700;">✅ Til tanlandi — endi audio/video yuboring (yoki YouTube link)</div>
     </div>
   </div>
@@ -1718,10 +1720,10 @@
       hero_desc: 'Audio, video, ovozli xabar yoki YouTube/Instagram havolasini yuboring — biz uni matn, PDF va ovozli formatga aylantiramiz.',
       section_files: 'Fayl turini tanlang',
       section_pdf: 'PDF → Ovoz',
-      card1_title: 'Ovoz / Audio', card1_sub: 'MP3, WAV, OGG, FLAC va boshqa formatlar', card1_pill: '20+ format',
-      card2_title: 'Video fayl',  card2_sub: 'MP4, MKV, AVI, dumaloq video xabarlar',  card2_pill: 'Har qanday',
-      card3_title: 'YouTube / Instagram', card3_sub: 'YouTube, TikTok, Instagram havolalari', card3_pill: 'Avtomatik',
-      card4_title: 'Ovozli xabar', card4_sub: 'Telegram ovozli xabarlari yoki PDF faylni matnga', card4_pill: 'Tez ishlaydi',
+      card1_title: '🎵 Audio',    card1_sub: 'MP3, WAV, OGG va h.k.',  card1_pill: 'Audio fayl',
+      card2_title: '🎬 Video',    card2_sub: 'MP4, MKV, dumaloq video', card2_pill: 'Video fayl',
+      card3_title: '🔗 Havola',   card3_sub: 'YouTube, TikTok, Instagram', card3_pill: 'URL',
+      card4_title: '🎤 Mikrofon', card4_sub: 'Ovozli yozuv tayyorlash',  card4_pill: 'Mikrofondan',
       pdf_title: '📄 PDF faylni ovozga aylantirish',
       pdf_sub: "PDF hujjatni yuklang — biz uni ovozli MP3 ga aylantiramiz. Yo'lda yoki dam olishda tinglash uchun qulay.",
       pdf_pill: 'Yangi xizmat',
@@ -1759,10 +1761,10 @@
       hero_desc: 'Отправьте аудио, видео, голосовое сообщение или ссылку YouTube/Instagram — мы превратим всё это в текст, PDF и аудиоформат.',
       section_files: 'Выберите тип файла',
       section_pdf: 'PDF → Аудио',
-      card1_title: 'Голос / Аудио', card1_sub: 'MP3, WAV, OGG, FLAC и другие форматы', card1_pill: '20+ форматов',
-      card2_title: 'Видеофайл', card2_sub: 'MP4, MKV, AVI, круглые видеосообщения', card2_pill: 'Любой',
-      card3_title: 'YouTube / Instagram', card3_sub: 'Ссылки YouTube, TikTok, Instagram', card3_pill: 'Автоматически',
-      card4_title: 'Голосовое сообщение', card4_sub: 'Голосовые Telegram или PDF в текст', card4_pill: 'Быстро',
+      card1_title: '🎵 Аудио',   card1_sub: 'MP3, WAV, OGG и др.',   card1_pill: 'Аудиофайл',
+      card2_title: '🎬 Видео',   card2_sub: 'MP4, MKV, круглые видео', card2_pill: 'Видеофайл',
+      card3_title: '🔗 Ссылка',  card3_sub: 'YouTube, TikTok, Instagram', card3_pill: 'URL',
+      card4_title: '🎤 Микрофон', card4_sub: 'Запись голоса',           card4_pill: 'С микрофона',
       pdf_title: '📄 Преобразовать PDF в аудио',
       pdf_sub: 'Загрузите PDF — мы превратим его в аудио MP3. Удобно слушать в дороге или на отдыхе.',
       pdf_pill: 'Новый сервис',
@@ -1798,10 +1800,10 @@
       hero_desc: 'Send audio, video, voice message or a YouTube/Instagram link — we will turn it into text, PDF and audio format.',
       section_files: 'Choose file type',
       section_pdf: 'PDF → Audio',
-      card1_title: 'Voice / Audio', card1_sub: 'MP3, WAV, OGG, FLAC and other formats', card1_pill: '20+ formats',
-      card2_title: 'Video file', card2_sub: 'MP4, MKV, AVI, round video messages', card2_pill: 'Any',
-      card3_title: 'YouTube / Instagram', card3_sub: 'YouTube, TikTok, Instagram links', card3_pill: 'Automatic',
-      card4_title: 'Voice message', card4_sub: 'Telegram voice messages or PDF to text', card4_pill: 'Fast',
+      card1_title: '🎵 Audio',     card1_sub: 'MP3, WAV, OGG, etc.',   card1_pill: 'Audio file',
+      card2_title: '🎬 Video',     card2_sub: 'MP4, MKV, round video',  card2_pill: 'Video file',
+      card3_title: '🔗 Link',      card3_sub: 'YouTube, TikTok, Instagram', card3_pill: 'URL',
+      card4_title: '🎤 Microphone', card4_sub: 'Record your voice',     card4_pill: 'From mic',
       pdf_title: '📄 Convert PDF to audio',
       pdf_sub: 'Upload a PDF — we will convert it into an audio MP3. Convenient for listening on the go or while resting.',
       pdf_pill: 'New service',
@@ -1995,6 +1997,8 @@
       format: dataUrl.split(',')[0].split(':')[1].split(';')[0] || 'audio/webm',
       language: currentLang
     };
+    // === [TARJIMA] Mikrofondan yozilgan audio ham tarjima qilinishi mumkin ===
+    if (translateLang) payload.translation_lang = translateLang;
     fetch(window.location.origin + '/audio', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -2014,19 +2018,57 @@
   let translateLang = null;  // tanlangan manba til (ru/en/ar)
   // Default: hammasi kulrang. Tanlanganda — vivid gradient + glow.
   const TLANG_ACTIVE = {
+    auto: { color: '#a78bfa', gradient: 'linear-gradient(135deg, #ff006e, #8338ec, #00f5ff, #ffbe0b)' },
     ru: { color: '#00f5ff', gradient: 'linear-gradient(135deg, #00f5ff, #06b6d4, #8338ec)' },
     en: { color: '#ff006e', gradient: 'linear-gradient(135deg, #ff006e, #c026d3, #8338ec)' },
     ar: { color: '#ffbe0b', gradient: 'linear-gradient(135deg, #ffbe0b, #fb5607, #ff006e)' }
   };
 
+  function updateTranslationBanner() {
+    // Sahifa tepasiga "Tarjima rejimi" indikatori qo'yamiz
+    let banner = document.getElementById('translationBanner');
+    if (!translateLang) {
+      if (banner) banner.remove();
+      return;
+    }
+    const langName = { ru: '🇷🇺 Rus', en: '🇬🇧 Ingliz', ar: '🇸🇦 Arab' }[translateLang];
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'translationBanner';
+      banner.style.cssText = 'position: sticky; top: 0; z-index: 100; margin: 0 -16px 12px; padding: 10px 16px; background: linear-gradient(90deg, rgba(255, 0, 110, 0.9), rgba(131, 56, 236, 0.9), rgba(0, 245, 255, 0.9)); color: #fff; font-weight: 800; font-size: 13px; text-align: center; box-shadow: 0 4px 14px rgba(255, 0, 110, 0.35); cursor: pointer;';
+      banner.onclick = () => {
+        translateLang = null;
+        updateTranslationBanner();
+        // Til pickerni tozalash
+        ['ru', 'en', 'ar'].forEach(code => {
+          const btn = document.getElementById('tlang' + code.charAt(0).toUpperCase() + code.slice(1));
+          if (btn) {
+            btn.style.background = 'rgba(255, 255, 255, 0.06)';
+            btn.style.borderColor = 'rgba(255, 255, 255, 0.18)';
+            btn.style.color = 'rgba(255, 255, 255, 0.65)';
+            btn.style.boxShadow = 'none';
+            btn.style.transform = 'scale(1)';
+            btn.style.fontWeight = '700';
+          }
+        });
+        const sel = document.getElementById('tlangSelected');
+        if (sel) sel.style.display = 'none';
+        showToast('Tarjima rejimi bekor qilindi', 'success', 2000);
+      };
+      const app = document.querySelector('.app');
+      if (app) app.insertBefore(banner, app.firstChild);
+    }
+    banner.innerHTML = `🌐 Tarjima rejimi: <b>${langName}</b> tilidan O'zbekchaga &nbsp;&nbsp; <span style="opacity:0.85">✖ Bekor qilish</span>`;
+  }
+
   function selectTranslateLang(lang) {
     translateLang = lang;
-    // Hamma 3 tugmani QAYTA SOZLAYMIZ — eski tanlangani ham default'ga qaytadi
-    ['ru', 'en', 'ar'].forEach(code => {
+    updateTranslationBanner();
+    // 4 tugmani QAYTA SOZLAYMIZ — auto + 3 til
+    ['auto', 'ru', 'en', 'ar'].forEach(code => {
       const btn = document.getElementById('tlang' + code.charAt(0).toUpperCase() + code.slice(1));
       if (!btn) return;
       if (code === lang) {
-        // ====== TANLANGAN: yorqin gradient + neon glow + scale + qalin
         const a = TLANG_ACTIVE[code];
         btn.style.background = a.gradient;
         btn.style.backgroundSize = '200% 200%';
@@ -2034,27 +2076,26 @@
         btn.style.borderWidth = '2px';
         btn.style.color = '#ffffff';
         btn.style.boxShadow = `0 0 24px ${a.color}, 0 0 48px ${a.color}66, 0 6px 20px rgba(0, 0, 0, 0.5)`;
-        btn.style.transform = 'scale(1.10)';
+        btn.style.transform = 'scale(1.05)';
         btn.style.fontWeight = '900';
         btn.style.textShadow = '0 1px 2px rgba(0, 0, 0, 0.5)';
       } else {
-        // ====== TANLANMAGAN: kulrang, faded
         btn.style.background = 'rgba(255, 255, 255, 0.06)';
         btn.style.backgroundSize = '';
-        btn.style.borderColor = 'rgba(255, 255, 255, 0.18)';
+        btn.style.borderColor = (code === 'auto') ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.18)';
         btn.style.borderWidth = '1.5px';
-        btn.style.color = 'rgba(255, 255, 255, 0.65)';
+        btn.style.color = (code === 'auto') ? 'rgba(255, 255, 255, 0.75)' : 'rgba(255, 255, 255, 0.65)';
         btn.style.boxShadow = 'none';
         btn.style.transform = 'scale(1)';
-        btn.style.fontWeight = '700';
+        btn.style.fontWeight = (code === 'auto') ? '800' : '700';
         btn.style.textShadow = 'none';
       }
     });
     const selectedMsg = document.getElementById('tlangSelected');
     if (selectedMsg) {
       selectedMsg.style.display = 'block';
-      const langName = { ru: '🇷🇺 Rus', en: '🇬🇧 Ingliz', ar: '🇸🇦 Arab' }[lang];
-      selectedMsg.innerHTML = `✅ <b>${langName}</b> tili tanlandi — endi audio/video yuboring`;
+      const langName = { auto: '🌐 Avto (har qanday til)', ru: '🇷🇺 Rus', en: '🇬🇧 Ingliz', ar: '🇸🇦 Arab' }[lang];
+      selectedMsg.innerHTML = `✅ <b>${langName}</b> tanlandi — endi audio/video yuboring`;
     }
     if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.selectionChanged(); } catch (e) {} }
   }
@@ -2144,9 +2185,12 @@
       // Avval fetch — MenuButton va KeyboardButton orqali ochilsa ham ishlaydi
       if (userId) {
         try {
+          // === [TARJIMA] Agar til tanlangan bo'lsa, URL ham tarjima qilinadi ===
+          const urlBody = { user_id: userId, url: link, language: currentLang };
+          if (translateLang) urlBody.translation_lang = translateLang;
           const r = await fetch(window.location.origin + '/url', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: userId, url: link, language: currentLang })
+            body: JSON.stringify(urlBody)
           });
           const json = await r.json();
           if (!r.ok) throw new Error(json.error || 'Server xato');
@@ -2173,18 +2217,13 @@
     }
     if (!selectedFile) { showToast(t('t_no_file'), 'error'); return; }
     if (!userId) { showToast(userIdMissingMessage(), 'error', 8000); return; }
-    // === [TARJIMA] Tarjima rejimida til tanlash shart ===
-    if (currentType === 'translate' && !translateLang) {
-      showToast('🌐 Avval manba tilni tanlang (Rus / Ingliz / Arab)', 'error', 5000);
-      return;
-    }
     showProcessing();
     try {
       const fd = new FormData();
       fd.append('user_id', String(userId));
       fd.append('language', currentLang);
-      // === [TARJIMA] Agar tarjima rejimi bo'lsa, manba tilni qo'shamiz ===
-      if (currentType === 'translate' && translateLang) {
+      // === [TARJIMA] Til tanlangan bo'lsa, har qanday turdagi fayl tarjima qilinadi ===
+      if (translateLang) {
         fd.append('translation_lang', translateLang);
       }
       fd.append('file', selectedFile, selectedFile.name);
