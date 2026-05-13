@@ -33,12 +33,22 @@ import edge_tts
 import speech_recognition as sr
 import pypdf
 
-# TTS voices
+# TTS voices (Edge TTS — Microsoft, BEPUL)
 VOICES = {
     "uz": "uz-UZ-MadinaNeural",
     "ru": "ru-RU-SvetlanaNeural",
     "en": "en-US-JennyNeural",
+    "ar": "ar-SA-ZariyahNeural",  # Arabcha (Saudi Arabia, ayollar ovozi)
 }
+
+# Tarjima yo'nalishi — manba til avto, hosil til foydalanuvchi tanlaydi
+TRANSLATION_TARGETS = {
+    "uz": "🇺🇿 O'zbekcha",
+    "ru": "🇷🇺 Rus tiliga",
+    "en": "🇬🇧 Ingliz tiliga",
+    "ar": "🇸🇦 Arab tiliga",
+}
+TRANSLATION_TARGET_NAMES = {"uz": "O'zbek", "ru": "rus", "en": "ingliz", "ar": "arab"}
 
 # STT lang codes (Google Speech uchun)
 GOOGLE_LANG = {
@@ -1096,27 +1106,29 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
     return "\n\n".join(results)
 
 
-def _gpt_translate_one(text, source_lang):
+def _gpt_translate_one(text, source_lang, target_lang="uz"):
     """Bir bo'lakni OpenAI GPT-4o bilan tarjima qilish — Claude darajasida sifat.
-    GPT-4o (mini emas) — eng yuqori tarjima sifati, ma'no buzilmaydi."""
+    source_lang: manba til (yoki 'auto' — avto aniqlash)
+    target_lang: hosil til ('uz', 'ru', 'en', 'ar')"""
     src_name = TRANSLATION_LANG_NAMES.get(source_lang, source_lang)
+    tgt_name = TRANSLATION_TARGET_NAMES.get(target_lang, "O'zbek")
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json",
     }
     system_prompt = (
-        "Sen O'zbek tilini mukammal biladigan professional tarjimon. "
-        "Xorijiy tildagi matnni O'zbek tiliga adabiy, tabiiy va to'liq aniq "
-        "ma'noni saqlagan holda tarjima qil. Iboralar va idiomalarni "
-        "O'zbekcha ekvivalent bilan almashtir, so'zma-so'z tarjima qilma. "
-        "Faqat tarjimani qaytar — boshqa hech qanday izoh, sarlavha yoki "
-        "kirish so'zi yozma."
+        f"Sen {tgt_name} tilini mukammal biladigan professional tarjimon. "
+        f"Xorijiy tildagi matnni {tgt_name} tiliga adabiy, tabiiy va to'liq aniq "
+        f"ma'noni saqlagan holda tarjima qil. Iboralar va idiomalarni "
+        f"{tgt_name}cha ekvivalent bilan almashtir, so'zma-so'z tarjima qilma. "
+        f"Faqat tarjimani qaytar — boshqa hech qanday izoh, sarlavha yoki "
+        f"kirish so'zi yozma."
     )
     if source_lang == "auto":
-        user_prompt = f"Quyidagi xorijiy tildagi matnni avval qaysi tilda ekanini aniqla, keyin O'zbekchaga tarjima qil. Faqat O'zbekcha tarjimani qaytar:\n\n{text}"
+        user_prompt = f"Quyidagi xorijiy tildagi matnni avval qaysi tilda ekanini aniqla, keyin {tgt_name} tiliga tarjima qil. Faqat tarjimani qaytar:\n\n{text}"
     else:
-        user_prompt = f"{src_name.capitalize()} tilidagi matnni O'zbekchaga tarjima qil:\n\n{text}"
+        user_prompt = f"{src_name.capitalize()} tilidagi matnni {tgt_name} tiliga tarjima qil:\n\n{text}"
     payload = {
         "model": "gpt-4o",
         "max_tokens": 16000,
@@ -1136,10 +1148,10 @@ def _gpt_translate_one(text, source_lang):
     return choices[0].get("message", {}).get("content", "").strip()
 
 
-def translate_with_claude(text, source_lang, progress_cb=None):
-    """Tarjima — OpenAI GPT-4o orqali (avval Claude edi).
-    Funksiya nomi mavjud chaqiruvchilarga mos qoldirildi.
-    progress_cb(current_chunk, total_chunks) — async progress callback."""
+def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz"):
+    """Tarjima — OpenAI GPT-4o orqali.
+    source_lang: manba til (yoki 'auto')
+    target_lang: hosil til ('uz', 'ru', 'en', 'ar')"""
     if not OPENAI_API_KEY:
         raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing.")
 
@@ -1149,20 +1161,20 @@ def translate_with_claude(text, source_lang, progress_cb=None):
         if progress_cb:
             try: progress_cb(1, 1)
             except Exception: pass
-        return _gpt_translate_one(text, source_lang)
+        return _gpt_translate_one(text, source_lang, target_lang)
 
     # Uzun matn — bo'laklarga ajratamiz (so'zlar chegarasida)
     chunks = []
     for i in range(0, len(words), CLAUDE_CHUNK_WORDS):
         chunks.append(" ".join(words[i:i + CLAUDE_CHUNK_WORDS]))
-    logging.info(f"🔪 GPT bo'laklash: {len(words)} so'z → {len(chunks)} bo'lak")
+    logging.info(f"🔪 GPT bo'laklash: {len(words)} so'z → {len(chunks)} bo'lak (target: {target_lang})")
     translations = []
     for idx, chunk in enumerate(chunks, 1):
         if progress_cb:
             try: progress_cb(idx, len(chunks))
             except Exception: pass
         try:
-            translations.append(_gpt_translate_one(chunk, source_lang))
+            translations.append(_gpt_translate_one(chunk, source_lang, target_lang))
         except Exception as e:
             logging.warning(f"GPT bo'lak {idx}/{len(chunks)} xato: {e}")
             translations.append(f"[Bo'lak {idx} tarjima xatosi]")
@@ -2522,11 +2534,10 @@ async def process_pdf_to_voice(update, context, file_id):
 
 
 # === [TARJIMA MODULI — ASOSIY WORKFLOW] =========================================
-async def process_translation(update, context, file_path, duration_sec, source_lang):
-    """Audio'ni xorijiy tildan O'zbekchaga tarjima qilish.
-    Workflow: Whisper STT (verbose_json) → GPT-4o (translation) → matn + PDF.
-    Tarif: duration * TRANSLATION_MULTIPLIER (1x) — boshqa xizmatlar bilan teng.
-    Original transkripsiya user'ga ko'rsatilmaydi — faqat tarjima."""
+async def process_translation(update, context, file_path, duration_sec, source_lang, target_lang="uz"):
+    """Audio'ni xorijiy tildan tanlangan tilga tarjima qilish.
+    Workflow: Whisper STT → GPT-4o tarjima → matn + PDF + audio (TTS) target tilda.
+    Tarif: duration * 1x — boshqa xizmatlar bilan teng."""
     if not is_admin(update):
         cost_seconds = (duration_sec or 60) * TRANSLATION_MULTIPLIER
         if not await can_process_uzbek(update, cost_seconds):
@@ -2534,7 +2545,7 @@ async def process_translation(update, context, file_path, duration_sec, source_l
 
     msg = await update.message.reply_text("⏳ Biroz kuting, tarjima qilinmoqda...")
     try:
-        # 1) Davomiylikni aniqlash (limit nazorat va billing uchun)
+        # 1) Davomiylikni aniqlash
         actual_duration = duration_sec
         if not actual_duration or actual_duration <= 0:
             try:
@@ -2542,41 +2553,52 @@ async def process_translation(update, context, file_path, duration_sec, source_l
             except Exception:
                 actual_duration = 60
 
-        # 2) Whisper STT — jim ishlaydi (katta fayl avtomatik bo'laklanadi)
+        # 2) Whisper STT
         original_text = await asyncio.to_thread(transcribe_whisper, file_path, source_lang, None)
         if not original_text or not original_text.strip():
             await msg.edit_text("❌ Audiodan matn topilmadi.")
             return
 
-        # 3) GPT tarjima — jim ishlaydi
-        translated = await asyncio.to_thread(translate_with_claude, original_text, source_lang, None)
+        # 3) GPT tarjima (target_lang ga)
+        translated = await asyncio.to_thread(translate_with_claude, original_text, source_lang, None, target_lang)
         if not translated or not translated.strip():
             await msg.edit_text("❌ Tarjima bo'sh qaytdi.")
             return
 
-        # 4) Natija — matn va PDF
+        # 4) Natija — matn + PDF + audio (target tilda)
         await msg.delete()
-        # Matn (4000 belgidan uzunni bo'lib yuboramiz)
+        tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
+        src_label = TRANSLATION_LANGS.get(source_lang, source_lang) if source_lang else "🌐 Avto"
         await update.message.reply_text(
-            f"🌐 *Tarjima ({src_label} → 🇺🇿 O'zbek):*",
+            f"🌐 *Tarjima ({src_label} → {tgt_label}):*",
             parse_mode="Markdown"
         )
         for i in range(0, len(translated), 4000):
             await update.message.reply_text(translated[i:i+4000])
-        # PDF — mavjud make_pdf funksiyasidan foydalanamiz
+        # PDF
         try:
-            pdf_path = await asyncio.to_thread(make_pdf, translated, "Tarjima — O'zbek")
+            pdf_path = await asyncio.to_thread(make_pdf, translated, f"Tarjima — {tgt_label}")
             with open(pdf_path, "rb") as f:
                 await update.message.reply_document(
-                    document=f, filename="tarjima.pdf",
-                    caption="📎 Tarjima PDF formatda"
+                    document=f, filename=f"tarjima_{target_lang}.pdf",
+                    caption=f"📎 Tarjima PDF ({tgt_label})"
                 )
             try: os.remove(pdf_path)
             except Exception: pass
         except Exception as e:
             logging.warning(f"Tarjima PDF xato: {e}")
+        # TTS — tarjima audio (target tilda)
+        try:
+            tts_path = await asyncio.to_thread(make_tts, translated, target_lang)
+            if tts_path:
+                with open(tts_path, "rb") as f:
+                    await update.message.reply_voice(voice=f, caption=f"🔊 Audio versiya ({tgt_label})")
+                try: os.remove(tts_path)
+                except Exception: pass
+        except Exception as e:
+            logging.warning(f"Tarjima TTS xato: {e}")
 
-        # 5) Tarif daqiqalarini ayrish — 1x koeffitsient (boshqa xizmatlar bilan teng)
+        # 5) Tarif daqiqalari
         if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration * TRANSLATION_MULTIPLIER)
     except Exception as e:
@@ -2584,15 +2606,15 @@ async def process_translation(update, context, file_path, duration_sec, source_l
         await msg.edit_text(f"❌ Tarjima xato: {str(e)[:300]}")
 
 
-async def process_translation_from_file_id(update, context, file_id, suffix, duration_sec, source_lang):
-    """File_id orqali kelgan audio/video uchun wrapper — yuklab olib process_translation chaqiradi."""
+async def process_translation_from_file_id(update, context, file_id, suffix, duration_sec, source_lang, target_lang="uz"):
+    """File_id orqali kelgan audio/video uchun wrapper."""
     tmp_path = None
     try:
         file = await context.bot.get_file(file_id)
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
             tmp_path = tmp.name
         await file.download_to_drive(tmp_path)
-        await process_translation(update, context, tmp_path, duration_sec, source_lang)
+        await process_translation(update, context, tmp_path, duration_sec, source_lang, target_lang)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try: os.remove(tmp_path)
@@ -3179,9 +3201,9 @@ def process_audio_for_user(user_id, file_path, language="uz"):
 
 
 # === [TARJIMA — WEBAPP THREAD MODE] ============================================
-def process_translation_for_user(user_id, file_path, source_lang):
-    """WebApp orqali yuborilgan audio'ni xorijiy tildan O'zbekchaga tarjima.
-    Update obyektisiz, thread-mode. Tarif 1x koeffitsient (boshqa xizmatlar bilan teng)."""
+def process_translation_for_user(user_id, file_path, source_lang, target_lang="uz"):
+    """WebApp orqali yuborilgan audio'ni xorijiy tildan tanlangan tilga tarjima.
+    Hosil: matn + PDF + audio (target tilda)."""
     try:
         if source_lang not in TRANSLATION_LANGS:
             telegram_send_message(user_id, "❌ Noma'lum manba til.")
@@ -3196,28 +3218,39 @@ def process_translation_for_user(user_id, file_path, source_lang):
             if not check_limit_by_user_id(user_id, cost):
                 return
         telegram_send_message(user_id, "⏳ Biroz kuting, tarjima qilinmoqda...")
-        # 1) Whisper STT — jim ishlaydi
+        # 1) Whisper STT
         original_text = transcribe_whisper(file_path, source_lang, None)
         if not original_text or not original_text.strip():
             telegram_send_message(user_id, "❌ Audiodan matn topilmadi.")
             return
-        # 2) GPT tarjima — jim ishlaydi
-        translated = translate_with_claude(original_text, source_lang, None)
+        # 2) GPT tarjima (target_lang ga)
+        translated = translate_with_claude(original_text, source_lang, None, target_lang)
         if not translated or not translated.strip():
             telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
             return
-        # 3) Natija — matn + PDF (ortiqcha sarlavhasiz)
-        src_label = TRANSLATION_LANGS[source_lang]
-        telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → 🇺🇿 O'zbek):")
+        # 3) Natija — matn + PDF + audio (target tilda)
+        src_label = TRANSLATION_LANGS.get(source_lang, source_lang)
+        tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
+        telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
         for i in range(0, len(translated), 4000):
             telegram_send_message(user_id, translated[i:i+4000])
+        # PDF
         try:
-            pdf_path = make_pdf(translated, "Tarjima — O'zbek")
-            telegram_send_document(user_id, pdf_path, filename="tarjima.pdf", caption="📎 Tarjima PDF")
+            pdf_path = make_pdf(translated, f"Tarjima — {tgt_label}")
+            telegram_send_document(user_id, pdf_path, filename=f"tarjima_{target_lang}.pdf", caption=f"📎 Tarjima PDF ({tgt_label})")
             try: os.remove(pdf_path)
             except Exception: pass
         except Exception as e:
             logging.warning(f"Tarjima PDF xato (HTTP): {e}")
+        # Audio (TTS target tilda)
+        try:
+            tts_path = make_tts(translated, target_lang)
+            if tts_path:
+                telegram_send_voice(user_id, tts_path, caption=f"🔊 Audio versiya ({tgt_label})")
+                try: os.remove(tts_path)
+                except Exception: pass
+        except Exception as e:
+            logging.warning(f"Tarjima TTS xato (HTTP): {e}")
         # 4) Tarif daqiqalari
         if not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
@@ -3231,9 +3264,8 @@ def process_translation_for_user(user_id, file_path, source_lang):
 # === [/TARJIMA — WEBAPP THREAD MODE] ===========================================
 
 
-def process_url_translation_for_user(user_id, url, source_lang):
-    """URL (YouTube/Instagram/TikTok) dan video yuklab xorijiy tildan O'zbekchaga tarjima.
-    Thread-mode, 1x tarif (boshqa xizmatlar bilan teng)."""
+def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"):
+    """URL'dan video yuklab xorijiy tildan tanlangan tilga tarjima — matn + PDF + audio."""
     audio_path = None
     try:
         if source_lang not in TRANSLATION_LANGS:
@@ -3254,28 +3286,39 @@ def process_url_translation_for_user(user_id, url, source_lang):
         if not _is_admin_id(user_id):
             if not check_limit_by_user_id(user_id, cost):
                 return
-        # 3) Whisper STT — jim ishlaydi
+        # 3) Whisper STT
         original_text = transcribe_whisper(audio_path, source_lang, None)
         if not original_text or not original_text.strip():
             telegram_send_message(user_id, "❌ Audiodan matn topilmadi.")
             return
-        # 4) GPT tarjima — jim ishlaydi
-        translated = translate_with_claude(original_text, source_lang, None)
+        # 4) GPT tarjima (target_lang ga)
+        translated = translate_with_claude(original_text, source_lang, None, target_lang)
         if not translated or not translated.strip():
             telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
             return
-        # 5) Natija — matn + PDF
+        # 5) Natija — matn + PDF + audio (target tilda)
         src_label = TRANSLATION_LANGS[source_lang]
-        telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → 🇺🇿 O'zbek):")
+        tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
+        telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
         for i in range(0, len(translated), 4000):
             telegram_send_message(user_id, translated[i:i+4000])
+        # PDF
         try:
-            pdf_path = make_pdf(translated, "Tarjima — O'zbek")
-            telegram_send_document(user_id, pdf_path, filename="tarjima.pdf", caption="📎 Tarjima PDF")
+            pdf_path = make_pdf(translated, f"Tarjima — {tgt_label}")
+            telegram_send_document(user_id, pdf_path, filename=f"tarjima_{target_lang}.pdf", caption=f"📎 Tarjima PDF ({tgt_label})")
             try: os.remove(pdf_path)
             except Exception: pass
         except Exception as e:
             logging.warning(f"URL tarjima PDF xato: {e}")
+        # Audio (TTS target tilda)
+        try:
+            tts_path = make_tts(translated, target_lang)
+            if tts_path:
+                telegram_send_voice(user_id, tts_path, caption=f"🔊 Audio versiya ({tgt_label})")
+                try: os.remove(tts_path)
+                except Exception: pass
+        except Exception as e:
+            logging.warning(f"URL tarjima TTS xato: {e}")
         # 6) Tarif daqiqalari
         if not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
@@ -3336,19 +3379,23 @@ async def handle_webapp_audio(request):
         language = (data.get("language") or "uz").lower()
         if language not in ("uz", "ru", "en"):
             language = "uz"
-        # === [TARJIMA] manba til (RU/EN/AR) ===
+        # === [TARJIMA] manba til (source) ===
         translation_lang = (data.get("translation_lang") or "").lower()
         if translation_lang and translation_lang not in TRANSLATION_LANGS:
             translation_lang = ""
+        # === [TARJIMA] hosil til (target) — default 'uz' ===
+        target_lang = (data.get("target_lang") or "uz").lower()
+        if target_lang not in TRANSLATION_TARGETS:
+            target_lang = "uz"
         if not user_id or not audio_data:
             return web.json_response({"error": "user_id yoki audio yo'q"}, status=400, headers=cors_headers())
         ext = format_hint.split("/")[-1].split(";")[0] if "/" in format_hint else format_hint
         if not ext.startswith('.'):
             ext = '.' + ext
         tmp_path = save_base64_audio(audio_data, ext)
-        # === [TARJIMA] Agar translation_lang berilgan bo'lsa, tarjima thread'iga uzatamiz ===
+        # === [TARJIMA] Tarjima rejimi yoqilgan bo'lsa, thread'iga target_lang bilan uzatamiz ===
         if translation_lang:
-            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang), daemon=True).start()
+            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang), daemon=True).start()
         else:
             threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
@@ -3365,7 +3412,8 @@ async def handle_webapp_upload(request):
         file_data = None
         file_name = None
         language = "uz"
-        translation_lang = ""  # === [TARJIMA] ===
+        translation_lang = ""  # === [TARJIMA] source ===
+        target_lang = "uz"      # === [TARJIMA] target — default uzbek ===
         while True:
             part = await reader.next()
             if part is None:
@@ -3380,6 +3428,10 @@ async def handle_webapp_upload(request):
                 tl = (await part.text()).strip().lower()
                 if tl in TRANSLATION_LANGS:
                     translation_lang = tl
+            elif part.name == "target_lang":
+                tg = (await part.text()).strip().lower()
+                if tg in TRANSLATION_TARGETS:
+                    target_lang = tg
             elif part.name == "file":
                 file_name = part.filename or "upload.bin"
                 file_data = await part.read()
@@ -3389,9 +3441,9 @@ async def handle_webapp_upload(request):
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
             tmp.write(file_data)
             tmp_path = tmp.name
-        # === [TARJIMA] Agar translation_lang bo'lsa - tarjima rejimi ===
+        # === [TARJIMA] Tarjima rejimi (translation_lang + target_lang) ===
         if translation_lang and ext != ".pdf":
-            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang), daemon=True).start()
+            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang), daemon=True).start()
         elif ext == ".pdf":
             threading.Thread(target=process_pdf_for_user, args=(int(user_id), tmp_path), daemon=True).start()
         else:
@@ -3412,15 +3464,19 @@ async def handle_webapp_url_post(request):
         language = (data.get("language") or "uz").lower()
         if language not in ("uz", "ru", "en"):
             language = "uz"
-        # === [TARJIMA] manba til (RU/EN/AR) ===
+        # === [TARJIMA] manba til (source) ===
         translation_lang = (data.get("translation_lang") or "").lower()
         if translation_lang and translation_lang not in TRANSLATION_LANGS:
             translation_lang = ""
+        # === [TARJIMA] hosil til (target) — default 'uz' ===
+        target_lang = (data.get("target_lang") or "uz").lower()
+        if target_lang not in TRANSLATION_TARGETS:
+            target_lang = "uz"
         if not user_id or not url:
             return web.json_response({"error": "user_id yoki url yo'q"}, status=400, headers=cors_headers())
-        # === [TARJIMA] Agar til berilgan bo'lsa, URL'ni tarjima qilishga uzatamiz ===
+        # === [TARJIMA] Tarjima rejimi (source + target) ===
         if translation_lang:
-            threading.Thread(target=process_url_translation_for_user, args=(int(user_id), url, translation_lang), daemon=True).start()
+            threading.Thread(target=process_url_translation_for_user, args=(int(user_id), url, translation_lang, target_lang), daemon=True).start()
         else:
             threading.Thread(target=process_url_for_user, args=(int(user_id), url, language), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())

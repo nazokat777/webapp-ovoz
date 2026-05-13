@@ -1293,23 +1293,36 @@
     </div>
   </div>
 
-  <!-- === [TARJIMA WEBAPP] Til tanlash UI — har doim hero ostida ko'rinadi === -->
+  <!-- === [TARJIMA WEBAPP] Source + Target til tanlash === -->
   <div class="reveal" id="translateLangPicker">
-    <div style="position: relative; background: linear-gradient(135deg, rgba(45, 27, 94, 0.78), rgba(20, 10, 50, 0.92)); backdrop-filter: blur(22px); border: 1.5px solid rgba(0, 245, 255, 0.45); border-radius: 22px; padding: 22px; margin-bottom: 22px; box-shadow: 0 8px 32px rgba(131, 56, 236, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.1); overflow: hidden;">
-      <!-- Iridescent glow accent -->
-      <div style="position: absolute; top: -50%; right: -20%; width: 200px; height: 200px; background: radial-gradient(circle, rgba(255, 0, 110, 0.35), transparent 70%); filter: blur(30px); pointer-events: none;"></div>
-      <div style="position: absolute; bottom: -50%; left: -20%; width: 200px; height: 200px; background: radial-gradient(circle, rgba(0, 245, 255, 0.35), transparent 70%); filter: blur(30px); pointer-events: none;"></div>
+    <div style="position: relative; background: linear-gradient(135deg, rgba(45, 27, 94, 0.82), rgba(20, 10, 50, 0.94)); backdrop-filter: blur(22px); border: 1.5px solid rgba(0, 245, 255, 0.45); border-radius: 22px; padding: 20px; margin-bottom: 22px; box-shadow: 0 8px 32px rgba(131, 56, 236, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); overflow: hidden;">
+      <!-- Iridescent glow accents -->
+      <div style="position: absolute; top: -50%; right: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(255, 0, 110, 0.4), transparent 70%); filter: blur(30px); pointer-events: none;"></div>
+      <div style="position: absolute; bottom: -50%; left: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(0, 245, 255, 0.4), transparent 70%); filter: blur(30px); pointer-events: none;"></div>
       <div style="position: relative; z-index: 2;">
-        <div style="font-family:'Playfair Display',serif; font-size: 19px; font-weight: 800; color: #ffffff; margin-bottom: 6px; text-align: center; text-shadow: 0 2px 8px rgba(0, 245, 255, 0.4);">🌐 Audio qaysi tilda?</div>
-        <div style="font-size: 12px; color: rgba(224, 231, 255, 0.75); text-align: center; margin-bottom: 16px; font-weight: 500;">Manba tilni tanlang — bot O'zbekchaga tarjima qiladi</div>
-        <button onclick="selectTranslateLang('auto')" id="tlangAuto" class="tlang-btn" style="width: 100%; padding: 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.85); font-weight: 800; font-size: 14px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 10px;">🌐 Avto — har qanday tilni o'zi aniqlaydi</button>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
-          <button onclick="selectTranslateLang('ru')" id="tlangRu" class="tlang-btn" style="padding: 14px 6px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-          <button onclick="selectTranslateLang('en')" id="tlangEn" class="tlang-btn" style="padding: 14px 6px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-          <button onclick="selectTranslateLang('ar')" id="tlangAr" class="tlang-btn" style="padding: 14px 6px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
+        <div style="font-family:'Playfair Display',serif; font-size: 18px; font-weight: 800; color: #ffffff; margin-bottom: 4px; text-align: center; text-shadow: 0 2px 8px rgba(0, 245, 255, 0.5);">🌐 Tarjima yo'nalishi</div>
+        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.7); text-align: center; margin-bottom: 14px; font-weight: 500;">Qaysi tildan qaysi tilga aylantirilsin?</div>
+
+        <!-- SOURCE -->
+        <div style="font-size: 10px; font-weight: 800; color: rgba(0, 245, 255, 0.9); margin-bottom: 6px; letter-spacing: 1px;">📡 MANBA TIL</div>
+        <button onclick="selectTranslateLang('auto')" id="tlangAuto" class="tlang-btn" style="width: 100%; padding: 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.85); font-weight: 800; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 8px;">🌐 Avto aniqlash</button>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 14px;">
+          <button onclick="selectTranslateLang('ru')" id="tlangRu" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
+          <button onclick="selectTranslateLang('en')" id="tlangEn" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
+          <button onclick="selectTranslateLang('ar')" id="tlangAr" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
         </div>
-        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.55); text-align: center; margin-top: 10px;">💡 O'zbek audio uchun pastdagi tugmalardan birini tanlang (tarjima shart emas)</div>
-        <div id="tlangSelected" style="display:none; margin-top: 12px; text-align: center; font-size: 12.5px; color: #00f5ff; font-weight: 700;">✅ Til tanlandi — pastda audio/video yuboring</div>
+
+        <!-- TARGET -->
+        <div style="font-size: 10px; font-weight: 800; color: rgba(255, 0, 110, 0.95); margin-bottom: 6px; letter-spacing: 1px;">🎯 HOSIL TIL</div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
+          <button onclick="selectTargetLang('uz')" id="ttgtUz" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #ff006e, #8338ec); border: 2px solid #ff006e; color: #fff; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 0 18px rgba(255, 0, 110, 0.55);">🇺🇿 O'zbek</button>
+          <button onclick="selectTargetLang('ru')" id="ttgtRu" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
+          <button onclick="selectTargetLang('en')" id="ttgtEn" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
+          <button onclick="selectTargetLang('ar')" id="ttgtAr" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
+        </div>
+
+        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.55); text-align: center; margin-top: 12px;">💡 Manba tanlanmasdan oddiy audio→matn yuborilsa, tarjima qilinmaydi</div>
+        <div id="tlangSelected" style="display:none; margin-top: 10px; text-align: center; font-size: 12px; color: #00f5ff; font-weight: 700;"></div>
       </div>
     </div>
   </div>
@@ -2002,8 +2015,11 @@
       format: dataUrl.split(',')[0].split(':')[1].split(';')[0] || 'audio/webm',
       language: currentLang
     };
-    // === [TARJIMA] Mikrofondan yozilgan audio ham tarjima qilinishi mumkin ===
-    if (translateLang) payload.translation_lang = translateLang;
+    // === [TARJIMA] source + target birga yuboriladi ===
+    if (translateLang) {
+      payload.translation_lang = translateLang;
+      payload.target_lang = targetLang || 'uz';
+    }
     fetch(window.location.origin + '/audio', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -2019,15 +2035,46 @@
     });
   }
 
-  // === [TARJIMA] WebApp tarjima rejimi holatlari ===
-  let translateLang = null;  // tanlangan manba til (ru/en/ar)
+  // === [TARJIMA] WebApp tarjima holatlari ===
+  let translateLang = null;  // SOURCE manba til (ru/en/ar/auto)
+  let targetLang = 'uz';     // TARGET hosil til (default O'zbek)
   // Default: hammasi kulrang. Tanlanganda — vivid gradient + glow.
   const TLANG_ACTIVE = {
     auto: { color: '#a78bfa', gradient: 'linear-gradient(135deg, #ff006e, #8338ec, #00f5ff, #ffbe0b)' },
     ru: { color: '#00f5ff', gradient: 'linear-gradient(135deg, #00f5ff, #06b6d4, #8338ec)' },
     en: { color: '#ff006e', gradient: 'linear-gradient(135deg, #ff006e, #c026d3, #8338ec)' },
-    ar: { color: '#ffbe0b', gradient: 'linear-gradient(135deg, #ffbe0b, #fb5607, #ff006e)' }
+    ar: { color: '#ffbe0b', gradient: 'linear-gradient(135deg, #ffbe0b, #fb5607, #ff006e)' },
+    uz: { color: '#00f5ff', gradient: 'linear-gradient(135deg, #ff006e, #8338ec)' }
   };
+
+  // === [TARJIMA] Target til tanlash (UZ/RU/EN/AR) ===
+  function selectTargetLang(lang) {
+    targetLang = lang;
+    ['uz', 'ru', 'en', 'ar'].forEach(code => {
+      const btn = document.getElementById('ttgt' + code.charAt(0).toUpperCase() + code.slice(1));
+      if (!btn) return;
+      if (code === lang) {
+        const a = TLANG_ACTIVE[code] || TLANG_ACTIVE.uz;
+        btn.style.background = a.gradient;
+        btn.style.borderColor = a.color;
+        btn.style.borderWidth = '2px';
+        btn.style.color = '#ffffff';
+        btn.style.boxShadow = `0 0 18px ${a.color}, 0 4px 14px rgba(0, 0, 0, 0.4)`;
+        btn.style.fontWeight = '900';
+        btn.style.transform = 'scale(1.04)';
+      } else {
+        btn.style.background = 'rgba(255, 255, 255, 0.06)';
+        btn.style.borderColor = 'rgba(255, 255, 255, 0.18)';
+        btn.style.borderWidth = '1.5px';
+        btn.style.color = 'rgba(255, 255, 255, 0.7)';
+        btn.style.boxShadow = 'none';
+        btn.style.fontWeight = '700';
+        btn.style.transform = 'scale(1)';
+      }
+    });
+    if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.selectionChanged(); } catch (e) {} }
+    if (translateLang) updateTranslationBanner();
+  }
 
   function updateTranslationBanner() {
     // Sahifa tepasiga "Tarjima rejimi" indikatori qo'yamiz
@@ -2063,7 +2110,8 @@
       const app = document.querySelector('.app');
       if (app) app.insertBefore(banner, app.firstChild);
     }
-    banner.innerHTML = `🌐 Tarjima: <b>${langName}</b> → 🇺🇿 O'zbek<br><span style="font-size:11px;opacity:0.9;font-weight:600;">Tugmalar: 🎵 Audio • 🎬 Video • 🔗 Havola • 🎤 Mikrofon — har biri tarjima qiladi</span><br><span style="font-size:10px;opacity:0.8;margin-top:2px;display:inline-block;">✖ Bosing — bekor qilish</span>`;
+    const tgtName = { uz: '🇺🇿 O\'zbek', ru: '🇷🇺 Rus', en: '🇬🇧 Ingliz', ar: '🇸🇦 Arab' }[targetLang || 'uz'];
+    banner.innerHTML = `🌐 Tarjima: <b>${langName}</b> → <b>${tgtName}</b><br><span style="font-size:11px;opacity:0.9;font-weight:600;">Audio/Video/Havola/Mikrofondan birini tanlang</span><br><span style="font-size:10px;opacity:0.8;margin-top:2px;display:inline-block;">✖ Bosing — bekor qilish</span>`;
   }
 
   function selectTranslateLang(lang) {
@@ -2204,9 +2252,12 @@
       // Avval fetch — MenuButton va KeyboardButton orqali ochilsa ham ishlaydi
       if (userId) {
         try {
-          // === [TARJIMA] Agar til tanlangan bo'lsa, URL ham tarjima qilinadi ===
+          // === [TARJIMA] Til tanlangan bo'lsa source+target qo'shamiz ===
           const urlBody = { user_id: userId, url: link, language: currentLang };
-          if (translateLang) urlBody.translation_lang = translateLang;
+          if (translateLang) {
+            urlBody.translation_lang = translateLang;
+            urlBody.target_lang = targetLang || 'uz';
+          }
           const r = await fetch(window.location.origin + '/url', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(urlBody)
@@ -2241,9 +2292,10 @@
       const fd = new FormData();
       fd.append('user_id', String(userId));
       fd.append('language', currentLang);
-      // === [TARJIMA] Til tanlangan bo'lsa, har qanday turdagi fayl tarjima qilinadi ===
+      // === [TARJIMA] source + target birga yuboriladi ===
       if (translateLang) {
         fd.append('translation_lang', translateLang);
+        fd.append('target_lang', targetLang || 'uz');
       }
       fd.append('file', selectedFile, selectedFile.name);
       const r = await fetch(window.location.origin + '/upload', { method: 'POST', body: fd });
