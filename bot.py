@@ -1413,6 +1413,56 @@ def _split_by_time(file_path, chunk_seconds, total_dur):
     return chunks
 
 
+def _clean_whisper_hallucination(text):
+    """Whisper hallucinatsiyani aniqlash va tozalash.
+    Whisper jim/shovqinli audio'da bir xil iborani 10-50 marta qaytaradi.
+
+    Algoritm:
+      1) Matnni gaplarga ajratamiz (. ! ? bo'yicha)
+      2) Agar bir gap ketma-ket 2 martadan ko'p takrorlansa, qolganini olib tashlaymiz
+      3) Qisqa iboralar 5+ marta ketma-ket bo'lsa ham olib tashlanadi
+    """
+    if not text or len(text) < 200:
+        return text
+
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    cleaned = []
+    last_normalized = None
+    repeat_count = 0
+    skipped_total = 0
+
+    for sent in sentences:
+        s = sent.strip()
+        if not s:
+            continue
+        # Solishtirish uchun normalizatsiya
+        normalized = re.sub(r'[^\w\s]', '', s.lower()).strip()
+        if not normalized:
+            cleaned.append(s)
+            continue
+
+        if normalized == last_normalized:
+            repeat_count += 1
+            # Birinchi 2 marta qoldiramiz, qolganini tashlaymiz
+            if repeat_count >= 2:
+                skipped_total += 1
+                continue
+        else:
+            last_normalized = normalized
+            repeat_count = 0
+
+        cleaned.append(s)
+
+    if skipped_total > 0:
+        logging.info(f"🧹 Whisper hallucination tozalandi: {skipped_total} takror gap o'chirildi")
+
+    result = " ".join(cleaned)
+
+    # Qo'shimcha tekshiruv: agar matn juda qisqarib ketgan bo'lsa, lekin yakuniy ham
+    # ko'p takrorlansa, qaytdan tozalash
+    return result
+
+
 def transcribe_whisper(file_path, source_lang, progress_cb=None):
     """OpenAI Whisper API orqali audio'ni matnga aylantirish.
     HAR DOIM avval optimallashtirish (64kbps mono MP3) qilinadi — bu Whisper
@@ -1460,13 +1510,17 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
             result = resp.json()
             text = (result.get("text") or "").strip()
             if text:
+                # Hallucination tozalash — bo'lak darajasida
+                text = _clean_whisper_hallucination(text)
                 results.append(text)
     finally:
         if chunk_dir_to_cleanup:
             try: shutil.rmtree(chunk_dir_to_cleanup, ignore_errors=True)
             except Exception: pass
 
-    return "\n\n".join(results)
+    final_text = "\n\n".join(results)
+    # Yakuniy tekshiruv — birlashtirilgan matn ham toza bo'lsin
+    return _clean_whisper_hallucination(final_text)
 
 
 def _gpt_translate_one(text, source_lang, target_lang="uz"):
@@ -3869,44 +3923,134 @@ def telegram_send_chat_action(chat_id, action="typing"):
         logging.debug(f"Telegram chat action xato: {e}")
 
 
+def telegram_send_message_returning_id(chat_id, text):
+    """Xabar yuboradi va message_id qaytaradi (keyin edit qilish uchun)."""
+    if not text:
+        return None
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        resp = requests.post(url, data={"chat_id": chat_id, "text": text}, timeout=30)
+        if resp.status_code == 200:
+            return resp.json().get("result", {}).get("message_id")
+    except Exception as e:
+        logging.debug(f"send_message_returning_id xato: {e}")
+    return None
+
+
+def telegram_edit_message(chat_id, message_id, text):
+    """Mavjud xabarni tahrirlash (animatsiya uchun)."""
+    if not message_id or not text:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText"
+        requests.post(
+            url,
+            data={"chat_id": chat_id, "message_id": message_id, "text": text},
+            timeout=10,
+        )
+    except Exception as e:
+        logging.debug(f"edit_message xato: {e}")
+
+
+def telegram_delete_message(chat_id, message_id):
+    """Xabarni o'chirish."""
+    if not message_id:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
+        requests.post(
+            url, data={"chat_id": chat_id, "message_id": message_id}, timeout=10
+        )
+    except Exception as e:
+        logging.debug(f"delete_message xato: {e}")
+
+
 class ProgressIndicator:
     """Uzoq jarayonlarda Telegram'da indikator ko'rsatadigan context manager.
 
-    Misol:
-        with ProgressIndicator(user_id, action="upload_voice"):
-            # uzoq audio yaratish
-            tts_path = make_tts(text, lang)
+    Ikkita ish qiladi parallel:
+      1) Chat action ("bot yozmoqda...") har 4 sek yuboriladi
+      2) "⏳ Biroz kuting..." xabari aylanuvchi qum soat bilan har 2 sek yangilanadi
+         (⏳ → ⌛ → ⏳ → ⌛ ...)
 
-    User chat'da "bot audio yubormoqda..." ko'radi va jarayon ishlayotganini biladi.
+    Misol:
+        progress = ProgressIndicator(user_id, "⏳ Biroz kuting, tarjima...")
+        progress.start()
+        # ... uzun ish
+        progress.set_text("🎙 Audio yaratilmoqda...")  # matnni yangilash mumkin
+        # ... yana ish
+        progress.stop()  # qum soat xabari o'chiriladi
     """
-    def __init__(self, chat_id, action="typing", interval=4):
+    HOURGLASS = ["⏳", "⌛"]
+
+    def __init__(self, chat_id, base_text="Biroz kuting...", action="typing", interval=4):
         self.chat_id = chat_id
+        self.base_text = base_text
         self.action = action
         self.interval = interval
         self._stop = threading.Event()
         self._thread = None
+        self._message_id = None
+        self._text_lock = threading.Lock()
+
+    def _current_message_text(self, frame_idx):
+        emoji = self.HOURGLASS[frame_idx % len(self.HOURGLASS)]
+        with self._text_lock:
+            return f"{emoji} {self.base_text}"
 
     def _loop(self):
-        # Darhol bir marta yuboramiz
+        # 1) Animatsiyali xabar yuborish
+        self._message_id = telegram_send_message_returning_id(
+            self.chat_id, self._current_message_text(0)
+        )
+        # 2) Chat action darhol yuborish
         telegram_send_chat_action(self.chat_id, self.action)
+
+        frame = 0
+        chat_action_counter = 0
+        # Animatsiya har 2 sek, chat action har 4 sek (2 ta animatsiya = 1 ta chat action)
         while not self._stop.is_set():
-            self._stop.wait(self.interval)
+            self._stop.wait(2)
             if self._stop.is_set():
                 break
-            telegram_send_chat_action(self.chat_id, self.action)
+            frame += 1
+            # Xabarni yangilash (qum soat aylantirish)
+            if self._message_id:
+                telegram_edit_message(
+                    self.chat_id, self._message_id, self._current_message_text(frame)
+                )
+            chat_action_counter += 1
+            # Chat action har 2 ta animatsiyada (≈4 sek)
+            if chat_action_counter >= 2:
+                telegram_send_chat_action(self.chat_id, self.action)
+                chat_action_counter = 0
 
     def start(self):
         self._stop.clear()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
-    def stop(self):
+    def stop(self, delete_message=True):
+        """Indikatorni to'xtatadi va animatsion xabarni o'chiradi (default)."""
         self._stop.set()
         if self._thread:
-            self._thread.join(timeout=1)
+            self._thread.join(timeout=2)
+        if delete_message and self._message_id:
+            telegram_delete_message(self.chat_id, self._message_id)
+            self._message_id = None
+
+    def set_text(self, new_text):
+        """Animatsion xabar matnini yangilash (qum soat aylanishi davom etadi)."""
+        with self._text_lock:
+            self.base_text = new_text
+        # Darhol xabarni yangilab qo'yamiz
+        if self._message_id:
+            telegram_edit_message(
+                self.chat_id, self._message_id, f"⏳ {new_text}"
+            )
 
     def set_action(self, new_action):
-        """Indikator turini o'zgartirish (jarayon davomida)."""
+        """Chat action turini o'zgartirish."""
         self.action = new_action
         telegram_send_chat_action(self.chat_id, self.action)
 
@@ -4150,10 +4294,10 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
     """WebApp orqali yuborilgan audio'ni xorijiy tildan tanlangan tilga tarjima.
     Hosil: matn + PDF (audio yo'q).
     XAVFSIZ TO'LOV: daqiqa faqat tarjima muvaffaqiyatli yetkazilgandan keyin yechiladi.
-    PROGRESS: Telegram'da 'bot yozmoqda...' indikatori ishlaydi."""
+    PROGRESS: aylanuvchi qum soat ⏳↔⌛ bilan animatsion xabar."""
     success = False
     actual_duration = 0
-    progress = ProgressIndicator(user_id, action="typing")
+    progress = ProgressIndicator(user_id, base_text="Biroz kuting, tarjima qilinmoqda...", action="typing")
     progress.start()
     try:
         if source_lang not in TRANSLATION_LANGS:
@@ -4168,7 +4312,7 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
         if not _is_admin_id(user_id):
             if not check_limit_by_user_id(user_id, cost):
                 return
-        telegram_send_message(user_id, "⏳ Biroz kuting, tarjima qilinmoqda...")
+        progress.set_text("Audio matnga aylanmoqda...")
         # 1) Whisper STT
         try:
             original_text = transcribe_whisper(file_path, source_lang, None)
@@ -4190,6 +4334,7 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
         if target_lang == "auto":
             translated = original_text
         else:
+            progress.set_text("Matn tarjima qilinmoqda...")
             try:
                 translated = translate_with_claude(original_text, source_lang, None, target_lang)
             except Exception as e:
