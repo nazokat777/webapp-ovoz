@@ -1192,43 +1192,44 @@ def _uzbek_transcription_quality(text):
 
 def transcribe_unified(file_path, progress_cb=None, language="uz"):
     """Audio/video'ni matnga aylantirish — Whisper (OpenAI) orqali.
-    O'zbek tilida sifat past bo'lsa, Muxlisa AI orqali qayta tekshiriladi.
-    Katta fayllar avtomatik bo'laklanadi (transcribe_whisper ichida)."""
+
+    Muxlisa AI FAQAT 2 ta holatda ishlatiladi (qo'shimcha xarajat oldini olish):
+      1) OPENAI_API_KEY yo'q (Whisper umuman ishlamaydi)
+      2) Whisper xato qaytaradi yoki BO'SH natija qaytaradi (faqat o'zbek)
+
+    Whisper muvaffaqiyatli ishlasa, sifat past bo'lsa ham Muxlisa CHAQIRILMAYDI —
+    chunki bu ikkala API uchun pul yechilishiga olib keladi.
+    """
     if not OPENAI_API_KEY:
         logging.warning("OPENAI_API_KEY yo'q, Muxlisa/Google fallback ishlatiladi")
         return transcribe(file_path, progress_cb, language)
 
     # 1) Asosiy yo'l: Whisper STT
-    whisper_text = None
     try:
         whisper_text = transcribe_whisper(file_path, language, None)
     except Exception as e:
-        logging.error(f"Whisper xato, Muxlisa fallback ishga tushadi: {e}")
-        # Whisper xato — to'g'ridan-to'g'ri Muxlisa'ga o'tamiz (eski transcribe)
-        return transcribe(file_path, progress_cb, language)
+        logging.error(f"Whisper xato, Muxlisa fallback (faqat uz uchun): {e}")
+        if language == "uz":
+            try:
+                return transcribe(file_path, progress_cb, language)
+            except Exception as me:
+                logging.error(f"Muxlisa fallback ham yiqildi: {me}")
+                raise e
+        else:
+            # Boshqa tillar uchun Muxlisa ishlamaydi — Whisper xatosini qaytaramiz
+            raise e
 
-    # 2) Sifat nazorati — faqat o'zbek (uz) uchun
-    if language == "uz" and whisper_text and whisper_text.strip():
+    # 2) Whisper bo'sh natija qaytardi va o'zbek bo'lsa — Muxlisa fallback
+    if (not whisper_text or not whisper_text.strip()) and language == "uz":
+        logging.warning("Whisper bo'sh, Muxlisa fallback (uz)...")
         try:
-            quality = _uzbek_transcription_quality(whisper_text)
-            logging.info(f"📊 O'zbek transkripsiya sifati: {quality:.2f}")
-            if quality < 0.55:
-                logging.warning(
-                    f"⚠️ Whisper o'zbek sifati past ({quality:.2f}), Muxlisa qayta tekshirish..."
-                )
-                # Muxlisa orqali alohida transkripsiya
-                try:
-                    muxlisa_text = transcribe(file_path, progress_cb, language)
-                    if muxlisa_text and muxlisa_text.strip():
-                        # Muxlisa natijasi mavjud — uni qaytaramiz (sifati ko'pincha o'zbek uchun yaxshiroq)
-                        logging.info("✅ Muxlisa fallback natijasi ishlatildi")
-                        return muxlisa_text
-                except Exception as me:
-                    logging.warning(f"Muxlisa fallback ham yiqildi: {me}")
-                    # Whisper natijasini qaytaramiz, hech bo'lmaganda bor
-        except Exception as e:
-            logging.warning(f"Sifat tekshirish xato (Whisper natijasi qaytariladi): {e}")
+            muxlisa_text = transcribe(file_path, progress_cb, language)
+            if muxlisa_text and muxlisa_text.strip():
+                return muxlisa_text
+        except Exception as me:
+            logging.warning(f"Muxlisa fallback yiqildi: {me}")
 
+    # Whisper natijasini qaytaramiz (sifat past bo'lsa ham — pul tejaymiz)
     return whisper_text or ""
 # === [/WHISPER UNIFIED STT] =====================================================
 
