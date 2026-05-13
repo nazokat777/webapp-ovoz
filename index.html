@@ -240,33 +240,59 @@
   .logo { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
   .logo-icon-wrap {
-    position: relative; width: 44px; height: 44px;
+    position: relative; width: 52px; height: 52px;
     display: flex; align-items: center; justify-content: center;
     flex-shrink: 0;
   }
+  /* ── PLASTINKA (vinyl record) — aylanuvchi premium ramka ── */
+  .logo-vinyl {
+    position: absolute; inset: 0;
+    border-radius: 50%;
+    background:
+      radial-gradient(circle at 50% 50%,
+        transparent 0%, transparent 38%,
+        #0a0a0a 40%,
+        #1a1610 48%,
+        #0a0a0a 56%,
+        #1a1610 66%,
+        #0a0a0a 76%,
+        #1a1610 86%,
+        #d4af37 94%,
+        #b8941f 100%);
+    box-shadow:
+      0 6px 18px rgba(212, 175, 55, 0.50),
+      inset 0 0 14px rgba(0, 0, 0, 0.7),
+      inset 0 1px 2px rgba(212, 175, 55, 0.4);
+    animation: vinyl-rotate 7s linear infinite;
+    z-index: 1;
+  }
+  /* Plastinkada yorqin nur (sheen) — sekin aylanish bilan birga */
+  .logo-vinyl::before {
+    content: ''; position: absolute; inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg,
+      transparent 0deg,
+      rgba(240, 216, 120, 0.35) 30deg,
+      transparent 70deg,
+      transparent 180deg,
+      rgba(212, 175, 55, 0.25) 220deg,
+      transparent 260deg,
+      transparent 360deg);
+    mix-blend-mode: screen;
+  }
+  /* MNSM logosi — markazda, plastinka bilan birga aylanadi */
   .logo-img {
-    position: relative; z-index: 2;
-    width: 100%; height: 100%;
+    position: relative;
+    z-index: 2;
+    width: 78%; height: 78%;
     object-fit: contain;
-    border-radius: 12px;
-    filter: drop-shadow(0 4px 12px rgba(212, 175, 55, 0.4));
+    filter: drop-shadow(0 0 4px rgba(212, 175, 55, 0.6))
+            drop-shadow(0 0 8px rgba(0, 0, 0, 0.5));
+    animation: vinyl-rotate 7s linear infinite;
   }
-  .logo-svg-fallback {
-    position: relative; z-index: 1;
-    width: 100%; height: 100%;
-    display: none;
-    background: var(--grad-pink);
-    border-radius: 12px;
-    align-items: center; justify-content: center;
-    box-shadow: 0 6px 18px rgba(212, 175, 55, 0.45), inset 0 1px 0 rgba(255,255,255,0.55);
-    color: #fff;
-    font-family: 'Manrope', sans-serif;
-    font-size: 11px;
-    font-weight: 900;
-    letter-spacing: 1px;
-  }
-  .logo-img.failed + .logo-svg-fallback { display: flex; }
-  .logo-img.failed { display: none; }
+  /* Fallback (logo.png yo'q bo'lsa) — yashirin, hozir logo bor */
+  .logo-svg-fallback { display: none !important; }
+  @keyframes vinyl-rotate { to { transform: rotate(360deg); } }
 
   .logo-name-wrap { display: flex; flex-direction: column; line-height: 1.05; }
   .logo-name {
@@ -1238,8 +1264,8 @@
   <div class="header reveal">
     <div class="logo">
       <div class="logo-icon-wrap">
-        <img class="logo-img" src="logo.png" alt="Audio & Konspekt" onerror="this.classList.add('failed')">
-        <div class="logo-svg-fallback">A&amp;K</div>
+        <div class="logo-vinyl" aria-hidden="true"></div>
+        <img class="logo-img" src="logo.png" alt="MNSM — AI Specialist" onerror="this.style.display='none'">
       </div>
       <div class="logo-name-wrap">
         <div class="logo-name">Audio &amp; Konspekt</div>
@@ -1271,30 +1297,30 @@
       <div style="position: absolute; top: -50%; right: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(212, 175, 55, 0.18), transparent 70%); filter: blur(40px); pointer-events: none;"></div>
       <div style="position: absolute; bottom: -50%; left: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(184, 148, 31, 0.14), transparent 70%); filter: blur(40px); pointer-events: none;"></div>
       <div style="position: relative; z-index: 2;">
-        <div style="font-family:'Playfair Display',serif; font-size: 19px; font-weight: 800; background: linear-gradient(135deg, #f0d878 0%, #d4af37 60%, #b8941f 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 6px; text-align: center; letter-spacing: 0.3px;">Til tanlash</div>
-        <div style="font-size: 11px; color: rgba(245, 240, 224, 0.55); text-align: center; margin-bottom: 18px; font-weight: 500; letter-spacing: 0.5px;">Audio / video / PDF uchun fayl va natija tilini tanlang</div>
+        <div data-i18n="tlp_title" style="font-family:'Playfair Display',serif; font-size: 19px; font-weight: 800; background: linear-gradient(135deg, #f0d878 0%, #d4af37 60%, #b8941f 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 6px; text-align: center; letter-spacing: 0.3px;">Til tanlash</div>
+        <div data-i18n="tlp_sub" style="font-size: 11px; color: rgba(245, 240, 224, 0.55); text-align: center; margin-bottom: 18px; font-weight: 500; letter-spacing: 0.5px;">Audio / video / PDF uchun fayl va natija tilini tanlang</div>
 
         <!-- MANBA -->
-        <div style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; letter-spacing: 1.5px; text-transform: uppercase;">Fayl tili (audio/video qaysi tilda?)</div>
-        <button onclick="selectTranslateLang('auto')" id="tlangAuto" class="tlang-btn" style="width: 100%; padding: 13px; border-radius: 12px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 8px; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25); letter-spacing: 0.3px;">Avto aniqlash</button>
+        <div data-i18n="tlp_source_label" style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; letter-spacing: 1.5px; text-transform: uppercase;">Fayl tili (audio/video qaysi tilda?)</div>
+        <button onclick="selectTranslateLang('auto')" id="tlangAuto" data-i18n="tlp_auto" class="tlang-btn" style="width: 100%; padding: 13px; border-radius: 12px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 8px; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25); letter-spacing: 0.3px;">Avto aniqlash</button>
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 16px;">
-          <button onclick="selectTranslateLang('uz')" id="tlangUz" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇺🇿 O'zbek</button>
-          <button onclick="selectTranslateLang('ru')" id="tlangRu" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-          <button onclick="selectTranslateLang('en')" id="tlangEn" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-          <button onclick="selectTranslateLang('ar')" id="tlangAr" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
+          <button onclick="selectTranslateLang('uz')" id="tlangUz" data-i18n="lang_uz" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇺🇿 O'zbek</button>
+          <button onclick="selectTranslateLang('ru')" id="tlangRu" data-i18n="lang_ru" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
+          <button onclick="selectTranslateLang('en')" id="tlangEn" data-i18n="lang_en" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
+          <button onclick="selectTranslateLang('ar')" id="tlangAr" data-i18n="lang_ar" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
         </div>
 
         <!-- HOSIL TIL -->
-        <div style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; margin-top: 14px; letter-spacing: 1.5px; text-transform: uppercase;">Natija tili (qaysi tilda olasiz?)</div>
-        <button onclick="selectTargetLang('auto')" id="ttgtAuto" class="ttgt-btn" style="width: 100%; padding: 13px; border-radius: 12px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.30); color: rgba(245, 240, 224, 0.85); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 6px;">Avto — manba tilida qoldirish</button>
+        <div data-i18n="tlp_target_label" style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; margin-top: 14px; letter-spacing: 1.5px; text-transform: uppercase;">Natija tili (qaysi tilda olasiz?)</div>
+        <button onclick="selectTargetLang('auto')" id="ttgtAuto" data-i18n="tlp_target_auto" class="ttgt-btn" style="width: 100%; padding: 13px; border-radius: 12px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.30); color: rgba(245, 240, 224, 0.85); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 6px;">Avto — manba tilida qoldirish</button>
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
-          <button onclick="selectTargetLang('uz')" id="ttgtUz" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);">🇺🇿 O'zbek</button>
-          <button onclick="selectTargetLang('ru')" id="ttgtRu" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-          <button onclick="selectTargetLang('en')" id="ttgtEn" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-          <button onclick="selectTargetLang('ar')" id="ttgtAr" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
+          <button onclick="selectTargetLang('uz')" id="ttgtUz" data-i18n="lang_uz" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);">🇺🇿 O'zbek</button>
+          <button onclick="selectTargetLang('ru')" id="ttgtRu" data-i18n="lang_ru" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
+          <button onclick="selectTargetLang('en')" id="ttgtEn" data-i18n="lang_en" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
+          <button onclick="selectTargetLang('ar')" id="ttgtAr" data-i18n="lang_ar" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
         </div>
 
-        <div style="font-size: 11px; color: rgba(245, 240, 224, 0.45); text-align: center; margin-top: 14px; letter-spacing: 0.3px;">Natija: matn + PDF + audio (tanlangan tilda)</div>
+        <div data-i18n="tlp_result_hint" style="font-size: 11px; color: rgba(245, 240, 224, 0.45); text-align: center; margin-top: 14px; letter-spacing: 0.3px;">Natija: matn + PDF + audio (tanlangan tilda)</div>
         <div id="tlangSelected" style="display:none;"></div>
       </div>
     </div>
@@ -1367,12 +1393,12 @@
 
     <!-- PDF → MP3 til tanlash (faqat audio output tili) -->
     <div onclick="event.stopPropagation();" style="margin-top: 12px; padding: 16px; border-radius: 18px; background: linear-gradient(135deg, rgba(20, 18, 14, 0.85), rgba(10, 9, 6, 0.95)); border: 1px solid rgba(212, 175, 55, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);">
-      <div style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; letter-spacing: 1.5px; text-transform: uppercase;">🔊 MP3 audio tili (qaysi tilda olasiz?)</div>
+      <div data-i18n="pdf_mp3_label" style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; letter-spacing: 1.5px; text-transform: uppercase;">🔊 MP3 audio tili (qaysi tilda olasiz?)</div>
       <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
-        <button onclick="selectPdfLang('uz')" id="pdflangUz" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);">🇺🇿 O'zbek</button>
-        <button onclick="selectPdfLang('ru')" id="pdflangRu" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-        <button onclick="selectPdfLang('en')" id="pdflangEn" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-        <button onclick="selectPdfLang('ar')" id="pdflangAr" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
+        <button onclick="selectPdfLang('uz')" id="pdflangUz" data-i18n="lang_uz" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);">🇺🇿 O'zbek</button>
+        <button onclick="selectPdfLang('ru')" id="pdflangRu" data-i18n="lang_ru" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
+        <button onclick="selectPdfLang('en')" id="pdflangEn" data-i18n="lang_en" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
+        <button onclick="selectPdfLang('ar')" id="pdflangAr" data-i18n="lang_ar" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
       </div>
     </div>
   </div>
@@ -1738,6 +1764,21 @@
       t_url_proto: 'Havola http:// yoki https:// bilan boshlanishi kerak.',
       t_no_file: 'Iltimos avval fayl tanlang!',
       t_copied: 'Matn vaqtinchalik xotiraga nusxalandi.',
+      // Til paneli (translation picker)
+      tlp_title: 'Til tanlash',
+      tlp_sub: 'Audio / video / PDF uchun fayl va natija tilini tanlang',
+      tlp_source_label: '📡 Fayl tili (audio/video qaysi tilda?)',
+      tlp_target_label: '🎯 Natija tili (qaysi tilda olasiz?)',
+      tlp_auto: '🌐 Avto aniqlash',
+      tlp_target_auto: '🌐 Avto — manba tilida qoldirish',
+      tlp_result_hint: '💡 Natija: matn + PDF + audio (tanlangan tilda)',
+      // PDF MP3 til pickeri
+      pdf_mp3_label: '🔊 MP3 audio tili (qaysi tilda olasiz?)',
+      // Til nomlari
+      lang_uz: "🇺🇿 O'zbek",
+      lang_ru: '🇷🇺 Rus',
+      lang_en: '🇬🇧 Ingliz',
+      lang_ar: '🇸🇦 Arab',
     },
     ru: {
       hero_badge: 'Решения с искусственным интеллектом',
@@ -1777,6 +1818,21 @@
       t_url_proto: 'Ссылка должна начинаться с http:// или https://',
       t_no_file: 'Сначала выберите файл!',
       t_copied: 'Текст скопирован в буфер обмена.',
+      // Til paneli (translation picker)
+      tlp_title: 'Выбор языка',
+      tlp_sub: 'Выберите язык файла и язык результата для аудио / видео / PDF',
+      tlp_source_label: '📡 Язык файла (на каком языке аудио/видео?)',
+      tlp_target_label: '🎯 Язык результата (на каком языке получить?)',
+      tlp_auto: '🌐 Автоопределение',
+      tlp_target_auto: '🌐 Авто — оставить на исходном языке',
+      tlp_result_hint: '💡 Результат: текст + PDF + аудио (на выбранном языке)',
+      // PDF MP3 til pickeri
+      pdf_mp3_label: '🔊 Язык MP3 аудио (на каком языке получить?)',
+      // Til nomlari
+      lang_uz: '🇺🇿 Узбекский',
+      lang_ru: '🇷🇺 Русский',
+      lang_en: '🇬🇧 Английский',
+      lang_ar: '🇸🇦 Арабский',
     },
     en: {
       hero_badge: 'Artificial Intelligence Solutions',
@@ -1816,6 +1872,21 @@
       t_url_proto: 'Link must start with http:// or https://',
       t_no_file: 'Please select a file first!',
       t_copied: 'Text copied to clipboard.',
+      // Til paneli (translation picker)
+      tlp_title: 'Language selection',
+      tlp_sub: 'Choose file and result language for audio / video / PDF',
+      tlp_source_label: '📡 File language (audio/video in which language?)',
+      tlp_target_label: '🎯 Result language (in which language?)',
+      tlp_auto: '🌐 Auto-detect',
+      tlp_target_auto: '🌐 Auto — keep in source language',
+      tlp_result_hint: '💡 Result: text + PDF + audio (in chosen language)',
+      // PDF MP3 til pickeri
+      pdf_mp3_label: '🔊 MP3 audio language (in which language?)',
+      // Til nomlari
+      lang_uz: '🇺🇿 Uzbek',
+      lang_ru: '🇷🇺 Russian',
+      lang_en: '🇬🇧 English',
+      lang_ar: '🇸🇦 Arabic',
     },
   };
 
