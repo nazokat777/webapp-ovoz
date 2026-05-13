@@ -85,8 +85,8 @@ PAYMENT_CURRENCY = os.getenv("PAYMENT_CURRENCY", "UZS")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
-# Tarjima narxi koeffitsienti — sarflangan vaqt 2x sanaydi (STT + tarjima)
-TRANSLATION_MULTIPLIER = 2
+# Tarjima narxi koeffitsienti — boshqa xizmatlar bilan teng (1 daq media = 1 daq tarif)
+TRANSLATION_MULTIPLIER = 1
 
 # Tarjima qilinadigan manba tillar (auto — Whisper o'zi aniqlaydi, har qanday til)
 TRANSLATION_LANGS = {
@@ -2318,7 +2318,7 @@ async def process_pdf_to_voice(update, context, file_id):
 async def process_translation(update, context, file_path, duration_sec, source_lang):
     """Audio'ni xorijiy tildan O'zbekchaga tarjima qilish.
     Workflow: Whisper STT (verbose_json) → GPT-4o (translation) → matn + PDF.
-    Tarif: duration * TRANSLATION_MULTIPLIER (2x) ga sanaydi.
+    Tarif: duration * TRANSLATION_MULTIPLIER (1x) — boshqa xizmatlar bilan teng.
     Original transkripsiya user'ga ko'rsatilmaydi — faqat tarjima."""
     if not is_admin(update):
         cost_seconds = (duration_sec or 60) * TRANSLATION_MULTIPLIER
@@ -2408,7 +2408,7 @@ async def process_translation(update, context, file_path, duration_sec, source_l
         except Exception as e:
             logging.warning(f"Tarjima PDF xato: {e}")
 
-        # 5) Tarif daqiqalarini ayrish — 2x koeffitsient bilan
+        # 5) Tarif daqiqalarini ayrish — 1x koeffitsient (boshqa xizmatlar bilan teng)
         if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration * TRANSLATION_MULTIPLIER)
     except Exception as e:
@@ -2794,8 +2794,8 @@ async def translate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🌐 *Xorijiy tildan tarjima*\n\n"
         "Audio yoki videoni xorijiy tildan O'zbek tiliga tarjima qilamiz.\n"
         "Whisper (transkripsiya) + GPT-4o (tarjima).\n\n"
-        f"⚠️ *Diqqat:* tarjima xizmati uchun daqiqalar *{TRANSLATION_MULTIPLIER}x* sanaydi "
-        f"(masalan 1 daqiqalik audio = {TRANSLATION_MULTIPLIER} daqiqa tarifdan ayriladi).\n\n"
+        f"💡 *Tarif daqiqalari:* tarjima ham boshqa xizmatlar bilan birga umumiy "
+        f"daqiqa hisobidan sanaydi (1 daqiqa audio = 1 daqiqa tarifdan).\n\n"
         "Qaysi tildan tarjima qilamiz?",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(buttons)
@@ -2826,7 +2826,7 @@ async def translation_lang_callback(update: Update, context: ContextTypes.DEFAUL
     await query.edit_message_text(
         f"✅ {label} tanlandi.\n\n"
         f"📥 Endi audio yoki video yuboring (voice xabar, audio fayl, video).\n"
-        f"⚠️ Tarif daqiqalari *{TRANSLATION_MULTIPLIER}x* sanaydi.\n\n"
+        f"💡 1 daqiqa audio = 1 daqiqa tarifdan ayriladi.\n\n"
         f"Bekor qilish uchun: /cancel",
         parse_mode="Markdown"
     )
@@ -3013,7 +3013,7 @@ def process_audio_for_user(user_id, file_path, language="uz"):
 # === [TARJIMA — WEBAPP THREAD MODE] ============================================
 def process_translation_for_user(user_id, file_path, source_lang):
     """WebApp orqali yuborilgan audio'ni xorijiy tildan O'zbekchaga tarjima.
-    Update obyektisiz, thread-mode. Tarif 2x koeffitsient bilan."""
+    Update obyektisiz, thread-mode. Tarif 1x koeffitsient (boshqa xizmatlar bilan teng)."""
     try:
         if source_lang not in TRANSLATION_LANGS:
             telegram_send_message(user_id, "❌ Noma'lum manba til.")
@@ -3062,7 +3062,7 @@ def process_translation_for_user(user_id, file_path, source_lang):
             except Exception: pass
         except Exception as e:
             logging.warning(f"Tarjima PDF xato (HTTP): {e}")
-        # 4) Tarif daqiqalari (2x)
+        # 4) Tarif daqiqalari
         if not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
     except Exception as e:
@@ -3077,7 +3077,7 @@ def process_translation_for_user(user_id, file_path, source_lang):
 
 def process_url_translation_for_user(user_id, url, source_lang):
     """URL (YouTube/Instagram/TikTok) dan video yuklab xorijiy tildan O'zbekchaga tarjima.
-    Thread-mode, 2x tarif koeffitsienti bilan."""
+    Thread-mode, 1x tarif (boshqa xizmatlar bilan teng)."""
     audio_path = None
     try:
         if source_lang not in TRANSLATION_LANGS:
@@ -3090,7 +3090,7 @@ def process_url_translation_for_user(user_id, url, source_lang):
         telegram_send_message(user_id, f"🌐 Tarjima jarayoni boshlandi ({src_label})\n📥 Video yuklanmoqda...\n🔗 {url[:80]}")
         # 1) Video yuklab olish
         audio_path = download_audio_from_url(url)
-        # 2) Davomiylik va 2x limit tekshiruvi
+        # 2) Davomiylik va limit tekshiruvi
         try:
             actual_duration = int(get_duration_or_estimate(audio_path))
         except Exception:
@@ -3133,7 +3133,7 @@ def process_url_translation_for_user(user_id, url, source_lang):
             except Exception: pass
         except Exception as e:
             logging.warning(f"URL tarjima PDF xato: {e}")
-        # 6) Tarif daqiqalari (2x)
+        # 6) Tarif daqiqalari
         if not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
     except Exception as e:
