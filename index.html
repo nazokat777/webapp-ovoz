@@ -13,51 +13,51 @@
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,700;0,800;0,900;1,700;1,800&display=swap" rel="stylesheet">
 <style>
   :root {
-    /* Holographic synthwave backdrop */
-    --bg: #08001a;
-    --bg-2: #1a0040;
-    --bg-3: #2d0a5a;
-    --cream: #0a0020;
+    /* Premium noir backdrop */
+    --bg: #0a0a0a;
+    --bg-2: #141414;
+    --bg-3: #1a1a1a;
+    --cream: #0a0a0a;
 
-    /* Vibrant synthwave + iridescent palette */
-    --pink-50:  #2a0d4d;
-    --pink-100: #4a1494;
-    --pink-200: #7209b7;
-    --pink-300: #b5179e;
-    --pink-400: #ff006e;   /* hot pink synthwave */
-    --pink-500: #00f5ff;   /* electric cyan — asosiy */
-    --pink-600: #06b6d4;   /* deep cyan */
-    --pink-700: #0891b2;
-    --rose:     #ffbe0b;   /* sunset gold */
-    --rose-soft:#fb5607;   /* sunset orange */
+    /* Refined gold palette — luxury accents */
+    --pink-50:  #0f0d08;
+    --pink-100: #1a1610;
+    --pink-200: #3a2f15;
+    --pink-300: #d4af37;   /* classic gold */
+    --pink-400: #f0d878;   /* champagne shimmer */
+    --pink-500: #d4af37;   /* primary gold — accent */
+    --pink-600: #b8941f;   /* deep gold */
+    --pink-700: #8a6f15;   /* bronze */
+    --rose:     #d4af37;
+    --rose-soft:#b8941f;
 
-    /* Synth indigo accents */
-    --peach-100: #2d1b5e;
-    --peach-200: #480ca8;
+    /* Subtle warm dark accents */
+    --peach-100: #14110a;
+    --peach-200: #2a2010;
 
-    /* Glass surfaces (qora-binafsha, translucent) */
-    --surface:   rgba(30, 16, 70, 0.55);
-    --surface-2: rgba(30, 16, 70, 0.78);
-    --surface-3: rgba(20, 10, 50, 0.94);
+    /* Glass surfaces (deep noir, translucent) */
+    --surface:   rgba(20, 18, 14, 0.55);
+    --surface-2: rgba(20, 18, 14, 0.78);
+    --surface-3: rgba(10, 9, 6, 0.94);
 
-    /* Yorqin matn qora fonda */
-    --text:    #e0e7ff;
-    --text-2:  rgba(224, 231, 255, 0.72);
-    --text-3:  rgba(224, 231, 255, 0.46);
+    /* Warm cream text on black */
+    --text:    #f5f0e0;
+    --text-2:  rgba(245, 240, 224, 0.72);
+    --text-3:  rgba(245, 240, 224, 0.46);
 
-    --border:  rgba(34, 211, 238, 0.18);
-    --border-2:rgba(34, 211, 238, 0.35);
+    --border:  rgba(212, 175, 55, 0.18);
+    --border-2:rgba(212, 175, 55, 0.38);
 
-    --grad-pink:   linear-gradient(135deg, #ff006e 0%, #8338ec 33%, #00f5ff 66%, #ff006e 100%);
-    --grad-soft:   linear-gradient(135deg, #ff006e 0%, #fb5607 50%, #ffbe0b 100%);
-    --grad-rose:   linear-gradient(135deg, #fb5607 0%, #ff006e 50%, #8338ec 100%);
-    --grad-blossom:linear-gradient(135deg, #00f5ff 0%, #8338ec 50%, #ff006e 100%);
+    --grad-pink:   linear-gradient(135deg, #b8941f 0%, #d4af37 33%, #f0d878 66%, #d4af37 100%);
+    --grad-soft:   linear-gradient(135deg, #d4af37 0%, #f0d878 50%, #b8941f 100%);
+    --grad-rose:   linear-gradient(135deg, #8a6f15 0%, #d4af37 50%, #f0d878 100%);
+    --grad-blossom:linear-gradient(135deg, #f0d878 0%, #d4af37 50%, #8a6f15 100%);
 
     --shadow-soft:
-      0 1px 0 rgba(167, 139, 250, 0.25) inset,
-      0 2px 6px rgba(34, 211, 238, 0.22),
-      0 8px 22px rgba(131, 56, 236, 0.25),
-      0 18px 40px rgba(34, 211, 238, 0.18);
+      0 1px 0 rgba(212, 175, 55, 0.18) inset,
+      0 2px 6px rgba(0, 0, 0, 0.6),
+      0 8px 22px rgba(0, 0, 0, 0.55),
+      0 18px 40px rgba(212, 175, 55, 0.10);
 
     --safe-top: env(safe-area-inset-top, 0px);
     --safe-bot: env(safe-area-inset-bottom, 0px);
@@ -65,7 +65,7 @@
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  *::selection { background: rgba(34, 211, 238, 0.35); color: var(--text); }
+  *::selection { background: rgba(212, 175, 55, 0.35); color: var(--text); }
 
   button { -webkit-appearance: none; appearance: none; outline: none; border: none; background: none; }
   input { -webkit-appearance: none; appearance: none; outline: none; border: none; background: none; }
@@ -85,71 +85,45 @@
     position: relative;
   }
 
-  /* ── BG: Synthwave + Holographic (vivid iridescent) ── */
+  /* ── BG: Premium noir + soft gold accents ── */
   .bg-aurora {
     position: fixed; inset: 0; z-index: 0;
     overflow: hidden;
     background:
-      /* Top — magenta/pink dream */
-      radial-gradient(ellipse 100% 60% at 50% 0%, rgba(255, 0, 110, 0.55), transparent 60%),
-      /* Synthwave sun — golden orange */
-      radial-gradient(ellipse 90% 50% at 50% 65%, rgba(251, 86, 7, 0.45), transparent 55%),
-      radial-gradient(circle 380px at 50% 75%, rgba(255, 190, 11, 0.50), transparent 70%),
-      /* Side cyan/violet glow */
-      radial-gradient(ellipse 70% 80% at 0% 30%, rgba(0, 245, 255, 0.40), transparent 60%),
-      radial-gradient(ellipse 70% 80% at 100% 35%, rgba(131, 56, 236, 0.50), transparent 60%),
-      /* Yulduzlar */
-      radial-gradient(circle 2px at 8% 14%, rgba(255, 255, 255, 0.95), transparent 100%),
-      radial-gradient(circle 3px at 22% 6%, rgba(0, 245, 255, 0.85), transparent 100%),
-      radial-gradient(circle 2px at 35% 12%, rgba(255, 255, 255, 0.7), transparent 100%),
-      radial-gradient(circle 2px at 48% 4%, rgba(255, 190, 11, 0.8), transparent 100%),
-      radial-gradient(circle 3px at 64% 9%, rgba(255, 0, 110, 0.75), transparent 100%),
-      radial-gradient(circle 2px at 78% 15%, rgba(255, 255, 255, 0.85), transparent 100%),
-      radial-gradient(circle 2px at 91% 7%, rgba(131, 56, 236, 0.8), transparent 100%),
-      radial-gradient(circle 2px at 15% 30%, rgba(0, 245, 255, 0.65), transparent 100%),
-      radial-gradient(circle 1px at 88% 24%, rgba(255, 255, 255, 0.7), transparent 100%),
-      /* Synthwave horizon — purple to navy */
+      /* Subtle warm gold glow top */
+      radial-gradient(ellipse 80% 50% at 50% 0%, rgba(212, 175, 55, 0.12), transparent 65%),
+      /* Soft bronze accent bottom */
+      radial-gradient(ellipse 70% 40% at 50% 100%, rgba(184, 148, 31, 0.08), transparent 70%),
+      /* Faint side ambience */
+      radial-gradient(ellipse 60% 70% at 0% 50%, rgba(212, 175, 55, 0.04), transparent 70%),
+      radial-gradient(ellipse 60% 70% at 100% 50%, rgba(212, 175, 55, 0.04), transparent 70%),
+      /* Tiny gold star dust */
+      radial-gradient(circle 1.5px at 8% 14%, rgba(240, 216, 120, 0.55), transparent 100%),
+      radial-gradient(circle 1px at 22% 6%, rgba(212, 175, 55, 0.45), transparent 100%),
+      radial-gradient(circle 1.5px at 35% 12%, rgba(245, 240, 224, 0.40), transparent 100%),
+      radial-gradient(circle 1px at 48% 4%, rgba(212, 175, 55, 0.50), transparent 100%),
+      radial-gradient(circle 1.5px at 64% 9%, rgba(240, 216, 120, 0.45), transparent 100%),
+      radial-gradient(circle 1px at 78% 15%, rgba(245, 240, 224, 0.35), transparent 100%),
+      radial-gradient(circle 1.5px at 91% 7%, rgba(212, 175, 55, 0.50), transparent 100%),
+      radial-gradient(circle 1px at 15% 30%, rgba(212, 175, 55, 0.30), transparent 100%),
+      radial-gradient(circle 1px at 88% 24%, rgba(245, 240, 224, 0.30), transparent 100%),
+      /* Deep noir base */
       linear-gradient(180deg,
-        #1a0040 0%,
-        #2d0a5a 18%,
-        #4a1494 32%,
-        #8338ec 48%,
-        #ff006e 60%,
-        #1a0040 75%,
-        #08001a 100%);
+        #0a0a0a 0%,
+        #0d0d0d 30%,
+        #080808 60%,
+        #0a0a0a 100%);
   }
-  /* Synthwave grid — perspective floor */
-  .bg-aurora::before {
-    content: ''; position: absolute;
-    left: 0; right: 0; bottom: 0;
-    height: 50%;
-    background-image:
-      linear-gradient(rgba(0, 245, 255, 0.45) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 0, 110, 0.35) 1px, transparent 1px);
-    background-size: 40px 40px;
-    transform: perspective(700px) rotateX(60deg);
-    transform-origin: center top;
-    mask-image: linear-gradient(180deg, transparent 0%, black 35%, black 100%);
-    -webkit-mask-image: linear-gradient(180deg, transparent 0%, black 35%, black 100%);
-    animation: grid-flow 8s linear infinite;
-    opacity: 0.75;
-  }
-  /* Iridescent pulsing glow */
+  /* Subtle gold halo */
   .bg-aurora::after {
     content: ''; position: absolute;
     width: 760px; height: 760px;
     border-radius: 50%;
-    background: conic-gradient(from 0deg,
-      rgba(255, 0, 110, 0.45),
-      rgba(131, 56, 236, 0.45),
-      rgba(0, 245, 255, 0.45),
-      rgba(255, 190, 11, 0.45),
-      rgba(251, 86, 7, 0.45),
-      rgba(255, 0, 110, 0.45));
+    background: radial-gradient(circle, rgba(212, 175, 55, 0.10), rgba(184, 148, 31, 0.05) 50%, transparent 75%);
     filter: blur(120px);
-    top: 50%; left: 50%;
+    top: 30%; left: 50%;
     transform: translate(-50%, -50%);
-    animation: aurora-1 22s ease-in-out infinite, hue-shift 18s linear infinite;
+    animation: aurora-1 22s ease-in-out infinite;
     mix-blend-mode: screen;
     opacity: 0.7;
     will-change: transform;
@@ -172,44 +146,43 @@
     50% { transform: translate(-220px, -180px) scale(1.22); }
   }
 
-  /* ── SYNTHWAVE PARTICLES — iridescent yulduzlar ── */
+  /* ── GOLD DUST PARTICLES — subtle premium sparkle ── */
   .petals { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
   .petal {
     position: absolute;
-    width: 4px; height: 4px;
-    background: rgba(255, 255, 255, 0.95);
+    width: 2px; height: 2px;
+    background: rgba(212, 175, 55, 0.85);
     border-radius: 50%;
     transform-origin: center;
     opacity: 0;
     box-shadow:
-      0 0 6px rgba(0, 245, 255, 1),
-      0 0 12px rgba(0, 245, 255, 0.9),
-      0 0 20px rgba(255, 0, 110, 0.6);
+      0 0 4px rgba(212, 175, 55, 0.9),
+      0 0 10px rgba(212, 175, 55, 0.5);
     animation: petal-fall linear infinite;
   }
-  /* Pink particles */
+  /* Champagne dust */
   .petal:nth-child(3n) {
+    background: rgba(240, 216, 120, 0.75);
     box-shadow:
-      0 0 6px rgba(255, 0, 110, 1),
-      0 0 12px rgba(255, 0, 110, 0.9),
-      0 0 20px rgba(131, 56, 236, 0.65);
+      0 0 4px rgba(240, 216, 120, 0.85),
+      0 0 10px rgba(240, 216, 120, 0.45);
   }
-  /* Gold particles (kichik chiziq shaklida) */
+  /* Bronze flecks */
   .petal:nth-child(5n) {
+    background: rgba(184, 148, 31, 0.7);
     box-shadow:
-      0 0 6px rgba(255, 190, 11, 1),
-      0 0 12px rgba(255, 190, 11, 0.9),
-      0 0 18px rgba(251, 86, 7, 0.7);
-    width: 6px; height: 2px;
+      0 0 4px rgba(184, 148, 31, 0.8),
+      0 0 8px rgba(184, 148, 31, 0.4);
+    width: 3px; height: 1px;
     border-radius: 1px;
   }
-  /* Violet particles */
+  /* Soft cream spark */
   .petal:nth-child(7n) {
+    background: rgba(245, 240, 224, 0.55);
     box-shadow:
-      0 0 6px rgba(131, 56, 236, 1),
-      0 0 12px rgba(131, 56, 236, 0.9),
-      0 0 20px rgba(0, 245, 255, 0.55);
-    width: 3px; height: 3px;
+      0 0 4px rgba(245, 240, 224, 0.5),
+      0 0 8px rgba(212, 175, 55, 0.3);
+    width: 1.5px; height: 1.5px;
   }
   .petal::before {
     content: ''; position: absolute; inset: -2px;
@@ -226,14 +199,13 @@
     100% { transform: translateY(110vh) translateX(-15px) scale(0.5); opacity: 0; }
   }
 
-  /* Cursor spotlight — iridescent holographic glow */
+  /* Cursor spotlight — soft gold halo */
   .spotlight {
     position: fixed; inset: 0; z-index: 0; pointer-events: none;
     background: radial-gradient(360px circle at var(--mx) var(--my),
-      rgba(255, 0, 110, 0.28),
-      rgba(131, 56, 236, 0.20) 35%,
-      rgba(0, 245, 255, 0.14) 60%,
-      transparent 75%);
+      rgba(212, 175, 55, 0.16),
+      rgba(212, 175, 55, 0.08) 38%,
+      transparent 72%);
     transition: background 0.18s;
     mix-blend-mode: screen;
   }
@@ -277,7 +249,7 @@
     width: 100%; height: 100%;
     object-fit: contain;
     border-radius: 12px;
-    filter: drop-shadow(0 4px 12px rgba(34, 211, 238, 0.4));
+    filter: drop-shadow(0 4px 12px rgba(212, 175, 55, 0.4));
   }
   .logo-svg-fallback {
     position: relative; z-index: 1;
@@ -286,7 +258,7 @@
     background: var(--grad-pink);
     border-radius: 12px;
     align-items: center; justify-content: center;
-    box-shadow: 0 6px 18px rgba(34, 211, 238, 0.45), inset 0 1px 0 rgba(255,255,255,0.55);
+    box-shadow: 0 6px 18px rgba(212, 175, 55, 0.45), inset 0 1px 0 rgba(255,255,255,0.55);
     color: #fff;
     font-family: 'Manrope', sans-serif;
     font-size: 11px;
@@ -315,14 +287,14 @@
     margin-top: 2px;
   }
 
-  /* Lang switcher (oq pill) */
+  /* Lang switcher — premium dark pill */
   .lang-switch {
     display: flex; gap: 0;
-    background: rgba(255, 255, 255, 0.78);
-    border: 1px solid rgba(167, 139, 250, 0.4);
+    background: rgba(20, 18, 14, 0.85);
+    border: 1px solid rgba(212, 175, 55, 0.35);
     border-radius: 24px; padding: 3px;
     backdrop-filter: blur(14px);
-    box-shadow: 0 4px 14px rgba(167, 139, 250, 0.22);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(212, 175, 55, 0.15);
   }
   .lang-btn {
     padding: 6px 16px;
@@ -336,8 +308,8 @@
   }
   .lang-btn.active {
     background: var(--grad-pink);
-    color: #fff;
-    box-shadow: 0 4px 12px rgba(34, 211, 238, 0.4);
+    color: #0a0a0a;
+    box-shadow: 0 4px 12px rgba(212, 175, 55, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
   }
   .lang-btn:not(.active):hover { color: var(--pink-500); }
 
@@ -358,14 +330,14 @@
     content: '';
     position: absolute; top: -50%; right: -25%;
     width: 320px; height: 320px;
-    background: radial-gradient(circle, rgba(167, 139, 250, 0.45) 0%, transparent 65%);
+    background: radial-gradient(circle, rgba(212, 175, 55, 0.45) 0%, transparent 65%);
     pointer-events: none;
   }
   .hero::after {
     content: '';
     position: absolute; bottom: -60%; left: -20%;
     width: 280px; height: 280px;
-    background: radial-gradient(circle, rgba(255, 190, 11, 0.45) 0%, transparent 65%);
+    background: radial-gradient(circle, rgba(240, 216, 120, 0.45) 0%, transparent 65%);
     pointer-events: none;
   }
   .hero-content { position: relative; z-index: 1; text-align: center; }
@@ -373,14 +345,14 @@
     display: inline-flex; align-items: center; gap: 6px;
     padding: 6px 14px;
     border-radius: 22px;
-    background: linear-gradient(135deg, rgba(252,165,207,0.45), rgba(255,255,255,0.5));
-    border: 1px solid rgba(34, 211, 238, 0.32);
+    background: linear-gradient(135deg, rgba(212, 175, 55, 0.18), rgba(184, 148, 31, 0.10));
+    border: 1px solid rgba(212, 175, 55, 0.32);
     color: var(--pink-600);
     font-size: 9.5px; font-weight: 800; letter-spacing: 1.4px;
     text-transform: uppercase;
     margin-bottom: 16px;
     backdrop-filter: blur(10px);
-    box-shadow: 0 4px 14px rgba(167, 139, 250, 0.25);
+    box-shadow: 0 4px 14px rgba(212, 175, 55, 0.25);
   }
   .hero-badge::before {
     content: '✦'; font-size: 11px; color: var(--pink-500); animation: sparkle 2.4s ease-in-out infinite;
@@ -448,7 +420,7 @@
   }
   .type-card::after {
     content: ''; position: absolute; inset: 0; pointer-events: none;
-    background: radial-gradient(180px circle at var(--cx, 50%) var(--cy, 50%), rgba(167, 139, 250, 0.4), transparent 60%);
+    background: radial-gradient(180px circle at var(--cx, 50%) var(--cy, 50%), rgba(212, 175, 55, 0.4), transparent 60%);
     opacity: 0; transition: opacity 0.3s;
     border-radius: inherit;
   }
@@ -457,7 +429,7 @@
   .type-card.selected::before {
     content: ''; position: absolute; inset: -1.5px;
     border-radius: 22px;
-    background: conic-gradient(from 0deg, #22d3ee, #7c3aed, #a78bfa, #d946ef, #22d3ee, #7c3aed, #22d3ee);
+    background: conic-gradient(from 0deg, #d4af37, #8a6f15, #f0d878, #b8941f, #d4af37, #8a6f15, #d4af37);
     z-index: -1;
     animation: rotate-border 5s linear infinite;
     filter: blur(0.6px);
@@ -466,12 +438,12 @@
 
   .type-card:active { transform: scale(0.96); }
   .type-card:hover {
-    border-color: rgba(167, 139, 250, 0.55);
+    border-color: rgba(212, 175, 55, 0.55);
     background: var(--surface-3);
     transform: translateY(-3px);
   }
   .type-card.selected {
-    background: linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(124, 58, 237, 0.25));
+    background: linear-gradient(135deg, rgba(212, 175, 55, 0.18), rgba(184, 148, 31, 0.25));
   }
   .type-card.selected .card-title { color: var(--pink-500); }
 
@@ -482,16 +454,16 @@
     pointer-events: none;
     z-index: 0;
   }
-  .type-card:nth-child(1) .card-glow { background: #22d3ee; }
-  .type-card:nth-child(2) .card-glow { background: #a78bfa; }
-  .type-card:nth-child(3) .card-glow { background: #d946ef; }
-  .type-card:nth-child(4) .card-glow { background: #06b6d4; }
+  .type-card:nth-child(1) .card-glow { background: #d4af37; }
+  .type-card:nth-child(2) .card-glow { background: #f0d878; }
+  .type-card:nth-child(3) .card-glow { background: #b8941f; }
+  .type-card:nth-child(4) .card-glow { background: #d4af37; }
 
   .card-icon {
     width: 50px; height: 50px; border-radius: 16px;
     margin-bottom: 14px;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 6px 18px rgba(34, 211, 238, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    box-shadow: 0 6px 18px rgba(212, 175, 55, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.25);
     transition: transform 0.32s cubic-bezier(.34,1.56,.64,1);
     overflow: hidden;
   }
@@ -503,12 +475,12 @@
     100% { transform: scale(1.04); }
   }
 
-  .icon-pink   { background: linear-gradient(135deg, #22d3ee, #06b6d4); }
-  .icon-rose   { background: linear-gradient(135deg, #a78bfa, #7c3aed); }
-  .icon-peach  { background: linear-gradient(135deg, #d946ef, #a855f7); }
-  .icon-blossom{ background: linear-gradient(135deg, #38bdf8, #6366f1); }
+  .icon-pink   { background: linear-gradient(135deg, #d4af37, #b8941f); }
+  .icon-rose   { background: linear-gradient(135deg, #f0d878, #d4af37); }
+  .icon-peach  { background: linear-gradient(135deg, #d4af37, #8a6f15); }
+  .icon-blossom{ background: linear-gradient(135deg, #f0d878, #b8941f); }
 
-  .card-icon svg { width: 24px; height: 24px; filter: drop-shadow(0 0 4px rgba(34, 211, 238, 0.6)); }
+  .card-icon svg { width: 24px; height: 24px; filter: drop-shadow(0 0 4px rgba(212, 175, 55, 0.6)); }
   .card-icon svg * { stroke: #fff; }
 
   /* Aylanuvchi holografik aksent — neon disk */
@@ -519,29 +491,29 @@
     display: flex; align-items: center; justify-content: center;
     isolation: isolate;
   }
-  /* Halo glow (orqada) — neon cyan */
+  /* Halo glow (orqada) — gold ambient */
   .vinyl::before {
     content: ''; position: absolute; inset: -6px;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(34, 211, 238, 0.65), rgba(131, 56, 236, 0.35) 50%, transparent 70%);
+    background: radial-gradient(circle, rgba(212, 175, 55, 0.55), rgba(184, 148, 31, 0.25) 50%, transparent 70%);
     filter: blur(8px);
     animation: vinyl-pulse 3s ease-in-out infinite;
     z-index: -1;
   }
-  /* Tashqi neon halqa (sekin aylanadi) */
+  /* Tashqi gold halqa (sekin aylanadi) */
   .vinyl::after {
     content: ''; position: absolute; inset: 0;
     border-radius: 50%;
     background:
       conic-gradient(from 0deg,
-        rgba(34, 211, 238, 0.7),
-        rgba(167, 139, 250, 0.5),
-        rgba(217, 70, 239, 0.6),
-        rgba(34, 211, 238, 0.7),
-        rgba(167, 139, 250, 0.5),
-        rgba(34, 211, 238, 0.7));
+        rgba(212, 175, 55, 0.7),
+        rgba(240, 216, 120, 0.6),
+        rgba(184, 148, 31, 0.7),
+        rgba(212, 175, 55, 0.7),
+        rgba(240, 216, 120, 0.6),
+        rgba(212, 175, 55, 0.7));
     animation: vinyl-spin 12s linear infinite;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
   }
   /* Markaz icon (sakura SVG — neon glow filter bilan) */
   .vinyl-flower {
@@ -549,7 +521,7 @@
     width: calc(100% - 8px); height: calc(100% - 8px);
     z-index: 2;
     animation: vinyl-spin 6s linear infinite;
-    filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.8)) drop-shadow(0 0 12px rgba(131, 56, 236, 0.55)) hue-rotate(180deg) saturate(1.4);
+    filter: drop-shadow(0 0 6px rgba(212, 175, 55, 0.8)) drop-shadow(0 0 12px rgba(184, 148, 31, 0.55)) hue-rotate(180deg) saturate(1.4);
   }
   .vinyl-flower svg { width: 100%; height: 100%; }
   /* Markaziy oltin nuqta (statik) */
@@ -557,8 +529,8 @@
     position: absolute;
     width: 14px; height: 14px;
     border-radius: 50%;
-    background: radial-gradient(circle at 35% 30%, #67e8f9 0%, #22d3ee 60%, #06b6d4 100%);
-    box-shadow: 0 0 8px rgba(251, 191, 36, 0.7), inset 0 1px 0 rgba(255,255,255,0.5);
+    background: radial-gradient(circle at 35% 30%, #f0d878 0%, #d4af37 60%, #b8941f 100%);
+    box-shadow: 0 0 8px rgba(212, 175, 55, 0.7), inset 0 1px 0 rgba(255,255,255,0.5);
     z-index: 4;
     animation: vinyl-pulse 2s ease-in-out infinite;
   }
@@ -580,10 +552,10 @@
   }
   .type-card.selected .vinyl-flower {
     animation-duration: 3s;
-    filter: drop-shadow(0 4px 12px rgba(34, 211, 238, 0.8));
+    filter: drop-shadow(0 4px 12px rgba(212, 175, 55, 0.8));
   }
   .type-card.selected .vinyl::before {
-    background: radial-gradient(circle, rgba(252,165,207,0.85), rgba(45, 27, 94,0.5) 50%, transparent 70%);
+    background: radial-gradient(circle, rgba(240, 216, 120,0.85), rgba(20, 18, 14,0.5) 50%, transparent 70%);
   }
 
   .card-title { font-size: 14px; font-weight: 800; margin-bottom: 5px; letter-spacing: -0.3px; transition: color 0.28s; color: var(--text); }
@@ -594,15 +566,15 @@
     letter-spacing: 0.4px;
     backdrop-filter: blur(8px);
   }
-  .pill-pink   { background: rgba(0, 245, 255, 0.18); color: #00f5ff; border: 1px solid rgba(0, 245, 255, 0.45); }
-  .pill-rose   { background: rgba(255, 0, 110, 0.18); color: #ff006e; border: 1px solid rgba(255, 0, 110, 0.45); }
-  .pill-peach  { background: rgba(255, 190, 11, 0.18); color: #ffbe0b; border: 1px solid rgba(255, 190, 11, 0.45); }
-  .pill-blossom{ background: rgba(131, 56, 236, 0.22); color: #c084fc; border: 1px solid rgba(131, 56, 236, 0.55); }
+  .pill-pink   { background: rgba(212, 175, 55, 0.14); color: #d4af37; border: 1px solid rgba(212, 175, 55, 0.40); }
+  .pill-rose   { background: rgba(212, 175, 55, 0.14); color: #f0d878; border: 1px solid rgba(212, 175, 55, 0.40); }
+  .pill-peach  { background: rgba(212, 175, 55, 0.14); color: #d4af37; border: 1px solid rgba(212, 175, 55, 0.40); }
+  .pill-blossom{ background: rgba(212, 175, 55, 0.14); color: #f0d878; border: 1px solid rgba(212, 175, 55, 0.40); }
 
   /* Touch ripple */
   .ripple {
     position: absolute; border-radius: 50%; pointer-events: none;
-    background: rgba(255, 255, 255, 0.7);
+    background: rgba(212, 175, 55, 0.35);
     transform: scale(0); opacity: 0.7;
     animation: ripple-anim 0.7s ease-out forwards;
   }
@@ -614,7 +586,7 @@
     background: var(--surface-2);
     backdrop-filter: blur(22px);
     -webkit-backdrop-filter: blur(22px);
-    border: 2px dashed rgba(167, 139, 250, 0.6);
+    border: 2px dashed rgba(212, 175, 55, 0.6);
     border-radius: 24px;
     padding: 36px 24px;
     text-align: center;
@@ -626,19 +598,19 @@
   }
   .upload-zone::before {
     content: ''; position: absolute; inset: 0;
-    background: radial-gradient(circle at 50% 30%, rgba(167, 139, 250, 0.35), transparent 65%);
+    background: radial-gradient(circle at 50% 30%, rgba(212, 175, 55, 0.35), transparent 65%);
     opacity: 0; transition: opacity 0.35s;
   }
   .upload-zone:hover { border-color: var(--pink-500); }
   .upload-zone:hover::before { opacity: 1; }
-  .upload-zone.dragover { border-color: var(--rose); background: rgba(131, 56, 236, 0.15); transform: scale(1.015); }
+  .upload-zone.dragover { border-color: var(--rose); background: rgba(184, 148, 31, 0.15); transform: scale(1.015); }
 
   .upload-icon {
     width: 60px; height: 60px; margin: 0 auto 14px;
     border-radius: 18px;
     background: var(--grad-pink);
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 12px 26px rgba(34, 211, 238, 0.4), inset 0 1px 0 rgba(255,255,255,0.5);
+    box-shadow: 0 12px 26px rgba(212, 175, 55, 0.4), inset 0 1px 0 rgba(255,255,255,0.5);
     animation: float-icon 3.4s ease-in-out infinite;
   }
   .upload-icon svg { width: 30px; height: 30px; }
@@ -670,7 +642,7 @@
     font-size: 14.5px;
     font-weight: 800;
     cursor: pointer;
-    box-shadow: 0 12px 28px rgba(34, 211, 238, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.2) inset;
+    box-shadow: 0 12px 28px rgba(212, 175, 55, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.2) inset;
     transition: transform 0.18s, box-shadow 0.22s;
     min-height: 60px;
     font-family: 'Manrope', sans-serif;
@@ -685,7 +657,7 @@
     50% { background-position: 100% 50%; }
   }
   .record-btn:active { transform: scale(0.97); }
-  .record-btn:hover { box-shadow: 0 14px 36px rgba(34, 211, 238, 0.65); }
+  .record-btn:hover { box-shadow: 0 14px 36px rgba(212, 175, 55, 0.65); }
   .record-btn span { position: relative; z-index: 1; }
   .record-btn.recording {
     background: linear-gradient(135deg, #ef4444 0%, #be123c 100%);
@@ -729,8 +701,8 @@
   .url-row { display: flex; gap: 9px; }
   .url-input {
     flex: 1;
-    background: rgba(255, 255, 255, 0.7);
-    border: 1.5px solid rgba(34, 211, 238, 0.16);
+    background: rgba(20, 18, 14, 0.7);
+    border: 1px solid rgba(212, 175, 55, 0.25);
     border-radius: 14px;
     padding: 13px 15px;
     color: var(--text);
@@ -740,8 +712,8 @@
   }
   .url-input:focus {
     border-color: var(--pink-500);
-    background: #fff;
-    box-shadow: 0 0 0 4px rgba(34, 211, 238, 0.18);
+    background: rgba(10, 9, 6, 0.85);
+    box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.20);
   }
   .url-input::placeholder { color: var(--text-3); }
   .url-btn {
@@ -752,18 +724,18 @@
     min-height: 48px;
     display: flex; align-items: center; justify-content: center;
     font-family: 'Manrope', sans-serif;
-    box-shadow: 0 6px 18px rgba(34, 211, 238, 0.4);
+    box-shadow: 0 6px 18px rgba(212, 175, 55, 0.4);
     transition: transform 0.16s, box-shadow 0.22s;
   }
   .url-btn:active { transform: scale(0.96); }
-  .url-btn:hover { box-shadow: 0 8px 24px rgba(34, 211, 238, 0.55); }
+  .url-btn:hover { box-shadow: 0 8px 24px rgba(212, 175, 55, 0.55); }
 
   /* ── PROCESSING ── */
   .processing {
     background: var(--surface-2);
     backdrop-filter: blur(28px);
     -webkit-backdrop-filter: blur(28px);
-    border: 1px solid rgba(167, 139, 250, 0.5);
+    border: 1px solid rgba(212, 175, 55, 0.5);
     border-radius: 24px;
     padding: 32px;
     text-align: center;
@@ -793,7 +765,7 @@
   }
   .blob {
     position: absolute; border-radius: 50%;
-    box-shadow: 0 0 22px rgba(167, 139, 250, 0.6);
+    box-shadow: 0 0 22px rgba(212, 175, 55, 0.6);
   }
   .blob-1 {
     width: 30px; height: 30px;
@@ -835,7 +807,7 @@
     background: var(--surface-2);
     backdrop-filter: blur(22px);
     -webkit-backdrop-filter: blur(22px);
-    border: 1px solid rgba(167, 139, 250, 0.5);
+    border: 1px solid rgba(212, 175, 55, 0.5);
     border-radius: 22px;
     padding: 20px;
     margin-bottom: 22px;
@@ -848,24 +820,24 @@
   }
   .result-title { font-size: 14px; font-weight: 800; letter-spacing: -0.2px; color: var(--text); }
   .copy-btn {
-    background: rgba(167, 139, 250, 0.32);
-    border: 1px solid rgba(34, 211, 238, 0.4);
+    background: rgba(212, 175, 55, 0.32);
+    border: 1px solid rgba(212, 175, 55, 0.4);
     border-radius: 11px; padding: 8px 13px;
     color: var(--pink-600); font-size: 11px; font-weight: 800; cursor: pointer;
     font-family: 'Manrope', sans-serif;
     transition: background 0.22s, transform 0.16s;
   }
   .copy-btn:active { transform: scale(0.95); }
-  .copy-btn:hover { background: rgba(167, 139, 250, 0.5); }
+  .copy-btn:hover { background: rgba(212, 175, 55, 0.5); }
   .result-text {
     font-size: 13.5px; line-height: 1.7; color: var(--text);
-    background: rgba(255, 255, 255, 0.6); border-radius: 14px; padding: 16px;
+    background: rgba(10, 9, 6, 0.65); border-radius: 14px; padding: 16px;
     max-height: 240px; overflow-y: auto;
     font-family: 'Manrope', sans-serif;
     border: 1px solid var(--border);
   }
   .result-text::-webkit-scrollbar { width: 6px; }
-  .result-text::-webkit-scrollbar-track { background: rgba(0,0,0,0.04); border-radius: 4px; }
+  .result-text::-webkit-scrollbar-track { background: rgba(0,0,0,0.4); border-radius: 4px; }
   .result-text::-webkit-scrollbar-thumb { background: var(--grad-pink); border-radius: 4px; }
 
   /* ── MAIN BUTTON ── */
@@ -883,7 +855,7 @@
     color: #fff; font-size: 15.5px; font-weight: 900;
     font-family: 'Manrope', sans-serif;
     cursor: pointer; margin-bottom: 8px;
-    box-shadow: 0 14px 36px rgba(34, 211, 238, 0.5), 0 0 30px rgba(131, 56, 236, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    box-shadow: 0 14px 36px rgba(212, 175, 55, 0.5), 0 0 30px rgba(184, 148, 31, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
     transition: transform 0.18s, box-shadow 0.22s;
     letter-spacing: -0.3px;
     min-height: 64px;
@@ -900,7 +872,7 @@
   }
   @keyframes shine { 0%, 100% { left: -100%; } 50% { left: 100%; } }
   .main-btn:active { transform: scale(0.97); }
-  .main-btn:hover { box-shadow: 0 18px 44px rgba(34, 211, 238, 0.7), 0 0 40px rgba(131, 56, 236, 0.5); }
+  .main-btn:hover { box-shadow: 0 18px 44px rgba(212, 175, 55, 0.7), 0 0 40px rgba(184, 148, 31, 0.5); }
   .main-btn-sub { text-align: center; font-size: 11px; color: var(--text-3); margin-bottom: 22px; font-weight: 500; }
 
   /* ── STATS ── */
@@ -922,8 +894,8 @@
   }
   .stat:hover {
     transform: translateY(-3px);
-    border-color: rgba(167, 139, 250, 0.55);
-    box-shadow: 0 12px 26px rgba(167, 139, 250, 0.28);
+    border-color: rgba(212, 175, 55, 0.55);
+    box-shadow: 0 12px 26px rgba(212, 175, 55, 0.28);
   }
   .stat-num {
     position: relative;
@@ -965,17 +937,17 @@
     pointer-events: none;
   }
   .toast {
-    background: rgba(255, 255, 255, 0.95);
+    background: rgba(20, 18, 14, 0.95);
     backdrop-filter: blur(28px) saturate(180%);
     -webkit-backdrop-filter: blur(28px) saturate(180%);
-    border: 1px solid rgba(167, 139, 250, 0.5);
+    border: 1px solid rgba(212, 175, 55, 0.5);
     border-radius: 16px;
     padding: 14px 16px;
     color: var(--text);
     font-size: 13.5px;
     font-weight: 600;
     line-height: 1.5;
-    box-shadow: 0 16px 44px rgba(167, 139, 250, 0.35), inset 0 1px 0 rgba(20, 10, 50, 0.85);
+    box-shadow: 0 16px 44px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(212, 175, 55, 0.15);
     margin-bottom: 8px;
     display: flex; align-items: flex-start; gap: 12px;
     pointer-events: auto;
@@ -988,9 +960,9 @@
   @keyframes toast-out { to { transform: translateY(-20px); opacity: 0; } }
   .toast-icon { font-size: 20px; flex-shrink: 0; line-height: 1; padding-top: 1px; }
   .toast-body { flex: 1; min-width: 0; }
-  .toast.success { border-color: rgba(167, 139, 250, 0.7); box-shadow: 0 16px 44px rgba(167, 139, 250, 0.45); }
+  .toast.success { border-color: rgba(212, 175, 55, 0.7); box-shadow: 0 16px 44px rgba(212, 175, 55, 0.45); }
   .toast.error   { border-color: rgba(217, 70, 239, 0.55); box-shadow: 0 16px 44px rgba(217, 70, 239, 0.3); }
-  .toast.info    { border-color: rgba(167, 139, 250, 0.55); }
+  .toast.info    { border-color: rgba(212, 175, 55, 0.55); }
 
   .confetti {
     position: fixed; top: -10px; pointer-events: none;
@@ -1006,7 +978,7 @@
   /* ── PDF -> Ovoz alohida kart ── */
   .pdf-card {
     position: relative;
-    background: linear-gradient(135deg, rgba(45, 27, 94, 0.65), rgba(20, 10, 50, 0.85));
+    background: linear-gradient(135deg, rgba(20, 18, 14, 0.65), rgba(10, 9, 6, 0.85));
     backdrop-filter: blur(22px);
     -webkit-backdrop-filter: blur(22px);
     border: 1px solid var(--border-2);
@@ -1024,13 +996,13 @@
   }
   .pdf-card:hover {
     transform: translateY(-3px);
-    border-color: rgba(0, 245, 255, 0.55);
-    box-shadow: 0 18px 44px rgba(255, 0, 110, 0.35), 0 0 30px rgba(0, 245, 255, 0.25);
+    border-color: rgba(212, 175, 55, 0.55);
+    box-shadow: 0 18px 44px rgba(240, 216, 120, 0.35), 0 0 30px rgba(212, 175, 55, 0.25);
   }
   .pdf-card:active { transform: scale(0.98); }
   .pdf-card.selected {
     border-color: var(--pink-500);
-    box-shadow: 0 18px 44px rgba(34, 211, 238, 0.4), 0 0 0 1px var(--pink-500) inset;
+    box-shadow: 0 18px 44px rgba(212, 175, 55, 0.4), 0 0 0 1px var(--pink-500) inset;
   }
   .pdf-icon {
     flex-shrink: 0;
@@ -1038,7 +1010,7 @@
     border-radius: 18px;
     background: var(--grad-pink);
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 10px 22px rgba(34, 211, 238, 0.4), inset 0 1px 0 rgba(255,255,255,0.55);
+    box-shadow: 0 10px 22px rgba(212, 175, 55, 0.4), inset 0 1px 0 rgba(255,255,255,0.55);
     animation: float-icon 3.4s ease-in-out infinite;
   }
   .pdf-icon svg { width: 28px; height: 28px; stroke: #fff; }
@@ -1069,7 +1041,7 @@
     background-image:
       url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 220 70'><path d='M0,40 Q60,18 120,32 T220,18' stroke='%237c4a3a' stroke-width='2' fill='none' opacity='0.7' stroke-linecap='round'/><path d='M40,33 Q44,24 52,26' stroke='%237c4a3a' stroke-width='1.2' fill='none' opacity='0.55'/><path d='M130,28 Q136,20 144,22' stroke='%237c4a3a' stroke-width='1.2' fill='none' opacity='0.55'/><circle cx='10' cy='42' r='6' fill='%23FFCCE0' stroke='%23ec4899' stroke-width='0.5' opacity='0.85'/><circle cx='10' cy='42' r='1.5' fill='%23fbbf24'/><circle cx='52' cy='28' r='7' fill='%23FFE4EC' stroke='%23ec4899' stroke-width='0.5' opacity='0.85'/><circle cx='52' cy='28' r='1.6' fill='%23fbbf24'/><circle cx='90' cy='34' r='8' fill='%23f9a8d4' stroke='%23ec4899' stroke-width='0.5' opacity='0.85'/><circle cx='90' cy='34' r='1.8' fill='%23fbbf24'/><circle cx='148' cy='24' r='6' fill='%23FFCCE0' stroke='%23ec4899' stroke-width='0.5' opacity='0.85'/><circle cx='148' cy='24' r='1.5' fill='%23fbbf24'/><circle cx='190' cy='20' r='7' fill='%23FFE4EC' stroke='%23ec4899' stroke-width='0.5' opacity='0.85'/><circle cx='190' cy='20' r='1.6' fill='%23fbbf24'/></svg>");
     background-size: 220px 70px; background-repeat: no-repeat;
-    filter: drop-shadow(0 2px 8px rgba(167, 139, 250, 0.4));
+    filter: drop-shadow(0 2px 8px rgba(212, 175, 55, 0.4));
   }
   .side-branch::before { top: 8%; }
   .side-branch::after  { top: 56%; transform: scaleY(-1); }
@@ -1081,9 +1053,9 @@
     pointer-events: none;
     z-index: 9990;
     opacity: 0.9;
-    background: radial-gradient(ellipse 50% 100% at 50% 0%, #a78bfa 0%, #22d3ee 60%, #a78bfa 100%);
+    background: radial-gradient(ellipse 50% 100% at 50% 0%, #f0d878 0%, #d4af37 60%, #f0d878 100%);
     border-radius: 100% 0 60% 0;
-    filter: drop-shadow(0 1px 4px rgba(34, 211, 238, 0.6));
+    filter: drop-shadow(0 1px 4px rgba(212, 175, 55, 0.6));
     animation: trail-fade 1.2s ease-out forwards;
   }
   @keyframes trail-fade {
@@ -1097,9 +1069,9 @@
     width: 16px; height: 16px;
     pointer-events: none;
     z-index: 9991;
-    background: radial-gradient(ellipse 50% 100% at 50% 0%, #a78bfa 0%, #22d3ee 60%, #06b6d4 100%);
+    background: radial-gradient(ellipse 50% 100% at 50% 0%, #f0d878 0%, #d4af37 60%, #b8941f 100%);
     border-radius: 100% 0 60% 0;
-    filter: drop-shadow(0 2px 6px rgba(34, 211, 238, 0.7));
+    filter: drop-shadow(0 2px 6px rgba(212, 175, 55, 0.7));
     animation: burst 0.9s cubic-bezier(.16,1,.3,1) forwards;
   }
   @keyframes burst {
@@ -1122,7 +1094,7 @@
     position: absolute;
     pointer-events: none;
     z-index: 4;
-    filter: drop-shadow(0 2px 6px rgba(34, 211, 238, 0.45));
+    filter: drop-shadow(0 2px 6px rgba(212, 175, 55, 0.45));
     animation: flower-sway 4s ease-in-out infinite;
   }
   .deco-flower.sm { width: 26px; height: 26px; }
@@ -1173,7 +1145,7 @@
   .flower-divider::before,
   .flower-divider::after {
     content: ''; flex: 1; height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(34, 211, 238, 0.3), transparent);
+    background: linear-gradient(90deg, transparent, rgba(212, 175, 55, 0.3), transparent);
   }
   .flower-divider svg { width: 26px; height: 26px; animation: flower-spin 12s linear infinite; }
 
@@ -1223,9 +1195,9 @@
     <symbol id="sakura" viewBox="0 0 40 40">
       <defs>
         <radialGradient id="sgrad" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stop-color="#a78bfa"/>
-          <stop offset="60%" stop-color="#22d3ee"/>
-          <stop offset="100%" stop-color="#a78bfa"/>
+          <stop offset="0%" stop-color="#f0d878"/>
+          <stop offset="60%" stop-color="#d4af37"/>
+          <stop offset="100%" stop-color="#f0d878"/>
         </radialGradient>
       </defs>
       <g transform="translate(20 20)">
@@ -1236,7 +1208,7 @@
           <path d="M0,-12 C-3,-9 -4,-5 0,-2 C4,-5 3,-9 0,-12 Z" transform="rotate(216)"/>
           <path d="M0,-12 C-3,-9 -4,-5 0,-2 C4,-5 3,-9 0,-12 Z" transform="rotate(288)"/>
         </g>
-        <circle cx="0" cy="0" r="2.5" fill="#22d3ee"/>
+        <circle cx="0" cy="0" r="2.5" fill="#d4af37"/>
         <g fill="#f59e0b" opacity="0.7">
           <circle cx="0" cy="-4.5" r="0.8"/>
           <circle cx="4.3" cy="-1.4" r="0.8"/>
@@ -1289,40 +1261,40 @@
     <div class="hero-content">
       <div class="hero-badge" data-i18n="hero_badge">Artificial Intelligence Solutions</div>
       <div class="hero-title" data-i18n="hero_title" data-i18n-html>Istalgan <em>tildan</em><br>istalgan <em>tilga</em></div>
-      <div class="hero-desc" data-i18n="hero_desc">📄 PDF • 🔊 Audio • 📝 Matn<br>Istalgan tildan istalgan tilga PDF va PDFdan istalgan tilga audio — bir bosishda.</div>
+      <div class="hero-desc" data-i18n="hero_desc" data-i18n-html>📄 PDF • 🔊 Audio • 📝 Matn<br>Istalgan tildan istalgan tilga PDF va PDFdan istalgan tilga audio — bir bosishda.</div>
     </div>
   </div>
 
   <!-- === [TARJIMA WEBAPP] MANBA + HOSIL til tanlash === -->
   <div class="reveal" id="translateLangPicker">
-    <div style="position: relative; background: linear-gradient(135deg, rgba(45, 27, 94, 0.82), rgba(20, 10, 50, 0.94)); backdrop-filter: blur(22px); border: 1.5px solid rgba(0, 245, 255, 0.45); border-radius: 22px; padding: 20px; margin-bottom: 22px; box-shadow: 0 8px 32px rgba(131, 56, 236, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); overflow: hidden;">
-      <div style="position: absolute; top: -50%; right: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(255, 0, 110, 0.4), transparent 70%); filter: blur(30px); pointer-events: none;"></div>
-      <div style="position: absolute; bottom: -50%; left: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(0, 245, 255, 0.4), transparent 70%); filter: blur(30px); pointer-events: none;"></div>
+    <div style="position: relative; background: linear-gradient(135deg, rgba(20, 18, 14, 0.85), rgba(10, 9, 6, 0.95)); backdrop-filter: blur(22px); border: 1px solid rgba(212, 175, 55, 0.35); border-radius: 22px; padding: 22px; margin-bottom: 22px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(212, 175, 55, 0.12); overflow: hidden;">
+      <div style="position: absolute; top: -50%; right: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(212, 175, 55, 0.18), transparent 70%); filter: blur(40px); pointer-events: none;"></div>
+      <div style="position: absolute; bottom: -50%; left: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(184, 148, 31, 0.14), transparent 70%); filter: blur(40px); pointer-events: none;"></div>
       <div style="position: relative; z-index: 2;">
-        <div style="font-family:'Playfair Display',serif; font-size: 18px; font-weight: 800; color: #ffffff; margin-bottom: 4px; text-align: center; text-shadow: 0 2px 8px rgba(0, 245, 255, 0.5);">🌐 Tarjima yo'nalishi</div>
-        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.7); text-align: center; margin-bottom: 14px; font-weight: 500;">Manba va hosil tilni tanlang</div>
+        <div style="font-family:'Playfair Display',serif; font-size: 19px; font-weight: 800; background: linear-gradient(135deg, #f0d878 0%, #d4af37 60%, #b8941f 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 6px; text-align: center; letter-spacing: 0.3px;">Istalgan audio / video → matn va PDF</div>
+        <div style="font-size: 11px; color: rgba(245, 240, 224, 0.55); text-align: center; margin-bottom: 18px; font-weight: 500; letter-spacing: 0.5px;">Quyida fayl tilini va natija tilini tanlang</div>
 
         <!-- MANBA -->
-        <div style="font-size: 10px; font-weight: 800; color: rgba(0, 245, 255, 0.9); margin-bottom: 6px; letter-spacing: 1px;">📡 MANBA TIL</div>
-        <button onclick="selectTranslateLang('auto')" id="tlangAuto" class="tlang-btn" style="width: 100%; padding: 12px; border-radius: 12px; background: linear-gradient(135deg, #00f5ff, #06b6d4, #8338ec); border: 2px solid #00f5ff; color: #fff; font-weight: 900; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 8px; box-shadow: 0 0 18px rgba(0, 245, 255, 0.55);">🌐 Avto aniqlash</button>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 14px;">
-          <button onclick="selectTranslateLang('uz')" id="tlangUz" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇺🇿 O'zbek</button>
-          <button onclick="selectTranslateLang('ru')" id="tlangRu" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-          <button onclick="selectTranslateLang('en')" id="tlangEn" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-          <button onclick="selectTranslateLang('ar')" id="tlangAr" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
+        <div style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; letter-spacing: 1.5px; text-transform: uppercase;">Fayl tili (audio/video qaysi tilda?)</div>
+        <button onclick="selectTranslateLang('auto')" id="tlangAuto" class="tlang-btn" style="width: 100%; padding: 13px; border-radius: 12px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 8px; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25); letter-spacing: 0.3px;">Avto aniqlash</button>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 16px;">
+          <button onclick="selectTranslateLang('uz')" id="tlangUz" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇺🇿 O'zbek</button>
+          <button onclick="selectTranslateLang('ru')" id="tlangRu" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
+          <button onclick="selectTranslateLang('en')" id="tlangEn" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
+          <button onclick="selectTranslateLang('ar')" id="tlangAr" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
         </div>
 
         <!-- HOSIL TIL -->
-        <div style="font-size: 10px; font-weight: 800; color: rgba(255, 0, 110, 0.95); margin-bottom: 6px; margin-top: 14px; letter-spacing: 1px;">🎯 HOSIL TIL</div>
-        <button onclick="selectTargetLang('auto')" id="ttgtAuto" class="ttgt-btn" style="width: 100%; padding: 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.85); font-weight: 800; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 6px;">🌐 Avto — manba tilida qoldirish (tarjima qilmaslik)</button>
+        <div style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; margin-top: 14px; letter-spacing: 1.5px; text-transform: uppercase;">Natija tili (qaysi tilda olasiz?)</div>
+        <button onclick="selectTargetLang('auto')" id="ttgtAuto" class="ttgt-btn" style="width: 100%; padding: 13px; border-radius: 12px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.30); color: rgba(245, 240, 224, 0.85); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 6px;">Avto — manba tilida qoldirish</button>
         <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
-          <button onclick="selectTargetLang('uz')" id="ttgtUz" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #ff006e, #8338ec); border: 2px solid #ff006e; color: #fff; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 0 18px rgba(255, 0, 110, 0.55);">🇺🇿 O'zbek</button>
-          <button onclick="selectTargetLang('ru')" id="ttgtRu" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-          <button onclick="selectTargetLang('en')" id="ttgtEn" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-          <button onclick="selectTargetLang('ar')" id="ttgtAr" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
+          <button onclick="selectTargetLang('uz')" id="ttgtUz" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);">🇺🇿 O'zbek</button>
+          <button onclick="selectTargetLang('ru')" id="ttgtRu" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
+          <button onclick="selectTargetLang('en')" id="ttgtEn" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
+          <button onclick="selectTargetLang('ar')" id="ttgtAr" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
         </div>
 
-        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.55); text-align: center; margin-top: 10px;">💡 Manbadan hosilga: matn + PDF + audio (tanlangan tilda)</div>
+        <div style="font-size: 11px; color: rgba(245, 240, 224, 0.45); text-align: center; margin-top: 14px; letter-spacing: 0.3px;">Natija: matn + PDF + audio (tanlangan tilda)</div>
         <div id="tlangSelected" style="display:none;"></div>
       </div>
     </div>
@@ -1387,8 +1359,8 @@
       <svg class="deco-flower sm bl faded" style="animation-delay:1.1s"><use href="#sakura"/></svg>
       <div class="pdf-icon"><svg><use href="#i-pdf"/></svg></div>
       <div class="pdf-info">
-        <div class="pdf-title" data-i18n="pdf_title">📄 PDF faylni ovozga aylantirish</div>
-        <div class="pdf-sub" data-i18n="pdf_sub">PDF hujjatni yuklang — biz uni ovozli MP3 ga aylantiramiz. Yo'lda yoki dam olishda tinglash uchun qulay.</div>
+        <div class="pdf-title" data-i18n="pdf_title">📄 Istalgan PDF → audio MP3 (istalgan tilda)</div>
+        <div class="pdf-sub" data-i18n="pdf_sub">PDF hujjatni yuklang — biz uni tanlagan tilingizda ovozli MP3 qilib qaytaramiz. Yo'lda yoki dam olishda tinglash uchun qulay.</div>
         <span class="card-pill pill-blossom" data-i18n="pdf_pill">Yangi xizmat</span>
       </div>
     </div>
@@ -1482,13 +1454,13 @@
     mainBtnMode = mode;
     try {
       if (mode === 'recording') {
-        tg.MainButton.setParams({ text: t('mb_stop'), color: '#dc2626', text_color: '#ffffff', is_visible: true, is_active: true });
+        tg.MainButton.setParams({ text: t('mb_stop'), color: '#1a1a1a', text_color: '#d4af37', is_visible: true, is_active: true });
       } else if (mode === 'send') {
-        tg.MainButton.setParams({ text: t('mb_send'), color: '#0891b2', text_color: '#ffffff', is_visible: true, is_active: true });
+        tg.MainButton.setParams({ text: t('mb_send'), color: '#d4af37', text_color: '#0a0a0a', is_visible: true, is_active: true });
       } else if (mode === 'url') {
-        tg.MainButton.setParams({ text: t('mb_url'), color: '#0891b2', text_color: '#ffffff', is_visible: true, is_active: true });
+        tg.MainButton.setParams({ text: t('mb_url'), color: '#d4af37', text_color: '#0a0a0a', is_visible: true, is_active: true });
       } else {
-        tg.MainButton.setParams({ text: t('mb_mic'), color: '#06b6d4', text_color: '#ffffff', is_visible: true, is_active: true });
+        tg.MainButton.setParams({ text: t('mb_mic'), color: '#d4af37', text_color: '#0a0a0a', is_visible: true, is_active: true });
       }
     } catch (e) {}
   }
@@ -1527,7 +1499,7 @@
   }
 
   function fireConfetti() {
-    const colors = ['#22d3ee','#a78bfa','#a78bfa','#06b6d4','#a855f7','#7c3aed'];
+    const colors = ['#d4af37','#f0d878','#b8941f','#d4af37','#8a6f15','#e8c875'];
     for (let i = 0; i < 60; i++) {
       const c = document.createElement('div');
       c.className = 'confetti';
@@ -1725,8 +1697,8 @@
       card2_title: '🎬 Video fayl',     card2_sub: 'MP4, MKV, dumaloq video',      card2_pill: '🎬 Video',
       card3_title: '🔗 YouTube havola', card3_sub: 'YouTube, TikTok, Instagram',  card3_pill: '🔗 Link',
       card4_title: '🎤 Mikrofondan',    card4_sub: 'Hozir ovoz yozib yuborish',    card4_pill: '🎤 Yozish',
-      pdf_title: '📄 PDF faylni ovozga aylantirish',
-      pdf_sub: "PDF hujjatni yuklang — biz uni ovozli MP3 ga aylantiramiz. Yo'lda yoki dam olishda tinglash uchun qulay.",
+      pdf_title: '📄 Istalgan PDF → audio MP3 (istalgan tilda)',
+      pdf_sub: "PDF hujjatni yuklang — biz uni tanlagan tilingizda ovozli MP3 qilib qaytaramiz. Yo'lda yoki dam olishda tinglash uchun qulay.",
       pdf_pill: 'Yangi xizmat',
       upload_title: 'Faylni bu yerga torting yoki tanlang',
       upload_hint: 'Drag & Drop or Click to Upload',
@@ -1766,8 +1738,8 @@
       card2_title: '🎬 Отправить видео',  card2_sub: 'MP4, MKV, кружок → в текст', card2_pill: '📁 Файл',
       card3_title: '🔗 Отправить ссылку', card3_sub: 'YouTube, TikTok, Instagram', card3_pill: '🌐 Ссылка',
       card4_title: '🎤 Записать сейчас',  card4_sub: 'Голос с микрофона → в текст', card4_pill: '🎙 Микрофон',
-      pdf_title: '📄 Преобразовать PDF в аудио',
-      pdf_sub: 'Загрузите PDF — мы превратим его в аудио MP3. Удобно слушать в дороге или на отдыхе.',
+      pdf_title: '📄 Любой PDF → аудио MP3 (на любом языке)',
+      pdf_sub: 'Загрузите PDF — мы превратим его в аудио MP3 на выбранном вами языке. Удобно слушать в дороге или на отдыхе.',
       pdf_pill: 'Новый сервис',
       upload_title: 'Перетащите файл сюда или выберите',
       upload_hint: 'Drag & Drop или нажмите для загрузки',
@@ -1805,8 +1777,8 @@
       card2_title: '🎬 Send video',  card2_sub: 'MP4, MKV, round video → text', card2_pill: '📁 File',
       card3_title: '🔗 Send link',   card3_sub: 'YouTube, TikTok, Instagram', card3_pill: '🌐 Link',
       card4_title: '🎤 Record now',  card4_sub: 'Voice from microphone → text', card4_pill: '🎙 Mic',
-      pdf_title: '📄 Convert PDF to audio',
-      pdf_sub: 'Upload a PDF — we will convert it into an audio MP3. Convenient for listening on the go or while resting.',
+      pdf_title: '📄 Any PDF → audio MP3 (in any language)',
+      pdf_sub: 'Upload a PDF — we will convert it into an audio MP3 in your chosen language. Convenient for listening on the go or while resting.',
       pdf_pill: 'New service',
       upload_title: 'Drag a file here or choose one',
       upload_hint: 'Drag & Drop or Click to Upload',
@@ -1913,8 +1885,8 @@
           const x = i * (barW + gap);
           const y = (h - bh) / 2;
           const grad = ctx.createLinearGradient(0, y, 0, y + bh);
-          grad.addColorStop(0, '#a78bfa');
-          grad.addColorStop(1, '#06b6d4');
+          grad.addColorStop(0, '#f0d878');
+          grad.addColorStop(1, '#d4af37');
           ctx.fillStyle = grad;
           ctx.beginPath();
           if (ctx.roundRect) ctx.roundRect(x, y, barW, bh, barW / 2);
@@ -2023,11 +1995,11 @@
   let targetLang = 'uz';     // TARGET hosil til (default O'zbek)
   // Default: hammasi kulrang. Tanlanganda — vivid gradient + glow.
   const TLANG_ACTIVE = {
-    auto: { color: '#a78bfa', gradient: 'linear-gradient(135deg, #ff006e, #8338ec, #00f5ff, #ffbe0b)' },
-    ru: { color: '#00f5ff', gradient: 'linear-gradient(135deg, #00f5ff, #06b6d4, #8338ec)' },
-    en: { color: '#ff006e', gradient: 'linear-gradient(135deg, #ff006e, #c026d3, #8338ec)' },
-    ar: { color: '#ffbe0b', gradient: 'linear-gradient(135deg, #ffbe0b, #fb5607, #ff006e)' },
-    uz: { color: '#00f5ff', gradient: 'linear-gradient(135deg, #ff006e, #8338ec)' }
+    auto: { color: '#d4af37', gradient: 'linear-gradient(135deg, #f0d878, #d4af37, #b8941f)' },
+    ru:   { color: '#d4af37', gradient: 'linear-gradient(135deg, #d4af37, #b8941f)' },
+    en:   { color: '#d4af37', gradient: 'linear-gradient(135deg, #d4af37, #b8941f)' },
+    ar:   { color: '#d4af37', gradient: 'linear-gradient(135deg, #d4af37, #b8941f)' },
+    uz:   { color: '#d4af37', gradient: 'linear-gradient(135deg, #d4af37, #b8941f)' }
   };
 
   // === [TARJIMA] Target til tanlash (Avto/UZ/RU/EN/AR) ===
@@ -2040,16 +2012,16 @@
         const a = TLANG_ACTIVE[code] || TLANG_ACTIVE.uz;
         btn.style.background = a.gradient;
         btn.style.borderColor = a.color;
-        btn.style.borderWidth = '2px';
-        btn.style.color = '#ffffff';
-        btn.style.boxShadow = `0 0 18px ${a.color}, 0 4px 14px rgba(0, 0, 0, 0.4)`;
+        btn.style.borderWidth = '1px';
+        btn.style.color = '#0a0a0a';
+        btn.style.boxShadow = `0 6px 18px rgba(212, 175, 55, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25)`;
         btn.style.fontWeight = '900';
         btn.style.transform = 'scale(1.04)';
       } else {
-        btn.style.background = 'rgba(255, 255, 255, 0.06)';
-        btn.style.borderColor = 'rgba(255, 255, 255, 0.18)';
-        btn.style.borderWidth = '1.5px';
-        btn.style.color = 'rgba(255, 255, 255, 0.7)';
+        btn.style.background = 'rgba(245, 240, 224, 0.04)';
+        btn.style.borderColor = 'rgba(212, 175, 55, 0.20)';
+        btn.style.borderWidth = '1px';
+        btn.style.color = 'rgba(245, 240, 224, 0.72)';
         btn.style.boxShadow = 'none';
         btn.style.fontWeight = '700';
         btn.style.transform = 'scale(1)';
@@ -2070,7 +2042,7 @@
     if (!banner) {
       banner = document.createElement('div');
       banner.id = 'translationBanner';
-      banner.style.cssText = 'position: sticky; top: 0; z-index: 100; margin: 0 -16px 12px; padding: 10px 16px; background: linear-gradient(90deg, rgba(255, 0, 110, 0.9), rgba(131, 56, 236, 0.9), rgba(0, 245, 255, 0.9)); color: #fff; font-weight: 800; font-size: 13px; text-align: center; box-shadow: 0 4px 14px rgba(255, 0, 110, 0.35); cursor: pointer;';
+      banner.style.cssText = 'position: sticky; top: 0; z-index: 100; margin: 0 -16px 12px; padding: 10px 16px; background: linear-gradient(90deg, #d4af37, #b8941f, #d4af37); color: #0a0a0a; font-weight: 800; font-size: 13px; text-align: center; box-shadow: 0 4px 14px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25); cursor: pointer;';
       banner.onclick = () => {
         translateLang = null;
         updateTranslationBanner();
@@ -2078,9 +2050,9 @@
         ['ru', 'en', 'ar'].forEach(code => {
           const btn = document.getElementById('tlang' + code.charAt(0).toUpperCase() + code.slice(1));
           if (btn) {
-            btn.style.background = 'rgba(255, 255, 255, 0.06)';
-            btn.style.borderColor = 'rgba(255, 255, 255, 0.18)';
-            btn.style.color = 'rgba(255, 255, 255, 0.65)';
+            btn.style.background = 'rgba(245, 240, 224, 0.04)';
+            btn.style.borderColor = 'rgba(212, 175, 55, 0.20)';
+            btn.style.color = 'rgba(245, 240, 224, 0.72)';
             btn.style.boxShadow = 'none';
             btn.style.transform = 'scale(1)';
             btn.style.fontWeight = '700';
@@ -2107,20 +2079,20 @@
       if (code === lang) {
         const a = TLANG_ACTIVE[code];
         btn.style.background = a.gradient;
-        btn.style.backgroundSize = '200% 200%';
+        btn.style.backgroundSize = '';
         btn.style.borderColor = a.color;
-        btn.style.borderWidth = '2px';
-        btn.style.color = '#ffffff';
-        btn.style.boxShadow = `0 0 24px ${a.color}, 0 0 48px ${a.color}66, 0 6px 20px rgba(0, 0, 0, 0.5)`;
+        btn.style.borderWidth = '1px';
+        btn.style.color = '#0a0a0a';
+        btn.style.boxShadow = `0 6px 18px rgba(212, 175, 55, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25)`;
         btn.style.transform = 'scale(1.05)';
         btn.style.fontWeight = '900';
-        btn.style.textShadow = '0 1px 2px rgba(0, 0, 0, 0.5)';
+        btn.style.textShadow = 'none';
       } else {
-        btn.style.background = 'rgba(255, 255, 255, 0.06)';
+        btn.style.background = 'rgba(245, 240, 224, 0.04)';
         btn.style.backgroundSize = '';
-        btn.style.borderColor = (code === 'auto') ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.18)';
-        btn.style.borderWidth = '1.5px';
-        btn.style.color = (code === 'auto') ? 'rgba(255, 255, 255, 0.75)' : 'rgba(255, 255, 255, 0.65)';
+        btn.style.borderColor = (code === 'auto') ? 'rgba(212, 175, 55, 0.30)' : 'rgba(212, 175, 55, 0.20)';
+        btn.style.borderWidth = '1px';
+        btn.style.color = (code === 'auto') ? 'rgba(245, 240, 224, 0.85)' : 'rgba(245, 240, 224, 0.72)';
         btn.style.boxShadow = 'none';
         btn.style.transform = 'scale(1)';
         btn.style.fontWeight = (code === 'auto') ? '800' : '700';

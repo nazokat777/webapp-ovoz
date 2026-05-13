@@ -1492,13 +1492,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Menu button set xato: {e}")
 
     await update.message.reply_text(
-        "🌸 Assalomu alaykum, *{}*!\n\n"
-        "Men audio va videolarni matn hamda PDF formatiga aylantiruvchi aqlli botman. "
-        "Darslaringizni yanada osonlashtirish uchun tartibli, chiroyli va tushunarli "
-        "konspektlar tayyorlab beraman.\n\n"
-        "🎧 Shuningdek, PDF hujjatlarni ovozli audio formatga aylantirib, "
-        "ularni istalgan joyda qulay tinglashingizga yordam beraman.\n\n"
+        "🌸 Assalomu alaykum, 👑*{}*👑!\n\n"
+        "Men audio va videolarni matn hamda PDF formatiga aylantiruvchi va "
+        "istalgan tildan istalgan tilga yoki o'zbek tiliga tarjima qilib PDF qilib "
+        "bera oladigan aqlli botman. Men bilan darslaringizni yanada oson va "
+        "tartibli qiling.\n\n"
+        "🎧 Shuningdek, PDF hujjatlarni istalgan tilda ovozli audio formatga "
+        "aylantirib, ularni istalgan joyda qulay tinglashingizga yordam beraman.\n\n"
         "📌 *Yuborishingiz mumkin:*\n"
+        "🌐 Istalgan tildagi:\n"
         "• 🎤 Ovozli xabar / audio fayl\n"
         "• 🎬 Video / dumaloq video\n"
         "• 🔗 YouTube / TikTok / Instagram havolasi\n"
@@ -3682,11 +3684,11 @@ def main():
             try:
                 await application.bot.set_my_description(
                     "🌸 Assalomu alaykum!\n"
-                    "Men audio va videolarni matn hamda PDF formatiga aylantiruvchi aqlli botman. "
-                    "Darslaringizni yanada osonlashtirish uchun tartibli, chiroyli va tushunarli "
-                    "konspektlar tayyorlab beraman.\n\n"
-                    "🎧 Shuningdek, PDF hujjatlarni ovozli audio formatga aylantirib, "
-                    "ularni istalgan joyda qulay tinglashingizga yordam beraman."
+                    "Men audio va videolarni matn hamda PDF formatiga aylantiruvchi va "
+                    "istalgan tildan istalgan tilga tarjima qilib PDF qilib bera oladigan aqlli botman. "
+                    "Men bilan darslaringizni yanada oson va tartibli qiling.\n\n"
+                    "🎧 Shuningdek, PDF hujjatlarni istalgan tilda ovozli audio formatga "
+                    "aylantirib, ularni istalgan joyda qulay tinglashingizga yordam beraman."
                 )
             except Exception as e:
                 logging.warning(f"set_my_description xato: {e}")
