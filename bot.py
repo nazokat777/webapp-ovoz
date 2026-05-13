@@ -969,6 +969,29 @@ def save_base64_audio(data, suffix='.webm'):
         return tmp.name
 
 
+# === [WHISPER UNIFIED STT] Barcha audio→matn endi Whisper orqali =================
+# Muxlisa o'rniga ham, Google STT o'rniga ham Whisper ishlatiladi.
+# Sabab: Whisper arzonroq ($0.006/daq), barcha tillarni qo'llab-quvvatlaydi,
+# va sifati yuqori. Bitta model bilan ish soddaroq.
+
+def transcribe_unified(file_path, progress_cb=None, language="uz"):
+    """Audio/video'ni matnga aylantirish — Whisper (OpenAI) orqali.
+    Eski transcribe() ning o'rnini bosadi (Muxlisa va Google'ga muhtoj emas).
+    Katta fayllar avtomatik bo'laklanadi (transcribe_whisper ichida)."""
+    if not OPENAI_API_KEY:
+        # Fallback — agar Whisper sozlanmagan bo'lsa, eski transcribe (Muxlisa/Google) ishlatamiz
+        logging.warning("OPENAI_API_KEY yo'q, Muxlisa/Google fallback ishlatiladi")
+        return transcribe(file_path, progress_cb, language)
+    # Whisper 'uz', 'ru', 'en' va boshqa tillarni qo'llab-quvvatlaydi
+    try:
+        return transcribe_whisper(file_path, language, None)
+    except Exception as e:
+        logging.error(f"Whisper xato, Muxlisa fallback: {e}")
+        # Agar Whisper xato bersa — eski transcribe ishlatamiz (Muxlisa fallback)
+        return transcribe(file_path, progress_cb, language)
+# === [/WHISPER UNIFIED STT] =====================================================
+
+
 # === [TARJIMA MODULI — API HELPERS] =============================================
 # Whisper: max 25 MB per request. 4 soatlik audio uchun bo'laklash kerak.
 # Claude: max 8192 output tokens. 30K+ so'zlar uchun bo'laklash kerak.
@@ -1253,7 +1276,7 @@ async def process_local_audio(update, context, file_path, duration=0, language="
 
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
-        text = await asyncio.to_thread(transcribe, file_path, cb, language)
+        text = await asyncio.to_thread(transcribe_unified, file_path, cb, language)
         await send_result(update, msg, text)
         if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
@@ -1320,7 +1343,7 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
 
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
-        text = await asyncio.to_thread(transcribe, tmp_path, cb, language)
+        text = await asyncio.to_thread(transcribe_unified, tmp_path, cb, language)
         await send_result(update, msg, text)
         if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
@@ -1397,7 +1420,7 @@ async def process_url(update, context, url, language="uz"):
 
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
-        text = await asyncio.to_thread(transcribe, audio_path, cb, language)
+        text = await asyncio.to_thread(transcribe_unified, audio_path, cb, language)
         await send_result(update, msg, text)
         if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
@@ -3136,7 +3159,7 @@ def process_audio_for_user(user_id, file_path, language="uz"):
                 return
 
         telegram_send_message(user_id, "🎙 Web ilova yuborgan fayl tanilmoqda...")
-        text = transcribe(file_path, language=language)
+        text = transcribe_unified(file_path, language=language)
         if text and text.strip() != "Matn aniqlanmadi.":
             _send_text_and_pdf(user_id, text)
         else:
@@ -3287,7 +3310,7 @@ def process_url_for_user(user_id, url, language="uz"):
                 return
 
         telegram_send_message(user_id, "✅ Yuklanidi! 🎙 Matn tanilmoqda...")
-        text = transcribe(audio_path, language=language)
+        text = transcribe_unified(audio_path, language=language)
         if text and text.strip() != "Matn aniqlanmadi.":
             _send_text_and_pdf(user_id, text)
         else:
