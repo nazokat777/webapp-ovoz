@@ -1712,6 +1712,58 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
+async def revoke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: /revoke <user_id> — foydalanuvchining tarifini bekor qilish.
+    Foydalanuvchi Bepul tarifga qaytariladi (3 daqiqa). Test uchun bergan tariflarni qaytarish uchun."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    args = (update.message.text or "").split()
+    if len(args) < 2:
+        await update.message.reply_text(
+            "*Foydalanish:*\n"
+            "`/revoke <user_id>`\n\n"
+            "Misol: `/revoke 629686772`\n\n"
+            "Foydalanuvchi 🌸 Bepul tarifga qaytariladi va daqiqalari 0 ga tiklanadi.",
+            parse_mode="Markdown"
+        )
+        return
+    try:
+        target_id = int(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ user_id raqam bo'lishi kerak.")
+        return
+    old_tariff = TARIFFS.get(get_user_tariff(target_id), TARIFFS["free"])
+    label = _user_label(target_id)
+    safe_label = label.replace("_", "\\_").replace("*", "\\*")
+    # Bepul tarifga qaytarish + daqiqalarni tiklash
+    user_tariffs[target_id] = "free"
+    user_uzbek_usage[target_id] = 0
+    _save_user_data()
+    await update.message.reply_text(
+        f"✅ *Tarif bekor qilindi*\n\n"
+        f"👤 Foydalanuvchi: {safe_label}\n"
+        f"🆔 ID: `{target_id}`\n"
+        f"❌ Eski tarif: {old_tariff['name']} ({old_tariff['minutes']} daq)\n"
+        f"🌸 Yangi tarif: 🌸 Bepul (3 daq)\n"
+        f"⏱ Ishlatilgan: 0 daqiqa (tiklandi)",
+        parse_mode="Markdown"
+    )
+    # Foydalanuvchiga ham xabar (ixtiyoriy — yumshoqroq)
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=(
+                "ℹ️ *Tarifingiz yangilandi*\n\n"
+                "Hozir 🌸 Bepul tarifdasiz (3 daqiqa/oy).\n"
+                "Yangi tarif olish uchun: /tariflar"
+            ),
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logging.warning(f"User'ga ({target_id}) tarif bekor qilish xabari yetmadi: {e}")
+
+
 async def user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /user <user_id> — foydalanuvchining batafsil ma'lumotini ko'rish."""
     if not is_admin(update):
@@ -3561,6 +3613,7 @@ def main():
     app.add_handler(CommandHandler("reply", reply_cmd))
     app.add_handler(CommandHandler("debug", debug_cmd))
     app.add_handler(CommandHandler("user", user_cmd))
+    app.add_handler(CommandHandler("revoke", revoke_cmd))
     app.add_handler(CallbackQueryHandler(buy_callback, pattern=r"^buy:"))
 
     # Manual to'lov rejimi handlerlari (chek + admin tasdiqlash)
