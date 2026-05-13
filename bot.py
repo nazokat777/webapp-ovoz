@@ -1237,27 +1237,87 @@ def transcribe_unified(file_path, progress_cb=None, language="uz"):
 # Whisper: max 25 MB per request. 4 soatlik audio uchun bo'laklash kerak.
 # Claude: max 8192 output tokens. 30K+ so'zlar uchun bo'laklash kerak.
 
-WHISPER_CHUNK_SECONDS = 1200   # 20 daqiqa per chunk (~14 MB @ 96kbps MP3)
-WHISPER_MAX_FILE_MB = 24        # 24 MB dan oshganda bo'laklash
+WHISPER_CHUNK_SECONDS = 600    # 10 daqiqa per chunk (xavfsiz, kichik fayllar)
+WHISPER_MAX_FILE_MB = 22        # 22 MB dan oshganda bo'laklash (25 MB Whisper chegarasi - 3 MB margin)
+WHISPER_CHUNK_BITRATE = "64k"   # 64 kbps mono — 10 daqiqa ≈ 4.8 MB
 CLAUDE_CHUNK_WORDS = 2000       # Claude'ga max 2000 so'zlik bo'lak
 
 
 def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
     """Whisper uchun katta audio'ni bo'laklarga ajratish (ffmpeg orqali).
-    20 daqiqalik MP3 @ 96kbps ≈ 14 MB. Whisper 25 MB chegarasi ichida.
-    Returns: list of chunk file paths."""
+    Strategiya:
+      1) Davomiyligi va o'lchami aniqlanadi
+      2) Agar fayl katta lekin davomiyligi qisqa bo'lsa — past bitrate'da
+         qayta kodlash bilan bitta kichik faylga aylantirib qaytariladi
+      3) Aks holda — chunk_seconds (10 daq) bo'laklarga ajratiladi
+    64 kbps mono MP3 @ 10 daq ≈ 4.8 MB — Whisper 25 MB chegarasi ichida xavfsiz.
+    """
     if not have_cmd("ffmpeg"):
+        logging.warning("ffmpeg topilmadi — bo'laklash imkonsiz")
         return [file_path]
+
     total_dur = 0
     try:
         total_dur = get_duration_or_estimate(file_path)
+    except Exception as e:
+        logging.warning(f"Davomiyligi aniqlanmadi: {e}")
+
+    try:
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
     except Exception:
-        pass
-    if total_dur <= 0 or total_dur <= chunk_seconds:
-        return [file_path]
+        size_mb = 0
+
+    logging.info(f"🔪 split_audio: size={size_mb:.1f}MB, dur={total_dur}s")
+
+    # Davomiyligi noma'lum bo'lsa, o'lchamdan taxminlaymiz (60 kbps ≈ 7.5 MB/min)
+    if total_dur <= 0 and size_mb > 0:
+        total_dur = int(size_mb * 8 * 60)  # taxminiy: yuqori bitrate uchun ko'p sek
+        logging.info(f"🔪 dur taxmin: {total_dur}s (size'dan)")
+
+    if total_dur <= 0:
+        total_dur = 3600  # 1 soat default
+
+    # === Holat 1: Kichik davomiylik + katta fayl → past bitrate'da bitta fayl ===
+    if total_dur <= chunk_seconds and size_mb > WHISPER_MAX_FILE_MB:
+        logging.info("🔪 1 ta past bitrate fayl — qayta kodlash...")
+        tmp_dir = tempfile.mkdtemp(prefix="whisper_recode_")
+        out_path = os.path.join(tmp_dir, "recoded.mp3")
+        cmd = [
+            "ffmpeg", "-y", "-v", "error",
+            "-i", file_path,
+            "-vn", "-ac", "1", "-ar", "16000",
+            "-acodec", "libmp3lame", "-b:a", WHISPER_CHUNK_BITRATE,
+            out_path
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=600)
+            if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                new_size = os.path.getsize(out_path) / (1024 * 1024)
+                logging.info(f"   ✅ qayta kodlandi: {new_size:.1f}MB")
+                # Hali ham katta bo'lsa, vaqt bo'yicha ajratamiz
+                if new_size > WHISPER_MAX_FILE_MB:
+                    logging.info("   ⚠️ hali ham katta — vaqt bo'yicha bo'laklaymiz")
+                    return _split_by_time(out_path, chunk_seconds, total_dur)
+                return [out_path]
+        except Exception as e:
+            logging.error(f"Qayta kodlash xato: {e}")
+            return [file_path]
+
+    # === Holat 2: Uzun davomiylik → vaqt bo'yicha bo'laklash ===
+    if total_dur > chunk_seconds or size_mb > WHISPER_MAX_FILE_MB:
+        return _split_by_time(file_path, chunk_seconds, total_dur)
+
+    # === Holat 3: Kichik fayl, kichik davomiylik — bo'laklash kerak emas ===
+    return [file_path]
+
+
+def _split_by_time(file_path, chunk_seconds, total_dur):
+    """Audio'ni vaqt bo'yicha bo'laklarga ajratish (past bitrate bilan)."""
     n_chunks = int(total_dur // chunk_seconds) + (1 if total_dur % chunk_seconds > 0 else 0)
+    n_chunks = max(1, n_chunks)
     chunks = []
     tmp_dir = tempfile.mkdtemp(prefix="whisper_chunks_")
+    logging.info(f"🔪 vaqt bo'yicha bo'laklash: {n_chunks} ta bo'lak")
     for i in range(n_chunks):
         start = i * chunk_seconds
         out_path = os.path.join(tmp_dir, f"chunk_{i:03d}.mp3")
@@ -1266,21 +1326,25 @@ def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
             "-ss", str(start),
             "-i", file_path,
             "-t", str(chunk_seconds),
-            "-vn", "-acodec", "libmp3lame", "-b:a", "96k",
+            "-vn", "-ac", "1", "-ar", "16000",
+            "-acodec", "libmp3lame", "-b:a", WHISPER_CHUNK_BITRATE,
             out_path
         ]
         try:
-            subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=300)
             if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
                 chunks.append(out_path)
         except Exception as e:
             logging.warning(f"Whisper chunk {i} yaratish xatosi: {e}")
-    return chunks if chunks else [file_path]
+    if not chunks:
+        logging.error("Hech qanday bo'lak yaratilmadi — original fayl qaytarildi")
+        return [file_path]
+    return chunks
 
 
 def transcribe_whisper(file_path, source_lang, progress_cb=None):
     """OpenAI Whisper API orqali audio'ni original tilida matnga aylantirish.
-    Katta fayl avtomatik bo'laklanadi (24 MB / 25 daq chegara).
+    Katta fayl avtomatik bo'laklanadi (22 MB / 10 daq chegara).
     progress_cb(current_chunk, total_chunks) — async progress callback."""
     if not OPENAI_API_KEY:
         raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing.")
@@ -1292,16 +1356,49 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
         size_mb = 0
     duration = get_duration_or_estimate(file_path)
 
-    # Bo'laklashga ehtiyoj bormi?
+    # Bo'laklashga ehtiyoj bormi? — XAVFSIZLIK: o'lcham > 22 MB BO'LSA HAR DOIM bo'laklash
     chunks_to_process = [file_path]
     chunk_dir_to_cleanup = None
-    if size_mb > WHISPER_MAX_FILE_MB or duration > (WHISPER_CHUNK_SECONDS + 60):
+    needs_split = (
+        size_mb > WHISPER_MAX_FILE_MB or
+        duration > (WHISPER_CHUNK_SECONDS + 60) or
+        size_mb > 22  # eng katta xavfsiz limit — har doim bo'laklash
+    )
+    if needs_split:
         logging.info(f"🔪 Whisper bo'laklash: size={size_mb:.1f}MB, dur={duration}s")
         chunks = split_audio_for_whisper(file_path, WHISPER_CHUNK_SECONDS)
         if chunks and chunks[0] != file_path:
             chunks_to_process = chunks
             chunk_dir_to_cleanup = os.path.dirname(chunks[0])
             logging.info(f"   → {len(chunks)} bo'lak yaratildi")
+        else:
+            # Bo'laklash xato bo'lgan, lekin fayl katta — to'g'ridan-to'g'ri qayta kodlash
+            logging.warning("   ⚠️ split_audio bo'laklamadi, fallback re-encode...")
+            try:
+                tmp_dir = tempfile.mkdtemp(prefix="whisper_fallback_")
+                out_path = os.path.join(tmp_dir, "recoded.mp3")
+                cmd = [
+                    "ffmpeg", "-y", "-v", "error",
+                    "-i", file_path,
+                    "-vn", "-ac", "1", "-ar", "16000",
+                    "-acodec", "libmp3lame", "-b:a", WHISPER_CHUNK_BITRATE,
+                    out_path
+                ]
+                subprocess.run(cmd, check=True, capture_output=True, timeout=900)
+                if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
+                    new_size = os.path.getsize(out_path) / (1024 * 1024)
+                    logging.info(f"   ✅ fallback re-encode: {new_size:.1f}MB")
+                    if new_size <= WHISPER_MAX_FILE_MB:
+                        chunks_to_process = [out_path]
+                        chunk_dir_to_cleanup = tmp_dir
+                    else:
+                        # Hali ham katta — vaqt bo'yicha kichikroq bo'laklarga (5 daq)
+                        small_chunks = _split_by_time(out_path, 300, int(new_size * 60 / 0.5))
+                        if small_chunks and small_chunks[0] != out_path:
+                            chunks_to_process = small_chunks
+                            chunk_dir_to_cleanup = os.path.dirname(small_chunks[0])
+            except Exception as e:
+                logging.error(f"Fallback re-encode xato: {e}")
 
     # Har bir bo'lakni Whisper'ga yuborish
     url = "https://api.openai.com/v1/audio/transcriptions"
