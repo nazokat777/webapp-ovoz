@@ -77,6 +77,26 @@ PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 # Telegram Payments valyutasi (UZS yoki test uchun USD)
 PAYMENT_CURRENCY = os.getenv("PAYMENT_CURRENCY", "UZS")
 
+# === [TARJIMA MODULI — YANGI] ====================================================
+# Whisper (OpenAI) + Claude 3.5 Sonnet (Anthropic) orqali xorijiy tildan tarjima
+# Railway'da quyidagi env'larni qo'shing:
+#   OPENAI_API_KEY=sk-...
+#   ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+# Tarjima narxi koeffitsienti — sarflangan vaqt 2x sanaydi (STT + tarjima)
+TRANSLATION_MULTIPLIER = 2
+
+# Tarjima qilinadigan manba tillar
+TRANSLATION_LANGS = {
+    "ru": "🇷🇺 Rus tilidan",
+    "en": "🇬🇧 Ingliz tilidan",
+    "ar": "🇸🇦 Arab tilidan",
+}
+TRANSLATION_LANG_NAMES = {"ru": "rus", "en": "ingliz", "ar": "arab"}
+# === [/TARJIMA MODULI] ==========================================================
+
 # Web App URL — ngrok yoki o'z serveringiz URL'ini kiriting
 WEBAPP_URL = os.getenv("WEBAPP_URL", "https://botch-engaging-mustang.ngrok-free.dev")
 # Railway/Heroku PORT env, lokal sinov uchun HTTP_PORT yoki default 8000
@@ -115,6 +135,9 @@ user_tariffs = {}
 # "Men to'ladim" tugmasini bosgan foydalanuvchilar — keyingi rasmni chek deb qabul qilamiz
 # {user_id: tariff_key}. Deploy'larda yo'qolmasligi uchun JSON'ga saqlanadi.
 pending_payments = {}
+# === [TARJIMA STATE] Foydalanuvchi tilini tanlagach audio kutamiz ===
+# {user_id: source_lang} — JSON'ga saqlanadi (deploy'larda yo'qolmaydi)
+pending_translations = {}
 # Admin tomonidan /setcard va /setholder orqali sozlanadigan karta ma'lumotlari
 # Env variable yo'q bo'lsa yoki adminb buyruq bilan yangilangan bo'lsa shu ishlatiladi.
 runtime_settings = {"payment_card": "", "payment_card_holder": ""}
@@ -164,6 +187,13 @@ def _load_user_data():
                     pending_payments[int(k)] = v
             except (ValueError, TypeError):
                 pass
+        # === [TARJIMA] pending translations — til tanlash holatini saqlash ===
+        for k, v in (data.get("pending_translations") or {}).items():
+            try:
+                if v in TRANSLATION_LANGS:
+                    pending_translations[int(k)] = v
+            except (ValueError, TypeError):
+                pass
         # Runtime settings (karta raqami va boshqalar) — admin /setcard orqali yangilaydi
         rs = data.get("runtime_settings") or {}
         if isinstance(rs, dict):
@@ -184,6 +214,8 @@ def _save_user_data():
                 "tariffs": {str(k): v for k, v in user_tariffs.items()},
                 "admin_chat_id": ADMIN_CHAT_ID["id"],
                 "pending_payments": {str(k): v for k, v in pending_payments.items()},
+                # === [TARJIMA] pending translations ham saqlanadi ===
+                "pending_translations": {str(k): v for k, v in pending_translations.items()},
                 "runtime_settings": dict(runtime_settings),
             }
             tmp_path = DATA_FILE + ".tmp"
@@ -894,6 +926,61 @@ def save_base64_audio(data, suffix='.webm'):
         return tmp.name
 
 
+# === [TARJIMA MODULI — API HELPERS] =============================================
+def transcribe_whisper(file_path, source_lang):
+    """OpenAI Whisper API orqali audio'ni original tilida matnga aylantirish.
+    response_format='verbose_json' — segment'lar bilan to'liq natija."""
+    if not OPENAI_API_KEY:
+        raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing.")
+    url = "https://api.openai.com/v1/audio/transcriptions"
+    headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+    with open(file_path, "rb") as f:
+        files = {"file": (os.path.basename(file_path), f, "application/octet-stream")}
+        data = {
+            "model": "whisper-1",
+            "language": source_lang,
+            "response_format": "verbose_json",
+        }
+        resp = requests.post(url, headers=headers, files=files, data=data, timeout=300)
+    if resp.status_code != 200:
+        raise Exception(f"Whisper xato: HTTP {resp.status_code} — {resp.text[:200]}")
+    result = resp.json()
+    return result.get("text", "").strip()
+
+
+def translate_with_claude(text, source_lang):
+    """Claude 3.5 Sonnet orqali xorijiy matnni O'zbekchaga professional tarjima."""
+    if not ANTHROPIC_API_KEY:
+        raise Exception("ANTHROPIC_API_KEY sozlanmagan. Railway env qo'shing.")
+    src_name = TRANSLATION_LANG_NAMES.get(source_lang, source_lang)
+    url = "https://api.anthropic.com/v1/messages"
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    prompt = (
+        f"Quyidagi {src_name} tilidagi matnni O'zbek tiliga professional, "
+        f"adabiy uslubda tarjima qil. Faqat tarjimani qaytar — boshqa hech qanday "
+        f"izoh, sarlavha yoki kirish so'zi yozma.\n\n"
+        f"Matn:\n{text}"
+    )
+    payload = {
+        "model": "claude-3-5-sonnet-20241022",
+        "max_tokens": 4096,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    resp = requests.post(url, headers=headers, json=payload, timeout=180)
+    if resp.status_code != 200:
+        raise Exception(f"Claude xato: HTTP {resp.status_code} — {resp.text[:200]}")
+    data = resp.json()
+    content = data.get("content", [])
+    if not content:
+        raise Exception("Claude bo'sh javob qaytardi.")
+    return content[0].get("text", "").strip()
+# === [/TARJIMA MODULI — API HELPERS] ============================================
+
+
 # ── BOT HELPERS ─────────────────────────────────────────────────────────────
 
 async def send_result(update, msg, text):
@@ -1167,8 +1254,9 @@ def webapp_keyboard(chat_id=None):
         [
             [KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))],
             [KeyboardButton(text="📊 Balansim"), KeyboardButton(text="💎 Tariflar")],
-            [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="❓ Yordam")],
-            [KeyboardButton(text="💬 Murojaat"), KeyboardButton(text="🔄 /start")],
+            [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="🌐 Tarjima")],
+            [KeyboardButton(text="❓ Yordam"), KeyboardButton(text="💬 Murojaat")],
+            [KeyboardButton(text="🔄 /start")],
         ],
         resize_keyboard=True,
     )
@@ -1266,11 +1354,26 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ Web App dan ma'lumot xato keldi.")
 
 
+def _pop_translation_lang(user_id):
+    """=== [TARJIMA] User tarjima rejimida bo'lsa source_lang qaytaradi va state'ni o'chiradi. ==="""
+    if user_id and user_id in pending_translations:
+        lang = pending_translations.pop(user_id, None)
+        _save_user_data()
+        return lang
+    return None
+
+
 async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     v = update.message.voice
     if not v:
         await update.message.reply_text("⚠️ Ovozli xabaringiz topilmadi. Iltimos qayta yuboring.")
         return
+    # === [TARJIMA INTEGRATSIYASI] ===
+    src_lang = _pop_translation_lang(update.effective_user.id)
+    if src_lang:
+        await process_translation_from_file_id(update, context, v.file_id, ".ogg", v.duration or 0, src_lang)
+        return
+    # === [/TARJIMA INTEGRATSIYASI] ===
     lang = _chat_lang(context, update)
     await process_file(update, context, v.file_id, ".ogg", v.duration or 0, language=lang)
 
@@ -1278,6 +1381,12 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = update.message.audio
     ext = os.path.splitext(a.file_name or "audio.mp3")[1] or ".mp3"
+    # === [TARJIMA INTEGRATSIYASI] ===
+    src_lang = _pop_translation_lang(update.effective_user.id)
+    if src_lang:
+        await process_translation_from_file_id(update, context, a.file_id, ext, a.duration or 0, src_lang)
+        return
+    # === [/TARJIMA INTEGRATSIYASI] ===
     lang = _chat_lang(context, update)
     await process_file(update, context, a.file_id, ext, a.duration or 0, language=lang)
 
@@ -1285,12 +1394,24 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     v = update.message.video
     ext = os.path.splitext(v.file_name or "video.mp4")[1] or ".mp4"
+    # === [TARJIMA INTEGRATSIYASI] ===
+    src_lang = _pop_translation_lang(update.effective_user.id)
+    if src_lang:
+        await process_translation_from_file_id(update, context, v.file_id, ext, v.duration or 0, src_lang)
+        return
+    # === [/TARJIMA INTEGRATSIYASI] ===
     lang = _chat_lang(context, update)
     await process_file(update, context, v.file_id, ext, v.duration or 0, language=lang)
 
 
 async def handle_video_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     v = update.message.video_note
+    # === [TARJIMA INTEGRATSIYASI] ===
+    src_lang = _pop_translation_lang(update.effective_user.id)
+    if src_lang:
+        await process_translation_from_file_id(update, context, v.file_id, ".mp4", v.duration or 0, src_lang)
+        return
+    # === [/TARJIMA INTEGRATSIYASI] ===
     lang = _chat_lang(context, update)
     await process_file(update, context, v.file_id, ".mp4", v.duration or 0, language=lang)
 
@@ -1983,6 +2104,12 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     audio_exts = [".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".wma", ".opus"]
     video_exts = [".mp4", ".avi", ".mov", ".mkv", ".webm", ".3gp"]
     if any(e in mime for e in ["audio", "video"]) or ext in audio_exts + video_exts:
+        # === [TARJIMA INTEGRATSIYASI] document audio/video ham tarjima qilinishi mumkin ===
+        src_lang = _pop_translation_lang(update.effective_user.id)
+        if src_lang:
+            await process_translation_from_file_id(update, context, doc.file_id, ext or ".mp3", 0, src_lang)
+            return
+        # === [/TARJIMA INTEGRATSIYASI] ===
         lang = _chat_lang(context, update)
         await process_file(update, context, doc.file_id, ext or ".mp3", 0, language=lang)
         return
@@ -2061,6 +2188,97 @@ async def process_pdf_to_voice(update, context, file_id):
         if tmp_path and os.path.exists(tmp_path):
             try: os.remove(tmp_path)
             except Exception: pass
+
+
+# === [TARJIMA MODULI — ASOSIY WORKFLOW] =========================================
+async def process_translation(update, context, file_path, duration_sec, source_lang):
+    """Audio'ni xorijiy tildan O'zbekchaga tarjima qilish.
+    Workflow: Whisper STT (verbose_json) → Claude 3.5 Sonnet (translation) → matn + PDF.
+    Tarif: duration * TRANSLATION_MULTIPLIER (2x) ga sanaydi.
+    Original transkripsiya user'ga ko'rsatilmaydi — faqat tarjima."""
+    if not is_admin(update):
+        cost_seconds = (duration_sec or 60) * TRANSLATION_MULTIPLIER
+        if not await can_process_uzbek(update, cost_seconds):
+            return
+
+    src_label = TRANSLATION_LANGS.get(source_lang, source_lang)
+    msg = await update.message.reply_text(
+        f"🌐 *Tarjima jarayoni*\n\n"
+        f"📡 Manba til: {src_label}\n"
+        f"📝 1/2 — Audio matnga aylantirilmoqda (Whisper)...",
+        parse_mode="Markdown"
+    )
+    try:
+        # 1) Davomiylikni aniqlash (limit nazorat va billing uchun)
+        actual_duration = duration_sec
+        if not actual_duration or actual_duration <= 0:
+            try:
+                actual_duration = int(await asyncio.to_thread(get_duration_or_estimate, file_path))
+            except Exception:
+                actual_duration = 60
+
+        # 2) Whisper STT — verbose_json
+        original_text = await asyncio.to_thread(transcribe_whisper, file_path, source_lang)
+        if not original_text or not original_text.strip():
+            await msg.edit_text("❌ Audiodan matn topilmadi yoki tan olinmadi.")
+            return
+
+        # 3) Claude tarjima
+        await msg.edit_text(
+            f"🌐 *Tarjima jarayoni*\n\n"
+            f"📡 Manba til: {src_label}\n"
+            f"✨ 2/2 — Tarjima qilinmoqda (Claude 3.5 Sonnet)...",
+            parse_mode="Markdown"
+        )
+        translated = await asyncio.to_thread(translate_with_claude, original_text, source_lang)
+        if not translated or not translated.strip():
+            await msg.edit_text("❌ Tarjima bo'sh qaytdi.")
+            return
+
+        # 4) Natija — matn va PDF
+        await msg.edit_text("✅ Tarjima tayyor!")
+        # Matn (4000 belgidan uzunni bo'lib yuboramiz)
+        await update.message.reply_text(
+            f"🌐 *Tarjima ({src_label} → 🇺🇿 O'zbek):*",
+            parse_mode="Markdown"
+        )
+        for i in range(0, len(translated), 4000):
+            await update.message.reply_text(translated[i:i+4000])
+        # PDF — mavjud make_pdf funksiyasidan foydalanamiz
+        try:
+            pdf_path = await asyncio.to_thread(make_pdf, translated, "Tarjima — O'zbek")
+            with open(pdf_path, "rb") as f:
+                await update.message.reply_document(
+                    document=f, filename="tarjima.pdf",
+                    caption="📎 Tarjima PDF formatda"
+                )
+            try: os.remove(pdf_path)
+            except Exception: pass
+        except Exception as e:
+            logging.warning(f"Tarjima PDF xato: {e}")
+
+        # 5) Tarif daqiqalarini ayrish — 2x koeffitsient bilan
+        if not is_admin(update) and actual_duration > 0:
+            add_user_usage(update.effective_user.id, actual_duration * TRANSLATION_MULTIPLIER)
+    except Exception as e:
+        logging.error(f"Tarjima xato: {e}")
+        await msg.edit_text(f"❌ Tarjima xato: {str(e)[:300]}")
+
+
+async def process_translation_from_file_id(update, context, file_id, suffix, duration_sec, source_lang):
+    """File_id orqali kelgan audio/video uchun wrapper — yuklab olib process_translation chaqiradi."""
+    tmp_path = None
+    try:
+        file = await context.bot.get_file(file_id)
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp_path = tmp.name
+        await file.download_to_drive(tmp_path)
+        await process_translation(update, context, tmp_path, duration_sec, source_lang)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            try: os.remove(tmp_path)
+            except Exception: pass
+# === [/TARJIMA MODULI — ASOSIY WORKFLOW] =======================================
 
 
 async def text_to_voice(update, context, text):
@@ -2170,6 +2388,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if text == "💳 Sotib olish":
         await buy_cmd(update, context)
+        return
+    # === [TARJIMA] keyboard tugmasi ===
+    if text == "🌐 Tarjima":
+        await translate_cmd(update, context)
         return
     if text == "❓ Yordam":
         await help_cmd(update, context)
@@ -2384,13 +2606,80 @@ async def feedback_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Joriy rejimni bekor qilish (masalan, murojaat yozish)."""
+    user_id = update.effective_user.id if update.effective_user else None
+    was_translation = False
+    # === [TARJIMA] /cancel tarjima rejimini ham bekor qiladi ===
+    if user_id and user_id in pending_translations:
+        pending_translations.pop(user_id, None)
+        _save_user_data()
+        was_translation = True
     if context.user_data:
         was_fb = context.user_data.pop("awaiting_feedback", None)
         was_pay = context.user_data.pop("awaiting_payment_for", None)
-        if was_fb or was_pay:
+        if was_fb or was_pay or was_translation:
             await update.message.reply_text("✅ Bekor qilindi.")
             return
+    if was_translation:
+        await update.message.reply_text("✅ Tarjima rejimi bekor qilindi.")
+        return
     await update.message.reply_text("Hech qanday faol rejim yo'q.")
+
+
+# === [TARJIMA MODULI — KOMANDA HANDLERS] ========================================
+async def translate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/tarjima yoki '🌐 Tarjima' tugmasi — manba tilini tanlash menyusini ko'rsatadi."""
+    if not OPENAI_API_KEY or not ANTHROPIC_API_KEY:
+        await update.message.reply_text(
+            "⚙️ Tarjima xizmati hozirda sozlanmoqda. Iltimos keyinroq urinib ko'ring.",
+            parse_mode="Markdown"
+        )
+        return
+    buttons = [
+        [InlineKeyboardButton(label, callback_data=f"transl:{code}")]
+        for code, label in TRANSLATION_LANGS.items()
+    ]
+    buttons.append([InlineKeyboardButton("❌ Bekor qilish", callback_data="transl:cancel")])
+    await update.message.reply_text(
+        "🌐 *Xorijiy tildan tarjima*\n\n"
+        "Audio yoki videoni xorijiy tildan O'zbek tiliga tarjima qilamiz.\n"
+        "Whisper (transkripsiya) + Claude 3.5 Sonnet (tarjima).\n\n"
+        f"⚠️ *Diqqat:* tarjima xizmati uchun daqiqalar *{TRANSLATION_MULTIPLIER}x* sanaydi "
+        f"(masalan 1 daqiqalik audio = {TRANSLATION_MULTIPLIER} daqiqa tarifdan ayriladi).\n\n"
+        "Qaysi tildan tarjima qilamiz?",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+async def translation_lang_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Manba til tanlangach — keyingi audio/video shu til bilan tarjima qilinadi."""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+    if not query.data.startswith("transl:"):
+        return
+    choice = query.data.split(":", 1)[1]
+    user_id = query.from_user.id
+    if choice == "cancel":
+        pending_translations.pop(user_id, None)
+        _save_user_data()
+        await query.edit_message_text("❌ Tarjima rejimi bekor qilindi.")
+        return
+    if choice not in TRANSLATION_LANGS:
+        return
+    # User holatini saqlaymiz (deploy'larda yo'qolmaydi)
+    pending_translations[user_id] = choice
+    _save_user_data()
+    label = TRANSLATION_LANGS[choice]
+    await query.edit_message_text(
+        f"✅ {label} tanlandi.\n\n"
+        f"📥 Endi audio yoki video yuboring (voice xabar, audio fayl, video).\n"
+        f"⚠️ Tarif daqiqalari *{TRANSLATION_MULTIPLIER}x* sanaydi.\n\n"
+        f"Bekor qilish uchun: /cancel",
+        parse_mode="Markdown"
+    )
+# === [/TARJIMA MODULI — KOMANDA HANDLERS] =======================================
 
 
 # ── HTTP API (WebApp uchun) ─────────────────────────────────────────────────
@@ -2780,6 +3069,7 @@ def main():
                 BotCommand("balance",  "Mening balansim"),
                 BotCommand("tariflar", "Tariflar ro'yxati"),
                 BotCommand("buy",      "Tarif sotib olish"),
+                BotCommand("tarjima",  "🌐 Xorijiy tildan tarjima"),
                 BotCommand("lang",     "Til tanlash: uz / ru / en"),
                 BotCommand("feedback", "Murojaat / shikoyat"),
                 BotCommand("help",     "Yordam"),
@@ -2823,6 +3113,9 @@ def main():
     app.add_handler(CommandHandler("setcard", setcard_cmd))
     app.add_handler(CommandHandler("setholder", setholder_cmd))
     app.add_handler(CommandHandler("feedback", feedback_cmd))
+    # === [TARJIMA] yangi /tarjima komandasi ===
+    app.add_handler(CommandHandler("tarjima", translate_cmd))
+    app.add_handler(CommandHandler("translate", translate_cmd))
     app.add_handler(CommandHandler("cancel", cancel_cmd))
     app.add_handler(CommandHandler("reply", reply_cmd))
     app.add_handler(CommandHandler("debug", debug_cmd))
@@ -2832,6 +3125,8 @@ def main():
     app.add_handler(CallbackQueryHandler(paid_callback, pattern=r"^paid:"))
     app.add_handler(CallbackQueryHandler(approve_reject_callback, pattern=r"^(approve|reject):"))
     app.add_handler(CallbackQueryHandler(reply_button_callback, pattern=r"^reply:"))
+    # === [TARJIMA] callback handler (manba til tanlash) ===
+    app.add_handler(CallbackQueryHandler(translation_lang_callback, pattern=r"^transl:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Telegram Payments handlerlari (kelajakda PROVIDER_TOKEN qo'shilsa avtomat ishlaydi)
