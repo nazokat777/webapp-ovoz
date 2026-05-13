@@ -2146,7 +2146,7 @@
       if (banner) banner.remove();
       return;
     }
-    const langName = { ru: '🇷🇺 Rus', en: '🇬🇧 Ingliz', ar: '🇸🇦 Arab' }[translateLang];
+    const langName = { auto: '🌐 Avto', uz: "🇺🇿 O'zbek", ru: '🇷🇺 Rus', en: '🇬🇧 Ingliz', ar: '🇸🇦 Arab' }[translateLang] || translateLang;
     if (!banner) {
       banner = document.createElement('div');
       banner.id = 'translationBanner';
@@ -2154,8 +2154,8 @@
       banner.onclick = () => {
         translateLang = null;
         updateTranslationBanner();
-        // Til pickerni tozalash
-        ['ru', 'en', 'ar'].forEach(code => {
+        // Til pickerni tozalash (uz/ru/en/ar — 4 ta til)
+        ['uz', 'ru', 'en', 'ar'].forEach(code => {
           const btn = document.getElementById('tlang' + code.charAt(0).toUpperCase() + code.slice(1));
           if (btn) {
             btn.style.background = 'rgba(245, 240, 224, 0.04)';
@@ -2180,8 +2180,8 @@
   function selectTranslateLang(lang) {
     translateLang = lang;
     updateTranslationBanner();
-    // 4 tugmani QAYTA SOZLAYMIZ — auto + 3 til
-    ['auto', 'ru', 'en', 'ar'].forEach(code => {
+    // 5 tugmani QAYTA SOZLAYMIZ — auto + 4 til (uz/ru/en/ar)
+    ['auto', 'uz', 'ru', 'en', 'ar'].forEach(code => {
       const btn = document.getElementById('tlang' + code.charAt(0).toUpperCase() + code.slice(1));
       if (!btn) return;
       if (code === lang) {
@@ -2210,7 +2210,7 @@
     const selectedMsg = document.getElementById('tlangSelected');
     if (selectedMsg) {
       selectedMsg.style.display = 'block';
-      const langName = { auto: '🌐 Avto (har qanday til)', ru: '🇷🇺 Rus', en: '🇬🇧 Ingliz', ar: '🇸🇦 Arab' }[lang];
+      const langName = { auto: '🌐 Avto (har qanday til)', uz: "🇺🇿 O'zbek", ru: '🇷🇺 Rus', en: '🇬🇧 Ingliz', ar: '🇸🇦 Arab' }[lang] || lang;
       selectedMsg.innerHTML = `✅ <b>${langName}</b> tanlandi<br><br>⬇️ Endi <b>PASTDAN</b> birini tanlang:<br>🎵 Audio fayl • 🎬 Video • 🔗 YouTube/Instagram havola • 🎤 Mikrofondan ovoz yozish`;
     }
     if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.selectionChanged(); } catch (e) {} }
