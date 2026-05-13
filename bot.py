@@ -999,7 +999,9 @@ def _clean_pdf_text(text):
 
 
 def make_tts_edge(text, lang=None):
-    """Matnni Edge TTS (Microsoft, bepul) bilan MP3 ga aylantiradi."""
+    """Matnni Edge TTS (Microsoft, bepul) bilan MP3 ga aylantiradi.
+    Uzun matn bo'laklarga ajratiladi (har 3000 belgida) — Edge timeout/xatolardan
+    saqlanish uchun. Bo'laklar MP3 sifatida birlashtiriladi."""
     if not text or not text.strip():
         return None
     if lang is None:
@@ -1008,15 +1010,55 @@ def make_tts_edge(text, lang=None):
     snippet = text.strip()
     out_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
 
+    # 3000 belgili bo'laklarga ajratish (gap chegaralarida)
+    CHUNK_SIZE = 3000
+    chunks = []
+    if len(snippet) <= CHUNK_SIZE:
+        chunks = [snippet]
+    else:
+        cur = 0
+        while cur < len(snippet):
+            end = min(cur + CHUNK_SIZE, len(snippet))
+            # Yaqindagi gap oxirini izlash
+            if end < len(snippet):
+                for delim in [".", "!", "?", "\n", ","]:
+                    idx = snippet.rfind(delim, cur, end)
+                    if idx > cur + CHUNK_SIZE // 2:
+                        end = idx + 1
+                        break
+            chunks.append(snippet[cur:end].strip())
+            cur = end
+        logging.info(f"🔊 Edge TTS: {len(snippet)} belgi → {len(chunks)} bo'lak")
+
     async def _run():
-        comm = edge_tts.Communicate(snippet, voice)
-        await comm.save(out_path)
+        # Har bo'lakni alohida MP3 qilib, fayllarni birlashtiramiz
+        with open(out_path, "wb") as out_f:
+            for i, ch in enumerate(chunks, 1):
+                if not ch:
+                    continue
+                try:
+                    chunk_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
+                    comm = edge_tts.Communicate(ch, voice)
+                    await comm.save(chunk_path)
+                    if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 0:
+                        with open(chunk_path, "rb") as in_f:
+                            out_f.write(in_f.read())
+                    try: os.remove(chunk_path)
+                    except Exception: pass
+                except Exception as e:
+                    logging.warning(f"Edge TTS bo'lak {i}/{len(chunks)} xato: {e}")
+                    if i == 1:
+                        raise  # birinchi bo'lak yiqilsa, butun fayl yo'q
 
     loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(_run())
     finally:
         loop.close()
+    if not os.path.exists(out_path) or os.path.getsize(out_path) < 100:
+        try: os.remove(out_path)
+        except Exception: pass
+        return None
     return out_path
 
 
