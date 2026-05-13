@@ -240,71 +240,51 @@
   .logo { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
   .logo-icon-wrap {
-    position: relative; width: 52px; height: 52px;
+    position: relative; width: 64px; height: 64px;
     display: flex; align-items: center; justify-content: center;
     flex-shrink: 0;
   }
-  /* ── PLASTINKA (vinyl record) — aylanuvchi premium ramka ── */
-  .logo-vinyl {
-    position: absolute; inset: 0;
-    border-radius: 50%;
-    background:
-      radial-gradient(circle at 50% 50%,
-        transparent 0%, transparent 38%,
-        #0a0a0a 40%,
-        #1a1610 48%,
-        #0a0a0a 56%,
-        #1a1610 66%,
-        #0a0a0a 76%,
-        #1a1610 86%,
-        #d4af37 94%,
-        #b8941f 100%);
-    box-shadow:
-      0 6px 18px rgba(212, 175, 55, 0.50),
-      inset 0 0 14px rgba(0, 0, 0, 0.7),
-      inset 0 1px 2px rgba(212, 175, 55, 0.4);
-    animation: vinyl-rotate 7s linear infinite;
-    z-index: 1;
-  }
-  /* Plastinkada yorqin nur (sheen) — sekin aylanish bilan birga */
-  .logo-vinyl::before {
-    content: ''; position: absolute; inset: 0;
-    border-radius: 50%;
-    background: conic-gradient(from 0deg,
-      transparent 0deg,
-      rgba(240, 216, 120, 0.35) 30deg,
-      transparent 70deg,
-      transparent 180deg,
-      rgba(212, 175, 55, 0.25) 220deg,
-      transparent 260deg,
-      transparent 360deg);
-    mix-blend-mode: screen;
-  }
-  /* MNSM logosi — markazda STATIK (aylanmaydi), faqat plastinka halqasi aylanadi */
+  /* MNSM logosi — katta, aniq, premium */
   .logo-img {
     position: relative;
     z-index: 2;
-    width: 85%; height: 85%;
+    width: 100%; height: 100%;
     object-fit: contain;
-    filter: drop-shadow(0 0 5px rgba(212, 175, 55, 0.8))
-            drop-shadow(0 0 10px rgba(0, 0, 0, 0.6))
-            brightness(1.15);
+    filter:
+      drop-shadow(0 0 6px rgba(212, 175, 55, 0.85))
+      drop-shadow(0 0 12px rgba(212, 175, 55, 0.4))
+      drop-shadow(0 2px 4px rgba(0, 0, 0, 0.6))
+      brightness(1.25) contrast(1.1);
   }
-  /* Fallback (logo.png yo'q bo'lsa) — vinyl markazida MNSM yozuvi ko'rinadi */
+  /* Logo atrofidagi sekin aylanuvchi nur halqasi (plastinka effekti) */
+  .logo-vinyl {
+    position: absolute; inset: -2px;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg,
+      transparent 0deg,
+      rgba(240, 216, 120, 0.55) 30deg,
+      rgba(212, 175, 55, 0.25) 90deg,
+      transparent 150deg,
+      transparent 210deg,
+      rgba(212, 175, 55, 0.45) 270deg,
+      rgba(240, 216, 120, 0.30) 330deg,
+      transparent 360deg);
+    filter: blur(4px);
+    animation: vinyl-rotate 6s linear infinite;
+    z-index: 1;
+    pointer-events: none;
+  }
+  /* Fallback — MNSM matn */
   .logo-svg-fallback {
     position: absolute; inset: 0;
     z-index: 2;
     display: flex; align-items: center; justify-content: center;
     font-family: 'Playfair Display', serif;
-    font-size: 11px;
+    font-size: 13px;
     font-weight: 900;
     letter-spacing: 1px;
     color: #f0d878;
     text-shadow: 0 0 6px rgba(212, 175, 55, 0.8);
-  }
-  /* Agar logo.png yuklansa, fallback yashiriladi */
-  .logo-icon-wrap:has(.logo-img:not([style*="display: none"])) .logo-svg-fallback {
-    display: none;
   }
   @keyframes vinyl-rotate { to { transform: rotate(360deg); } }
 
