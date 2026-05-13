@@ -4046,6 +4046,105 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
 # === [/TARJIMA — WEBAPP THREAD MODE] ===========================================
 
 
+def process_pdf_audio_only(user_id, pdf_path, target_lang="uz"):
+    """PDF → AUDIO (faqat audio, matn/PDF tarjimasi yo'q).
+    WebApp PDF kartasidan kelganda — user faqat audio xohlaydi.
+
+    Agar manba va target tillari farq qilsa, ichida tarjima qilinadi,
+    lekin natija sifatida FAQAT audio MP3 yuboriladi (matn ko'rsatilmaydi).
+    XAVFSIZ TO'LOV: audio yetkazilgach yechiladi."""
+    success = False
+    estimated_audio_sec = 0
+    try:
+        # 1) PDF dan matn ajratish
+        try:
+            original_text = extract_pdf_text(pdf_path)
+        except Exception as e:
+            telegram_send_message(
+                user_id,
+                f"❌ PDF o'qib bo'lmadi: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+            return
+        if not original_text or not original_text.strip():
+            telegram_send_message(
+                user_id,
+                "❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+            return
+
+        word_count = len(original_text.split())
+        estimated_audio_sec = max(60, int(word_count * 0.4))
+        if not _is_admin_id(user_id):
+            if not check_limit_by_user_id(user_id, estimated_audio_sec):
+                return
+
+        tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
+        telegram_send_message(user_id, f"⏳ Biroz kuting, PDF audio formatga o'tkazilmoqda ({tgt_label})...")
+
+        # 2) Matn tilini aniqlash — agar manba va target bir xil bo'lsa, tarjima yo'q
+        detected = detect_lang(original_text)
+        if detected == target_lang or target_lang == "auto":
+            # Tarjimaga ehtiyoj yo'q — to'g'ridan-to'g'ri TTS
+            tts_text = original_text
+            tts_lang = detected if target_lang == "auto" else target_lang
+        else:
+            # Tarjima kerak (ichida bo'ladi, lekin user matn ko'rmaydi)
+            try:
+                translated = translate_with_claude(original_text, detected, None, target_lang)
+            except Exception as e:
+                logging.error(f"PDF audio uchun tarjima xato: {e}")
+                telegram_send_message(
+                    user_id,
+                    f"❌ Audio yaratilmadi: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+                )
+                return
+            if not translated or not translated.strip():
+                telegram_send_message(
+                    user_id,
+                    "❌ Audio matn tayyorlanmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
+                )
+                return
+            tts_text = translated
+            tts_lang = target_lang
+
+        # 3) Audio yaratish (TTS — target tilda)
+        try:
+            tts_path = make_tts(tts_text, tts_lang)
+        except Exception as e:
+            logging.error(f"PDF audio_only TTS xato: {e}")
+            telegram_send_message(
+                user_id,
+                f"❌ Audio yaratilmadi: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+            return
+        if not tts_path:
+            telegram_send_message(
+                user_id,
+                "❌ Audio yaratilmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+            return
+
+        # 4) FAQAT audio yuborish (matn yo'q, PDF yo'q)
+        telegram_send_voice(user_id, tts_path, caption=f"🔊 PDF audio ({tgt_label})")
+        try: os.remove(tts_path)
+        except Exception: pass
+        success = True
+
+        # 5) Tarif daqiqalari — faqat success'da
+        if success and not _is_admin_id(user_id) and estimated_audio_sec > 0:
+            add_user_usage(user_id, estimated_audio_sec)
+    except Exception as e:
+        logging.error(f"process_pdf_audio_only xato: {e}")
+        telegram_send_message(
+            user_id,
+            f"❌ Xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+        )
+    finally:
+        if pdf_path and os.path.exists(pdf_path):
+            try: os.remove(pdf_path)
+            except Exception: pass
+
+
 def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", target_lang="uz"):
     """PDF'ni xorijiy tildan tanlangan tilga tarjima qilib audio + PDF chiqarish.
     XAVFSIZ TO'LOV: faqat audio MUVAFFAQIYATLI yuborilgandan keyin daqiqa yechiladi."""
@@ -4321,6 +4420,7 @@ async def handle_webapp_upload(request):
         language = "uz"
         translation_lang = ""  # === [TARJIMA] source ===
         target_lang = "uz"      # === [TARJIMA] target — default uzbek ===
+        pdf_audio_lang = ""     # === [PDF→MP3] alohida audio rejimi (faqat audio chiqsin) ===
         while True:
             part = await reader.next()
             if part is None:
@@ -4339,6 +4439,10 @@ async def handle_webapp_upload(request):
                 tg = (await part.text()).strip().lower()
                 if tg in TRANSLATION_TARGETS:
                     target_lang = tg
+            elif part.name == "pdf_audio_lang":
+                pal = (await part.text()).strip().lower()
+                if pal in TRANSLATION_TARGETS:
+                    pdf_audio_lang = pal
             elif part.name == "file":
                 file_name = part.filename or "upload.bin"
                 file_data = await part.read()
@@ -4348,8 +4452,15 @@ async def handle_webapp_upload(request):
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
             tmp.write(file_data)
             tmp_path = tmp.name
+        # === [PDF → MP3] WebApp PDF flow — faqat audio chiqsin (matn yo'q) ===
+        if ext == ".pdf" and pdf_audio_lang:
+            threading.Thread(
+                target=process_pdf_audio_only,
+                args=(int(user_id), tmp_path, pdf_audio_lang),
+                daemon=True,
+            ).start()
         # === [TARJIMA] PDF + translation_lang/target -> PDF tarjima (matn+PDF+audio target tilda) ===
-        if ext == ".pdf" and translation_lang:
+        elif ext == ".pdf" and translation_lang:
             threading.Thread(target=process_pdf_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang), daemon=True).start()
         # PDF tarjimasiz — oddiy PDF -> ovoz (default O'zbekcha)
         elif ext == ".pdf":
