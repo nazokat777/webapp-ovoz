@@ -1370,9 +1370,9 @@
         </svg>
       </div>
       <div class="pdf-info">
-        <div class="pdf-title">🌐 Tarjima qilish</div>
-        <div class="pdf-sub">Xorijiy tildagi audio/videoni avtomatik O'zbek tiliga tarjima qilamiz (RU/EN/AR).</div>
-        <span class="card-pill" style="background: rgba(255, 0, 110, 0.25); color: #ff006e; border: 1px solid rgba(255, 0, 110, 0.55);">⚡ 2x tarif</span>
+        <div class="pdf-title">🌐 Xorijiy tildan tarjima</div>
+        <div class="pdf-sub">Audio/video xorijiy tildan (Rus / Ingliz / Arab) avtomatik O'zbek tiliga tarjima qilinadi.<br><br>⏱ Eslatma: bu xizmat tarif daqiqalarini <b>2 baravar</b> sarflaydi (masalan 1 daqiqalik audio = 2 daqiqa).</div>
+        <span class="card-pill" style="background: rgba(0, 245, 255, 0.18); color: #00f5ff; border: 1px solid rgba(0, 245, 255, 0.55);">🌐 Yangi</span>
       </div>
     </div>
   </div>
@@ -2012,20 +2012,44 @@
 
   // === [TARJIMA] WebApp tarjima rejimi holatlari ===
   let translateLang = null;  // tanlangan manba til (ru/en/ar)
+  const TLANG_DEFAULTS = {
+    ru: { bg: 'rgba(0, 245, 255, 0.12)', border: 'rgba(0, 245, 255, 0.4)', active: '#00f5ff' },
+    en: { bg: 'rgba(255, 0, 110, 0.12)', border: 'rgba(255, 0, 110, 0.4)', active: '#ff006e' },
+    ar: { bg: 'rgba(255, 190, 11, 0.12)', border: 'rgba(255, 190, 11, 0.4)', active: '#ffbe0b' }
+  };
 
   function selectTranslateLang(lang) {
     translateLang = lang;
-    // Hammasidan 'selected' olib tashlaymiz, tanlangan tugmaga qo'shamiz
-    document.querySelectorAll('.tlang-btn').forEach(b => {
-      b.style.background = b.id === 'tlang' + lang.charAt(0).toUpperCase() + lang.slice(1)
-        ? 'linear-gradient(135deg, #ff006e, #8338ec, #00f5ff)'
-        : b.style.background.replace(/background:.*?;/, '');
-      b.style.color = b.id === 'tlang' + lang.charAt(0).toUpperCase() + lang.slice(1) ? '#fff' : 'var(--text)';
-      b.style.boxShadow = b.id === 'tlang' + lang.charAt(0).toUpperCase() + lang.slice(1)
-        ? '0 4px 14px rgba(255, 0, 110, 0.5)'
-        : 'none';
+    // Hamma 3 tugmani avval default holatga qaytaramiz
+    ['ru', 'en', 'ar'].forEach(code => {
+      const btn = document.getElementById('tlang' + code.charAt(0).toUpperCase() + code.slice(1));
+      if (!btn) return;
+      const def = TLANG_DEFAULTS[code];
+      if (code === lang) {
+        // TANLANGAN — yorqin gradient + glow + kattaroq scale
+        btn.style.background = `linear-gradient(135deg, ${def.active}, #8338ec)`;
+        btn.style.borderColor = def.active;
+        btn.style.color = '#fff';
+        btn.style.boxShadow = `0 0 20px ${def.active}, 0 4px 14px rgba(0, 0, 0, 0.4)`;
+        btn.style.transform = 'scale(1.08)';
+        btn.style.fontWeight = '900';
+      } else {
+        // Tanlanmagan — defaultga qaytarish
+        btn.style.background = def.bg;
+        btn.style.borderColor = def.border;
+        btn.style.color = 'var(--text)';
+        btn.style.boxShadow = 'none';
+        btn.style.transform = 'scale(1)';
+        btn.style.fontWeight = '700';
+      }
     });
-    document.getElementById('tlangSelected').style.display = 'block';
+    const selectedMsg = document.getElementById('tlangSelected');
+    if (selectedMsg) {
+      selectedMsg.style.display = 'block';
+      // Yangi: tanlangan til nomini ham ko'rsatish
+      const langName = { ru: '🇷🇺 Rus', en: '🇬🇧 Ingliz', ar: '🇸🇦 Arab' }[lang];
+      selectedMsg.innerHTML = `✅ <b>${langName}</b> tili tanlandi — endi audio/video yuboring`;
+    }
     if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.selectionChanged(); } catch (e) {} }
   }
 
