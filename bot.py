@@ -2509,13 +2509,7 @@ async def process_translation(update, context, file_path, duration_sec, source_l
         if not await can_process_uzbek(update, cost_seconds):
             return
 
-    src_label = TRANSLATION_LANGS.get(source_lang, source_lang)
-    msg = await update.message.reply_text(
-        f"🌐 *Tarjima jarayoni*\n\n"
-        f"📡 Manba til: {src_label}\n"
-        f"📝 1/2 — Audio matnga aylantirilmoqda (Whisper)...",
-        parse_mode="Markdown"
-    )
+    msg = await update.message.reply_text("⏳ Biroz kuting, tarjima qilinmoqda...")
     try:
         # 1) Davomiylikni aniqlash (limit nazorat va billing uchun)
         actual_duration = duration_sec
@@ -2525,53 +2519,20 @@ async def process_translation(update, context, file_path, duration_sec, source_l
             except Exception:
                 actual_duration = 60
 
-        # 2) Whisper STT — katta fayl avtomatik bo'laklanadi
-        loop = asyncio.get_running_loop()
-        last_progress = {"text": "", "ts": 0}
-        def whisper_cb(cur, total):
-            if total > 1:
-                txt = (f"🌐 *Tarjima jarayoni*\n\n"
-                       f"📡 Manba til: {src_label}\n"
-                       f"⏱ Davomiylik: ~{actual_duration//60} daqiqa\n"
-                       f"📝 1/2 — Whisper transkripsiya ({cur}/{total} bo'lak)...")
-                now = time.time()
-                if txt != last_progress["text"] and now - last_progress["ts"] > 1.5:
-                    last_progress["text"] = txt
-                    last_progress["ts"] = now
-                    asyncio.run_coroutine_threadsafe(msg.edit_text(txt, parse_mode="Markdown"), loop)
-        original_text = await asyncio.to_thread(transcribe_whisper, file_path, source_lang, whisper_cb)
+        # 2) Whisper STT — jim ishlaydi (katta fayl avtomatik bo'laklanadi)
+        original_text = await asyncio.to_thread(transcribe_whisper, file_path, source_lang, None)
         if not original_text or not original_text.strip():
-            await msg.edit_text("❌ Audiodan matn topilmadi yoki tan olinmadi.")
+            await msg.edit_text("❌ Audiodan matn topilmadi.")
             return
 
-        # 3) Claude tarjima — uzun matn avtomatik bo'laklanadi
-        word_count = len(original_text.split())
-        await msg.edit_text(
-            f"🌐 *Tarjima jarayoni*\n\n"
-            f"📡 Manba til: {src_label}\n"
-            f"📊 Matn: ~{word_count} so'z\n"
-            f"✨ 2/2 — GPT tarjima qilmoqda...",
-            parse_mode="Markdown"
-        )
-        last_claude = {"text": "", "ts": 0}
-        def claude_cb(cur, total):
-            if total > 1:
-                txt = (f"🌐 *Tarjima jarayoni*\n\n"
-                       f"📡 Manba til: {src_label}\n"
-                       f"📊 Matn: ~{word_count} so'z\n"
-                       f"✨ 2/2 — GPT tarjima ({cur}/{total} bo'lak)...")
-                now = time.time()
-                if txt != last_claude["text"] and now - last_claude["ts"] > 1.5:
-                    last_claude["text"] = txt
-                    last_claude["ts"] = now
-                    asyncio.run_coroutine_threadsafe(msg.edit_text(txt, parse_mode="Markdown"), loop)
-        translated = await asyncio.to_thread(translate_with_claude, original_text, source_lang, claude_cb)
+        # 3) GPT tarjima — jim ishlaydi
+        translated = await asyncio.to_thread(translate_with_claude, original_text, source_lang, None)
         if not translated or not translated.strip():
             await msg.edit_text("❌ Tarjima bo'sh qaytdi.")
             return
 
         # 4) Natija — matn va PDF
-        await msg.edit_text("✅ Tarjima tayyor!")
+        await msg.delete()
         # Matn (4000 belgidan uzunni bo'lib yuboramiz)
         await update.message.reply_text(
             f"🌐 *Tarjima ({src_label} → 🇺🇿 O'zbek):*",
@@ -2963,7 +2924,7 @@ async def cancel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # === [TARJIMA MODULI — KOMANDA HANDLERS] ========================================
 async def translate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/tarjima yoki '🌐 Tarjima' tugmasi — manba tilini tanlash menyusini ko'rsatadi."""
-    if not OPENAI_API_KEY or not ANTHROPIC_API_KEY:
+    if not OPENAI_API_KEY:
         await update.message.reply_text(
             "⚙️ Tarjima xizmati hozirda sozlanmoqda. Iltimos keyinroq urinib ko'ring.",
             parse_mode="Markdown"
@@ -3211,31 +3172,19 @@ def process_translation_for_user(user_id, file_path, source_lang):
         if not _is_admin_id(user_id):
             if not check_limit_by_user_id(user_id, cost):
                 return
-        src_label = TRANSLATION_LANGS[source_lang]
-        telegram_send_message(user_id, f"🌐 Tarjima boshlandi ({src_label})\n⏱ Davomiylik: ~{actual_duration//60} daqiqa\n📝 1/2 — Whisper transkripsiya...")
-        # 1) Whisper STT — katta fayl bo'laklanadi
-        last_w = {"sent": 0}
-        def whisper_progress(cur, total):
-            if total > 1 and cur != last_w["sent"]:
-                last_w["sent"] = cur
-                telegram_send_message(user_id, f"📝 Whisper: {cur}/{total} bo'lak transkripsiya qilindi...")
-        original_text = transcribe_whisper(file_path, source_lang, whisper_progress)
+        telegram_send_message(user_id, "⏳ Biroz kuting, tarjima qilinmoqda...")
+        # 1) Whisper STT — jim ishlaydi
+        original_text = transcribe_whisper(file_path, source_lang, None)
         if not original_text or not original_text.strip():
             telegram_send_message(user_id, "❌ Audiodan matn topilmadi.")
             return
-        # 2) Claude tarjima — uzun matn bo'laklanadi
-        word_count = len(original_text.split())
-        telegram_send_message(user_id, f"✨ 2/2 — GPT tarjima qilmoqda... (~{word_count} so'z)")
-        last_c = {"sent": 0}
-        def claude_progress(cur, total):
-            if total > 1 and cur != last_c["sent"]:
-                last_c["sent"] = cur
-                telegram_send_message(user_id, f"✨ Claude tarjima: {cur}/{total} bo'lak...")
-        translated = translate_with_claude(original_text, source_lang, claude_progress)
+        # 2) GPT tarjima — jim ishlaydi
+        translated = translate_with_claude(original_text, source_lang, None)
         if not translated or not translated.strip():
             telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
             return
-        # 3) Natija — matn + PDF
+        # 3) Natija — matn + PDF (ortiqcha sarlavhasiz)
+        src_label = TRANSLATION_LANGS[source_lang]
         telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → 🇺🇿 O'zbek):")
         for i in range(0, len(translated), 4000):
             telegram_send_message(user_id, translated[i:i+4000])
@@ -3270,8 +3219,7 @@ def process_url_translation_for_user(user_id, url, source_lang):
         # Limit dastlabki tekshiruvi
         if not check_limit_by_user_id(user_id, 0):
             return
-        src_label = TRANSLATION_LANGS[source_lang]
-        telegram_send_message(user_id, f"🌐 Tarjima jarayoni boshlandi ({src_label})\n📥 Video yuklanmoqda...\n🔗 {url[:80]}")
+        telegram_send_message(user_id, "⏳ Biroz kuting, tarjima qilinmoqda...")
         # 1) Video yuklab olish
         audio_path = download_audio_from_url(url)
         # 2) Davomiylik va limit tekshiruvi
@@ -3283,30 +3231,18 @@ def process_url_translation_for_user(user_id, url, source_lang):
         if not _is_admin_id(user_id):
             if not check_limit_by_user_id(user_id, cost):
                 return
-        telegram_send_message(user_id, f"✅ Yuklanidi ({actual_duration//60} daq)\n📝 1/2 — Whisper transkripsiya...")
-        # 3) Whisper STT (katta fayl bo'laklanadi)
-        last_w = {"sent": 0}
-        def whisper_progress(cur, total):
-            if total > 1 and cur != last_w["sent"]:
-                last_w["sent"] = cur
-                telegram_send_message(user_id, f"📝 Whisper: {cur}/{total} bo'lak...")
-        original_text = transcribe_whisper(audio_path, source_lang, whisper_progress)
+        # 3) Whisper STT — jim ishlaydi
+        original_text = transcribe_whisper(audio_path, source_lang, None)
         if not original_text or not original_text.strip():
             telegram_send_message(user_id, "❌ Audiodan matn topilmadi.")
             return
-        # 4) GPT-4o tarjima (uzun matn bo'laklanadi)
-        word_count = len(original_text.split())
-        telegram_send_message(user_id, f"✨ 2/2 — GPT tarjima qilmoqda... (~{word_count} so'z)")
-        last_c = {"sent": 0}
-        def gpt_progress(cur, total):
-            if total > 1 and cur != last_c["sent"]:
-                last_c["sent"] = cur
-                telegram_send_message(user_id, f"✨ GPT tarjima: {cur}/{total} bo'lak...")
-        translated = translate_with_claude(original_text, source_lang, gpt_progress)
+        # 4) GPT tarjima — jim ishlaydi
+        translated = translate_with_claude(original_text, source_lang, None)
         if not translated or not translated.strip():
             telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
             return
         # 5) Natija — matn + PDF
+        src_label = TRANSLATION_LANGS[source_lang]
         telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → 🇺🇿 O'zbek):")
         for i in range(0, len(translated), 4000):
             telegram_send_message(user_id, translated[i:i+4000])
