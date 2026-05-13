@@ -85,31 +85,32 @@
     position: relative;
   }
 
-  /* ── BG: cream + sakura blossoms ── */
+  /* ── BG: Pandora sayyorasi — bioluminescent o'rmon (Avatar uslubi) ── */
   .bg-aurora {
     position: fixed; inset: 0; z-index: 0;
     overflow: hidden;
     background:
-      radial-gradient(1200px 600px at 20% 0%, rgba(255, 204, 224, 0.85), transparent 60%),
-      radial-gradient(900px 500px at 100% 30%, rgba(255, 208, 176, 0.55), transparent 60%),
-      radial-gradient(800px 600px at 0% 100%, rgba(253, 164, 175, 0.5), transparent 60%),
-      radial-gradient(1000px 600px at 90% 100%, rgba(255, 228, 236, 0.85), transparent 60%),
-      linear-gradient(180deg, #FFF1F0 0%, #FFE4E6 50%, #FFF1F0 100%);
+      radial-gradient(1200px 600px at 20% 0%, rgba(34, 211, 238, 0.35), transparent 60%),
+      radial-gradient(900px 500px at 100% 30%, rgba(168, 85, 247, 0.32), transparent 60%),
+      radial-gradient(800px 600px at 0% 100%, rgba(14, 165, 233, 0.40), transparent 60%),
+      radial-gradient(1000px 600px at 90% 100%, rgba(56, 189, 248, 0.30), transparent 60%),
+      radial-gradient(600px 500px at 50% 50%, rgba(94, 234, 212, 0.20), transparent 70%),
+      linear-gradient(180deg, #020e1d 0%, #03182d 30%, #062a4a 60%, #03182d 100%);
   }
   .bg-aurora::before, .bg-aurora::after {
     content: ''; position: absolute; border-radius: 50%;
-    filter: blur(110px); opacity: 0.7;
+    filter: blur(130px); opacity: 0.75;
     will-change: transform;
   }
   .bg-aurora::before {
     width: 540px; height: 540px;
-    background: radial-gradient(circle, rgba(252, 165, 207, 0.95), transparent 70%);
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.9), transparent 70%);
     top: -220px; left: -160px;
     animation: aurora-1 28s ease-in-out infinite;
   }
   .bg-aurora::after {
     width: 460px; height: 460px;
-    background: radial-gradient(circle, rgba(255, 208, 176, 0.7), transparent 70%);
+    background: radial-gradient(circle, rgba(168, 85, 247, 0.8), transparent 70%);
     bottom: -200px; right: -140px;
     animation: aurora-2 34s ease-in-out infinite;
   }
@@ -123,37 +124,39 @@
     50% { transform: translate(-220px, -180px) scale(1.22); }
   }
 
-  /* ── SAKURA PETALS — falling pink petals ── */
+  /* ── PANDORA WOODSPRITES — uchuvchi bioluminescent sporalar ── */
   .petals { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
   .petal {
     position: absolute;
-    width: 14px; height: 14px;
-    background: radial-gradient(ellipse 50% 100% at 50% 0%, #FFCCE0 0%, #f9a8d4 60%, #ec4899 100%);
-    border-radius: 100% 0 60% 0;
+    width: 10px; height: 10px;
+    background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.95) 0%, rgba(165, 243, 252, 0.85) 30%, rgba(34, 211, 238, 0.55) 60%, transparent 100%);
+    border-radius: 50%;
     transform-origin: center;
     opacity: 0;
-    filter: drop-shadow(0 1px 2px rgba(236, 72, 153, 0.25));
+    filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.95)) drop-shadow(0 0 16px rgba(94, 234, 212, 0.6));
     animation: petal-fall linear infinite;
   }
   .petal::before {
-    content: ''; position: absolute; inset: 0;
-    background: radial-gradient(ellipse at 30% 30%, rgba(255,255,255,0.6), transparent 60%);
-    border-radius: inherit;
+    content: ''; position: absolute; inset: -3px;
+    background: radial-gradient(circle, rgba(165, 243, 252, 0.45), transparent 65%);
+    border-radius: 50%;
+    filter: blur(3px);
   }
   @keyframes petal-fall {
-    0%   { transform: translateY(-10vh) translateX(0) rotate(0deg) scale(0.8); opacity: 0; }
-    10%  { opacity: 0.9; }
-    50%  { transform: translateY(50vh) translateX(40px) rotate(220deg) scale(1); }
-    90%  { opacity: 0.85; }
-    100% { transform: translateY(110vh) translateX(-40px) rotate(540deg) scale(0.7); opacity: 0; }
+    0%   { transform: translateY(-10vh) translateX(0) scale(0.7); opacity: 0; }
+    10%  { opacity: 0.95; }
+    25%  { transform: translateY(20vh) translateX(20px) scale(1); }
+    50%  { transform: translateY(50vh) translateX(-20px) scale(1.1); opacity: 1; }
+    75%  { transform: translateY(80vh) translateX(20px) scale(0.95); }
+    100% { transform: translateY(110vh) translateX(-10px) scale(0.6); opacity: 0; }
   }
 
-  /* Soft spotlight follow */
+  /* Soft spotlight follow — bioluminescent glow */
   .spotlight {
     position: fixed; inset: 0; z-index: 0; pointer-events: none;
-    background: radial-gradient(280px circle at var(--mx) var(--my), rgba(252, 165, 207, 0.35), transparent 65%);
+    background: radial-gradient(280px circle at var(--mx) var(--my), rgba(34, 211, 238, 0.25), transparent 65%);
     transition: background 0.18s;
-    mix-blend-mode: overlay;
+    mix-blend-mode: screen;
   }
 
   /* ── LAYOUT ── */
