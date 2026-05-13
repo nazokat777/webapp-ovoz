@@ -3816,6 +3816,70 @@ def telegram_send_message(chat_id, text):
         logging.error(f"Telegram send error: {e}")
 
 
+def telegram_send_chat_action(chat_id, action="typing"):
+    """Telegram'da 'bot yozmoqda...' / 'bot audio yubormoqda...' indikatori.
+    Mavjud action turlari:
+      - typing (xabar yozyapti)
+      - upload_voice (audio yubormoqda)
+      - record_voice (audio yozmoqda)
+      - upload_document (PDF yubormoqda)
+    Indikator 5 sek davom etadi, har 4 sek qaytarish kerak."""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendChatAction"
+        requests.post(url, data={"chat_id": chat_id, "action": action}, timeout=10)
+    except Exception as e:
+        logging.debug(f"Telegram chat action xato: {e}")
+
+
+class ProgressIndicator:
+    """Uzoq jarayonlarda Telegram'da indikator ko'rsatadigan context manager.
+
+    Misol:
+        with ProgressIndicator(user_id, action="upload_voice"):
+            # uzoq audio yaratish
+            tts_path = make_tts(text, lang)
+
+    User chat'da "bot audio yubormoqda..." ko'radi va jarayon ishlayotganini biladi.
+    """
+    def __init__(self, chat_id, action="typing", interval=4):
+        self.chat_id = chat_id
+        self.action = action
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _loop(self):
+        # Darhol bir marta yuboramiz
+        telegram_send_chat_action(self.chat_id, self.action)
+        while not self._stop.is_set():
+            self._stop.wait(self.interval)
+            if self._stop.is_set():
+                break
+            telegram_send_chat_action(self.chat_id, self.action)
+
+    def start(self):
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=1)
+
+    def set_action(self, new_action):
+        """Indikator turini o'zgartirish (jarayon davomida)."""
+        self.action = new_action
+        telegram_send_chat_action(self.chat_id, self.action)
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *args):
+        self.stop()
+
+
 def telegram_send_document(chat_id, file_path, filename=None, caption=None):
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
@@ -4139,9 +4203,12 @@ def process_pdf_audio_only(user_id, pdf_path, target_lang="uz"):
 
     Agar manba va target tillari farq qilsa, ichida tarjima qilinadi,
     lekin natija sifatida FAQAT audio MP3 yuboriladi (matn ko'rsatilmaydi).
-    XAVFSIZ TO'LOV: audio yetkazilgach yechiladi."""
+    XAVFSIZ TO'LOV: audio yetkazilgach yechiladi.
+    PROGRESS: Telegram'da 'bot yozmoqda...' indikatori ishlaydi."""
     success = False
     estimated_audio_sec = 0
+    progress = ProgressIndicator(user_id, action="typing")
+    progress.start()
     try:
         # 1) PDF dan matn ajratish
         try:
@@ -4245,6 +4312,7 @@ def process_pdf_audio_only(user_id, pdf_path, target_lang="uz"):
             f"❌ Xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
         )
     finally:
+        progress.stop()  # Indikatorni o'chirish
         if pdf_path and os.path.exists(pdf_path):
             try: os.remove(pdf_path)
             except Exception: pass
