@@ -56,7 +56,7 @@
     --shadow-soft:
       0 1px 0 rgba(167, 139, 250, 0.25) inset,
       0 2px 6px rgba(34, 211, 238, 0.22),
-      0 8px 22px rgba(168, 85, 247, 0.25),
+      0 8px 22px rgba(131, 56, 236, 0.25),
       0 18px 40px rgba(34, 211, 238, 0.18);
 
     --safe-top: env(safe-area-inset-top, 0px);
@@ -365,7 +365,7 @@
     content: '';
     position: absolute; bottom: -60%; left: -20%;
     width: 280px; height: 280px;
-    background: radial-gradient(circle, rgba(255, 208, 176, 0.45) 0%, transparent 65%);
+    background: radial-gradient(circle, rgba(255, 190, 11, 0.45) 0%, transparent 65%);
     pointer-events: none;
   }
   .hero-content { position: relative; z-index: 1; text-align: center; }
@@ -523,7 +523,7 @@
   .vinyl::before {
     content: ''; position: absolute; inset: -6px;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(34, 211, 238, 0.65), rgba(168, 85, 247, 0.35) 50%, transparent 70%);
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.65), rgba(131, 56, 236, 0.35) 50%, transparent 70%);
     filter: blur(8px);
     animation: vinyl-pulse 3s ease-in-out infinite;
     z-index: -1;
@@ -549,7 +549,7 @@
     width: calc(100% - 8px); height: calc(100% - 8px);
     z-index: 2;
     animation: vinyl-spin 6s linear infinite;
-    filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.8)) drop-shadow(0 0 12px rgba(168, 85, 247, 0.55)) hue-rotate(180deg) saturate(1.4);
+    filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.8)) drop-shadow(0 0 12px rgba(131, 56, 236, 0.55)) hue-rotate(180deg) saturate(1.4);
   }
   .vinyl-flower svg { width: 100%; height: 100%; }
   /* Markaziy oltin nuqta (statik) */
@@ -583,7 +583,7 @@
     filter: drop-shadow(0 4px 12px rgba(34, 211, 238, 0.8));
   }
   .type-card.selected .vinyl::before {
-    background: radial-gradient(circle, rgba(252,165,207,0.85), rgba(255,228,236,0.5) 50%, transparent 70%);
+    background: radial-gradient(circle, rgba(252,165,207,0.85), rgba(45, 27, 94,0.5) 50%, transparent 70%);
   }
 
   .card-title { font-size: 14px; font-weight: 800; margin-bottom: 5px; letter-spacing: -0.3px; transition: color 0.28s; color: var(--text); }
@@ -594,10 +594,10 @@
     letter-spacing: 0.4px;
     backdrop-filter: blur(8px);
   }
-  .pill-pink   { background: rgba(124, 58, 237, 0.6); color: var(--pink-600); border: 1px solid rgba(167, 139, 250, 0.55); }
-  .pill-rose   { background: rgba(168, 85, 247, 0.4);  color: var(--pink-700); border: 1px solid rgba(217, 70, 239, 0.4); }
-  .pill-peach  { background: rgba(255, 208, 176, 0.5);  color: #06b6d4; border: 1px solid rgba(255, 208, 176, 0.7); }
-  .pill-blossom{ background: rgba(255, 228, 236, 0.7);  color: var(--pink-600); border: 1px solid rgba(167, 139, 250, 0.5); }
+  .pill-pink   { background: rgba(0, 245, 255, 0.18); color: #00f5ff; border: 1px solid rgba(0, 245, 255, 0.45); }
+  .pill-rose   { background: rgba(255, 0, 110, 0.18); color: #ff006e; border: 1px solid rgba(255, 0, 110, 0.45); }
+  .pill-peach  { background: rgba(255, 190, 11, 0.18); color: #ffbe0b; border: 1px solid rgba(255, 190, 11, 0.45); }
+  .pill-blossom{ background: rgba(131, 56, 236, 0.22); color: #c084fc; border: 1px solid rgba(131, 56, 236, 0.55); }
 
   /* Touch ripple */
   .ripple {
@@ -631,7 +631,7 @@
   }
   .upload-zone:hover { border-color: var(--pink-500); }
   .upload-zone:hover::before { opacity: 1; }
-  .upload-zone.dragover { border-color: var(--rose); background: rgba(168, 85, 247, 0.15); transform: scale(1.015); }
+  .upload-zone.dragover { border-color: var(--rose); background: rgba(131, 56, 236, 0.15); transform: scale(1.015); }
 
   .upload-icon {
     width: 60px; height: 60px; margin: 0 auto 14px;
@@ -883,7 +883,7 @@
     color: #fff; font-size: 15.5px; font-weight: 900;
     font-family: 'Manrope', sans-serif;
     cursor: pointer; margin-bottom: 8px;
-    box-shadow: 0 14px 36px rgba(34, 211, 238, 0.5), 0 0 30px rgba(168, 85, 247, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+    box-shadow: 0 14px 36px rgba(34, 211, 238, 0.5), 0 0 30px rgba(131, 56, 236, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.2);
     transition: transform 0.18s, box-shadow 0.22s;
     letter-spacing: -0.3px;
     min-height: 64px;
@@ -900,7 +900,7 @@
   }
   @keyframes shine { 0%, 100% { left: -100%; } 50% { left: 100%; } }
   .main-btn:active { transform: scale(0.97); }
-  .main-btn:hover { box-shadow: 0 18px 44px rgba(34, 211, 238, 0.7), 0 0 40px rgba(168, 85, 247, 0.5); }
+  .main-btn:hover { box-shadow: 0 18px 44px rgba(34, 211, 238, 0.7), 0 0 40px rgba(131, 56, 236, 0.5); }
   .main-btn-sub { text-align: center; font-size: 11px; color: var(--text-3); margin-bottom: 22px; font-weight: 500; }
 
   /* ── STATS ── */
@@ -975,7 +975,7 @@
     font-size: 13.5px;
     font-weight: 600;
     line-height: 1.5;
-    box-shadow: 0 16px 44px rgba(167, 139, 250, 0.35), inset 0 1px 0 rgba(255,255,255,0.85);
+    box-shadow: 0 16px 44px rgba(167, 139, 250, 0.35), inset 0 1px 0 rgba(20, 10, 50, 0.85);
     margin-bottom: 8px;
     display: flex; align-items: flex-start; gap: 12px;
     pointer-events: auto;
@@ -1006,7 +1006,7 @@
   /* ── PDF -> Ovoz alohida kart ── */
   .pdf-card {
     position: relative;
-    background: linear-gradient(135deg, rgba(255,228,236,0.85), rgba(255,255,255,0.85));
+    background: linear-gradient(135deg, rgba(45, 27, 94, 0.65), rgba(20, 10, 50, 0.85));
     backdrop-filter: blur(22px);
     -webkit-backdrop-filter: blur(22px);
     border: 1px solid var(--border-2);
@@ -1024,8 +1024,8 @@
   }
   .pdf-card:hover {
     transform: translateY(-3px);
-    border-color: rgba(252,165,207,0.6);
-    box-shadow: 0 18px 44px rgba(167, 139, 250, 0.32);
+    border-color: rgba(0, 245, 255, 0.55);
+    box-shadow: 0 18px 44px rgba(255, 0, 110, 0.35), 0 0 30px rgba(0, 245, 255, 0.25);
   }
   .pdf-card:active { transform: scale(0.98); }
   .pdf-card.selected {
