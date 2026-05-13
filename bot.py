@@ -3813,16 +3813,43 @@ def telegram_send_document(chat_id, file_path, filename=None, caption=None):
 
 
 def telegram_send_voice(chat_id, file_path, caption=None):
+    """Voice/audio yuboradi. Katta fayl (> 1 MB) bo'lsa sendAudio orqali yuboriladi
+    (sendVoice 1 MB lik chegaraga ega, uzun audio uchun mos emas)."""
     try:
+        size_mb = 0
+        try:
+            size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        except Exception:
+            pass
+
+        # Katta fayl uchun sendAudio (1 MB dan oshsa)
+        if size_mb > 1.0:
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendAudio"
+            with open(file_path, 'rb') as f:
+                files = {"audio": ("audio.mp3", f, "audio/mpeg")}
+                data = {"chat_id": chat_id, "title": "Audio"}
+                if caption:
+                    data["caption"] = caption
+                resp = requests.post(url, data=data, files=files, timeout=300)
+                if resp.status_code != 200:
+                    logging.error(f"Telegram sendAudio xato: {resp.status_code} — {resp.text[:200]}")
+                    return False
+                return True
+        # Kichik fayl uchun sendVoice
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVoice"
         with open(file_path, 'rb') as f:
             files = {"voice": ("voice.mp3", f, "audio/mpeg")}
             data = {"chat_id": chat_id}
             if caption:
                 data["caption"] = caption
-            requests.post(url, data=data, files=files, timeout=120)
+            resp = requests.post(url, data=data, files=files, timeout=300)
+            if resp.status_code != 200:
+                logging.error(f"Telegram sendVoice xato: {resp.status_code} — {resp.text[:200]}")
+                return False
+        return True
     except Exception as e:
-        logging.error(f"Telegram voice send error: {e}")
+        logging.error(f"Telegram voice/audio send error: {e}")
+        return False
 
 
 def _send_text_and_pdf(user_id, text):
@@ -4122,39 +4149,49 @@ def process_pdf_audio_only(user_id, pdf_path, target_lang="uz"):
                 return
 
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
-        telegram_send_message(user_id, f"⏳ Biroz kuting, PDF audio formatga o'tkazilmoqda ({tgt_label})...")
+        word_count_msg = f"📊 PDF: {word_count} so'z"
+        telegram_send_message(user_id, f"⏳ Biroz kuting...\n{word_count_msg}\n🎯 Audio til: {tgt_label}")
 
         # 2) Matn tilini aniqlash — agar manba va target bir xil bo'lsa, tarjima yo'q
         detected = detect_lang(original_text)
+        logging.info(f"📄 PDF audio_only: word_count={word_count}, detected={detected}, target={target_lang}")
+
         if detected == target_lang or target_lang == "auto":
             # Tarjimaga ehtiyoj yo'q — to'g'ridan-to'g'ri TTS
             tts_text = original_text
             tts_lang = detected if target_lang == "auto" else target_lang
+            logging.info("   → tarjimasiz, direct TTS")
         else:
             # Tarjima kerak (ichida bo'ladi, lekin user matn ko'rmaydi)
+            telegram_send_message(user_id, f"🔄 Matn {tgt_label} tiliga tarjima qilinmoqda...")
             try:
+                logging.info(f"   → GPT tarjima: {detected} → {target_lang}")
                 translated = translate_with_claude(original_text, detected, None, target_lang)
+                logging.info(f"   ✅ Tarjima tayyor: {len(translated)} belgi")
             except Exception as e:
                 logging.error(f"PDF audio uchun tarjima xato: {e}")
                 telegram_send_message(
                     user_id,
-                    f"❌ Audio yaratilmadi: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+                    f"❌ Tarjima xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
                 )
                 return
             if not translated or not translated.strip():
                 telegram_send_message(
                     user_id,
-                    "❌ Audio matn tayyorlanmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
+                    "❌ Tarjima bo'sh qaytdi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
                 )
                 return
             tts_text = translated
             tts_lang = target_lang
 
         # 3) Audio yaratish (TTS — target tilda)
+        telegram_send_message(user_id, f"🎙 Audio yaratilmoqda ({len(tts_text)} belgi)... bu biroz vaqt olishi mumkin.")
         try:
+            logging.info(f"   → TTS boshlandi: {len(tts_text)} belgi, lang={tts_lang}")
             tts_path = make_tts(tts_text, tts_lang)
+            logging.info(f"   ✅ TTS tayyor: {tts_path}")
         except Exception as e:
-            logging.error(f"PDF audio_only TTS xato: {e}")
+            logging.error(f"PDF audio_only TTS xato: {e}", exc_info=True)
             telegram_send_message(
                 user_id,
                 f"❌ Audio yaratilmadi: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
@@ -4163,15 +4200,23 @@ def process_pdf_audio_only(user_id, pdf_path, target_lang="uz"):
         if not tts_path:
             telegram_send_message(
                 user_id,
-                "❌ Audio yaratilmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
+                "❌ Audio yaratilmadi (bo'sh natija).\n\n💚 Daqiqa hisobingizdan yechilmadi."
             )
             return
 
         # 4) FAQAT audio yuborish (matn yo'q, PDF yo'q)
-        telegram_send_voice(user_id, tts_path, caption=f"🔊 PDF audio ({tgt_label})")
+        logging.info(f"   → Telegram'ga yuborilmoqda...")
+        sent = telegram_send_voice(user_id, tts_path, caption=f"🔊 PDF audio ({tgt_label})")
         try: os.remove(tts_path)
         except Exception: pass
+        if not sent:
+            telegram_send_message(
+                user_id,
+                "❌ Audio Telegram'ga yuborilmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+            return
         success = True
+        logging.info("✅ PDF audio_only muvaffaqiyatli yakunlandi")
 
         # 5) Tarif daqiqalari — faqat success'da
         if success and not _is_admin_id(user_id) and estimated_audio_sec > 0:
