@@ -1288,8 +1288,29 @@
     <svg class="deco-flower md bl" style="animation-delay:1.2s"><use href="#sakura"/></svg>
     <div class="hero-content">
       <div class="hero-badge" data-i18n="hero_badge">Artificial Intelligence Solutions</div>
-      <div class="hero-title" data-i18n="hero_title" data-i18n-html>Ovozni <em>matnga</em><br>aylantirish</div>
-      <div class="hero-desc" data-i18n="hero_desc">Audio, video, ovozli xabar yoki YouTube/Instagram havolasini yuboring — biz uni matn, PDF va ovozli formatga aylantiramiz.</div>
+      <div class="hero-title" data-i18n="hero_title" data-i18n-html>Istalgan <em>tildan</em><br>O'zbek <em>matn va PDF</em></div>
+      <div class="hero-desc" data-i18n="hero_desc">🌍 100+ til • 🎙 Audio, video, havola yoki ovozli yozuv — bir bosishda professional O'zbek matn va PDF formatga aylantiramiz.</div>
+    </div>
+  </div>
+
+  <!-- === [TARJIMA WEBAPP] Til tanlash UI — har doim hero ostida ko'rinadi === -->
+  <div class="reveal" id="translateLangPicker">
+    <div style="position: relative; background: linear-gradient(135deg, rgba(45, 27, 94, 0.78), rgba(20, 10, 50, 0.92)); backdrop-filter: blur(22px); border: 1.5px solid rgba(0, 245, 255, 0.45); border-radius: 22px; padding: 22px; margin-bottom: 22px; box-shadow: 0 8px 32px rgba(131, 56, 236, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.1); overflow: hidden;">
+      <!-- Iridescent glow accent -->
+      <div style="position: absolute; top: -50%; right: -20%; width: 200px; height: 200px; background: radial-gradient(circle, rgba(255, 0, 110, 0.35), transparent 70%); filter: blur(30px); pointer-events: none;"></div>
+      <div style="position: absolute; bottom: -50%; left: -20%; width: 200px; height: 200px; background: radial-gradient(circle, rgba(0, 245, 255, 0.35), transparent 70%); filter: blur(30px); pointer-events: none;"></div>
+      <div style="position: relative; z-index: 2;">
+        <div style="font-family:'Playfair Display',serif; font-size: 19px; font-weight: 800; color: #ffffff; margin-bottom: 6px; text-align: center; text-shadow: 0 2px 8px rgba(0, 245, 255, 0.4);">🌐 Audio qaysi tilda?</div>
+        <div style="font-size: 12px; color: rgba(224, 231, 255, 0.75); text-align: center; margin-bottom: 16px; font-weight: 500;">Manba tilni tanlang — bot O'zbekchaga tarjima qiladi</div>
+        <button onclick="selectTranslateLang('auto')" id="tlangAuto" class="tlang-btn" style="width: 100%; padding: 14px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.85); font-weight: 800; font-size: 14px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 10px;">🌐 Avto — har qanday tilni o'zi aniqlaydi</button>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+          <button onclick="selectTranslateLang('ru')" id="tlangRu" class="tlang-btn" style="padding: 14px 6px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
+          <button onclick="selectTranslateLang('en')" id="tlangEn" class="tlang-btn" style="padding: 14px 6px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
+          <button onclick="selectTranslateLang('ar')" id="tlangAr" class="tlang-btn" style="padding: 14px 6px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
+        </div>
+        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.55); text-align: center; margin-top: 10px;">💡 O'zbek audio uchun pastdagi tugmalardan birini tanlang (tarjima shart emas)</div>
+        <div id="tlangSelected" style="display:none; margin-top: 12px; text-align: center; font-size: 12.5px; color: #00f5ff; font-weight: 700;">✅ Til tanlandi — pastda audio/video yuboring</div>
+      </div>
     </div>
   </div>
 
@@ -1374,22 +1395,6 @@
         <div class="pdf-sub">Audio/video xorijiy tildan (Rus / Ingliz / Arab) avtomatik O'zbek tiliga tarjima qilinadi.</div>
         <span class="card-pill" style="background: rgba(0, 245, 255, 0.18); color: #00f5ff; border: 1px solid rgba(0, 245, 255, 0.55);">🌐 Yangi xizmat</span>
       </div>
-    </div>
-  </div>
-
-  <!-- === [TARJIMA WEBAPP] Til tanlash UI (avval yashirin) === -->
-  <div class="reveal" id="translateLangPicker" style="display:none;">
-    <div style="background: linear-gradient(135deg, rgba(45, 27, 94, 0.65), rgba(20, 10, 50, 0.85)); backdrop-filter: blur(22px); border: 1px solid rgba(0, 245, 255, 0.35); border-radius: 22px; padding: 22px; margin-bottom: 22px;">
-      <div style="font-family:'Playfair Display',serif; font-size:18px; font-weight:800; color: var(--text); margin-bottom: 8px; text-align: center;">🌐 Manba tilini tanlang</div>
-      <div style="font-size: 12px; color: var(--text-2); text-align: center; margin-bottom: 18px;">Audio yoki video qaysi tildan O'zbekchaga tarjima qilinsin?</div>
-      <button onclick="selectTranslateLang('auto')" id="tlangAuto" class="tlang-btn" style="width: 100%; padding: 16px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.75); font-weight: 800; font-size: 14px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 10px;">🌐 Har qanday tilni avto aniqlash</button>
-      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
-        <button onclick="selectTranslateLang('ru')" id="tlangRu" class="tlang-btn" style="padding: 16px 8px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.65); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-        <button onclick="selectTranslateLang('en')" id="tlangEn" class="tlang-btn" style="padding: 16px 8px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.65); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-        <button onclick="selectTranslateLang('ar')" id="tlangAr" class="tlang-btn" style="padding: 16px 8px; border-radius: 14px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.65); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
-      </div>
-      <div style="font-size: 11px; color: var(--text-3); text-align: center; margin-top: 10px;">💡 Aniq til biling — tezroq. Bilmaysizmi — "Avto" tanlang.</div>
-      <div id="tlangSelected" style="display:none; margin-top: 14px; text-align: center; font-size: 12.5px; color: #00f5ff; font-weight: 700;">✅ Til tanlandi — endi audio/video yuboring (yoki YouTube link)</div>
     </div>
   </div>
 
@@ -1716,8 +1721,8 @@
   const I18N = {
     uz: {
       hero_badge: 'Artificial Intelligence Solutions',
-      hero_title: 'Ovozni <em>matnga</em><br>aylantirish',
-      hero_desc: 'Audio, video, ovozli xabar yoki YouTube/Instagram havolasini yuboring — biz uni matn, PDF va ovozli formatga aylantiramiz.',
+      hero_title: 'Istalgan <em>tildan</em><br>O\'zbek <em>matn va PDF</em>',
+      hero_desc: '🌍 100+ til • 🎙 Audio, video, havola yoki ovozli yozuv — bir bosishda professional O\'zbek matn va PDF formatga aylantiramiz.',
       section_files: 'Fayl turini tanlang',
       section_pdf: 'PDF → Ovoz',
       card1_title: '🎵 Audio fayl',     card1_sub: 'MP3, WAV, OGG yuborish',       card1_pill: '🎵 Audio',
@@ -1757,8 +1762,8 @@
     },
     ru: {
       hero_badge: 'Решения с искусственным интеллектом',
-      hero_title: 'Преобразование <em>голоса</em><br>в текст',
-      hero_desc: 'Отправьте аудио, видео, голосовое сообщение или ссылку YouTube/Instagram — мы превратим всё это в текст, PDF и аудиоформат.',
+      hero_title: '<em>Любой язык</em> →<br>узбекский <em>текст и PDF</em>',
+      hero_desc: '🌍 100+ языков • 🎙 Аудио, видео, ссылка или голосовая запись — одним кликом превращаем в профессиональный узбекский текст и PDF.',
       section_files: 'Выберите тип файла',
       section_pdf: 'PDF → Аудио',
       card1_title: '🎵 Отправить аудио',  card1_sub: 'MP3, WAV, OGG → в текст',  card1_pill: '📁 Файл',
@@ -1796,8 +1801,8 @@
     },
     en: {
       hero_badge: 'Artificial Intelligence Solutions',
-      hero_title: 'Convert <em>voice</em><br>to text',
-      hero_desc: 'Send audio, video, voice message or a YouTube/Instagram link — we will turn it into text, PDF and audio format.',
+      hero_title: '<em>Any language</em> →<br>Uzbek <em>text & PDF</em>',
+      hero_desc: '🌍 100+ languages • 🎙 Audio, video, link or voice message — one click to professional Uzbek text and PDF.',
       section_files: 'Choose file type',
       section_pdf: 'PDF → Audio',
       card1_title: '🎵 Send audio',  card1_sub: 'MP3, WAV, OGG → to text',   card1_pill: '📁 File',
@@ -2118,9 +2123,7 @@
     const uploadTitle = uploadZone.querySelector('.upload-title');
     const uploadHint  = uploadZone.querySelector('.upload-hint');
     const fileInput = document.getElementById('fileInput');
-    // === [TARJIMA] Til tanlash UI: 'translate' rejimida YOKI til allaqachon tanlangan bo'lsa ko'rinadi ===
-    const tlangPicker = document.getElementById('translateLangPicker');
-    if (tlangPicker) tlangPicker.style.display = (type === 'translate' || translateLang) ? '' : 'none';
+    // === [TARJIMA] Til tanlash UI endi hero ostida har doim ko'rinadi — yashirmaymiz ===
     if (type === 'translate') {
       // === [TARJIMA] Til tanlash UI faqat shu yerda ochiladi, qolgan zonalar saqlanadi ===
       uploadZone.style.display = '';
