@@ -4149,9 +4149,12 @@ def process_audio_for_user(user_id, file_path, language="uz"):
 def process_translation_for_user(user_id, file_path, source_lang, target_lang="uz"):
     """WebApp orqali yuborilgan audio'ni xorijiy tildan tanlangan tilga tarjima.
     Hosil: matn + PDF (audio yo'q).
-    XAVFSIZ TO'LOV: daqiqa faqat tarjima muvaffaqiyatli yetkazilgandan keyin yechiladi."""
+    XAVFSIZ TO'LOV: daqiqa faqat tarjima muvaffaqiyatli yetkazilgandan keyin yechiladi.
+    PROGRESS: Telegram'da 'bot yozmoqda...' indikatori ishlaydi."""
     success = False
     actual_duration = 0
+    progress = ProgressIndicator(user_id, action="typing")
+    progress.start()
     try:
         if source_lang not in TRANSLATION_LANGS:
             telegram_send_message(user_id, "❌ Noma'lum manba til.")
@@ -4229,6 +4232,7 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
             f"💚 Daqiqa hisobingizdan yechilmadi."
         )
     finally:
+        progress.stop()
         if file_path and os.path.exists(file_path):
             try: os.remove(file_path)
             except Exception: pass
@@ -4358,9 +4362,12 @@ def process_pdf_audio_only(user_id, pdf_path, target_lang="uz"):
 
 def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", target_lang="uz"):
     """PDF'ni xorijiy tildan tanlangan tilga tarjima qilib audio + PDF chiqarish.
-    XAVFSIZ TO'LOV: faqat audio MUVAFFAQIYATLI yuborilgandan keyin daqiqa yechiladi."""
+    XAVFSIZ TO'LOV: faqat audio MUVAFFAQIYATLI yuborilgandan keyin daqiqa yechiladi.
+    PROGRESS: Telegram'da 'bot yozmoqda...' indikatori ishlaydi."""
     success = False
     estimated_audio_sec = 0
+    progress = ProgressIndicator(user_id, action="typing")
+    progress.start()
     try:
         # 1) PDF dan matn ajratish
         try:
@@ -4445,6 +4452,7 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
             f"❌ PDF tarjima xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
         )
     finally:
+        progress.stop()
         if pdf_path and os.path.exists(pdf_path):
             try: os.remove(pdf_path)
             except Exception: pass
@@ -4452,10 +4460,13 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
 
 def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"):
     """URL'dan video yuklab xorijiy tildan tanlangan tilga tarjima — matn + PDF.
-    XAVFSIZ TO'LOV: faqat matn yetkazilgandan keyin daqiqa yechiladi."""
+    XAVFSIZ TO'LOV: faqat matn yetkazilgandan keyin daqiqa yechiladi.
+    PROGRESS: Telegram'da 'bot yozmoqda...' indikatori ishlaydi."""
     audio_path = None
     success = False
     actual_duration = 0
+    progress = ProgressIndicator(user_id, action="typing")
+    progress.start()
     try:
         if source_lang not in TRANSLATION_LANGS:
             telegram_send_message(user_id, "❌ Noma'lum manba til.")
@@ -4543,6 +4554,7 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
             f"❌ URL tarjima xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
         )
     finally:
+        progress.stop()
         if audio_path:
             try: shutil.rmtree(os.path.dirname(audio_path), ignore_errors=True)
             except Exception: pass
