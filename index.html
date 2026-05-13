@@ -85,34 +85,47 @@
     position: relative;
   }
 
-  /* ── BG: Pandora sayyorasi — bioluminescent o'rmon (Avatar uslubi) ── */
+  /* ── BG: Virtual / Cyberpunk — neon grid + holographic glow ── */
   .bg-aurora {
     position: fixed; inset: 0; z-index: 0;
     overflow: hidden;
     background:
-      radial-gradient(1200px 600px at 20% 0%, rgba(34, 211, 238, 0.35), transparent 60%),
-      radial-gradient(900px 500px at 100% 30%, rgba(168, 85, 247, 0.32), transparent 60%),
-      radial-gradient(800px 600px at 0% 100%, rgba(14, 165, 233, 0.40), transparent 60%),
-      radial-gradient(1000px 600px at 90% 100%, rgba(56, 189, 248, 0.30), transparent 60%),
-      radial-gradient(600px 500px at 50% 50%, rgba(94, 234, 212, 0.20), transparent 70%),
-      linear-gradient(180deg, #020e1d 0%, #03182d 30%, #062a4a 60%, #03182d 100%);
+      /* Neon glow blobs */
+      radial-gradient(900px 500px at 15% 10%, rgba(168, 85, 247, 0.45), transparent 60%),
+      radial-gradient(800px 500px at 90% 15%, rgba(236, 72, 153, 0.38), transparent 60%),
+      radial-gradient(1000px 600px at 50% 50%, rgba(14, 165, 233, 0.30), transparent 65%),
+      radial-gradient(700px 500px at 0% 90%, rgba(34, 211, 238, 0.40), transparent 60%),
+      radial-gradient(800px 500px at 100% 95%, rgba(167, 139, 250, 0.35), transparent 60%),
+      /* Cyberpunk dark base */
+      linear-gradient(180deg, #050217 0%, #0a0524 30%, #0d0635 60%, #07021a 100%);
   }
-  .bg-aurora::before, .bg-aurora::after {
-    content: ''; position: absolute; border-radius: 50%;
-    filter: blur(130px); opacity: 0.75;
+  /* Digital grid pattern overlay */
+  .bg-aurora::before {
+    content: ''; position: absolute; inset: 0;
+    background-image:
+      linear-gradient(rgba(34, 211, 238, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(168, 85, 247, 0.08) 1px, transparent 1px);
+    background-size: 50px 50px;
+    mask-image: radial-gradient(ellipse at center, black 30%, transparent 90%);
+    -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 90%);
+    animation: grid-pulse 8s ease-in-out infinite;
+    opacity: 0.7;
+  }
+  /* Scan lines + neon glow blob */
+  .bg-aurora::after {
+    content: ''; position: absolute;
+    width: 520px; height: 520px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.55), transparent 70%);
+    filter: blur(120px);
+    top: 40%; left: 50%;
+    transform: translate(-50%, -50%);
+    animation: aurora-1 26s ease-in-out infinite;
     will-change: transform;
   }
-  .bg-aurora::before {
-    width: 540px; height: 540px;
-    background: radial-gradient(circle, rgba(34, 211, 238, 0.9), transparent 70%);
-    top: -220px; left: -160px;
-    animation: aurora-1 28s ease-in-out infinite;
-  }
-  .bg-aurora::after {
-    width: 460px; height: 460px;
-    background: radial-gradient(circle, rgba(168, 85, 247, 0.8), transparent 70%);
-    bottom: -200px; right: -140px;
-    animation: aurora-2 34s ease-in-out infinite;
+  @keyframes grid-pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 0.85; }
   }
   @keyframes aurora-1 {
     0%, 100% { transform: translate(0,0) scale(1); }
@@ -124,37 +137,53 @@
     50% { transform: translate(-220px, -180px) scale(1.22); }
   }
 
-  /* ── PANDORA WOODSPRITES — uchuvchi bioluminescent sporalar ── */
+  /* ── DIGITAL PARTICLES — neon piksellar (cyberpunk) ── */
   .petals { position: fixed; inset: 0; z-index: 0; pointer-events: none; }
   .petal {
     position: absolute;
-    width: 10px; height: 10px;
-    background: radial-gradient(circle at 50% 50%, rgba(255,255,255,0.95) 0%, rgba(165, 243, 252, 0.85) 30%, rgba(34, 211, 238, 0.55) 60%, transparent 100%);
-    border-radius: 50%;
+    width: 4px; height: 4px;
+    background: rgba(255, 255, 255, 0.95);
+    border-radius: 1px;
     transform-origin: center;
     opacity: 0;
-    filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.95)) drop-shadow(0 0 16px rgba(94, 234, 212, 0.6));
+    box-shadow:
+      0 0 6px rgba(34, 211, 238, 1),
+      0 0 12px rgba(34, 211, 238, 0.85),
+      0 0 18px rgba(168, 85, 247, 0.55);
     animation: petal-fall linear infinite;
   }
+  .petal:nth-child(3n) {
+    box-shadow:
+      0 0 6px rgba(236, 72, 153, 1),
+      0 0 12px rgba(236, 72, 153, 0.85),
+      0 0 18px rgba(168, 85, 247, 0.55);
+  }
+  .petal:nth-child(5n) {
+    box-shadow:
+      0 0 6px rgba(167, 139, 250, 1),
+      0 0 12px rgba(167, 139, 250, 0.85),
+      0 0 18px rgba(34, 211, 238, 0.55);
+    width: 6px; height: 2px;
+  }
   .petal::before {
-    content: ''; position: absolute; inset: -3px;
-    background: radial-gradient(circle, rgba(165, 243, 252, 0.45), transparent 65%);
-    border-radius: 50%;
-    filter: blur(3px);
+    content: ''; position: absolute; inset: -2px;
+    background: inherit;
+    border-radius: inherit;
+    filter: blur(2px);
+    opacity: 0.5;
   }
   @keyframes petal-fall {
-    0%   { transform: translateY(-10vh) translateX(0) scale(0.7); opacity: 0; }
-    10%  { opacity: 0.95; }
-    25%  { transform: translateY(20vh) translateX(20px) scale(1); }
-    50%  { transform: translateY(50vh) translateX(-20px) scale(1.1); opacity: 1; }
-    75%  { transform: translateY(80vh) translateX(20px) scale(0.95); }
-    100% { transform: translateY(110vh) translateX(-10px) scale(0.6); opacity: 0; }
+    0%   { transform: translateY(-10vh) translateX(0) scale(0.6); opacity: 0; }
+    8%   { opacity: 1; }
+    50%  { transform: translateY(50vh) translateX(15px) scale(1); }
+    92%  { opacity: 1; }
+    100% { transform: translateY(110vh) translateX(-15px) scale(0.5); opacity: 0; }
   }
 
-  /* Soft spotlight follow — bioluminescent glow */
+  /* Cursor spotlight — holographic glow */
   .spotlight {
     position: fixed; inset: 0; z-index: 0; pointer-events: none;
-    background: radial-gradient(280px circle at var(--mx) var(--my), rgba(34, 211, 238, 0.25), transparent 65%);
+    background: radial-gradient(320px circle at var(--mx) var(--my), rgba(168, 85, 247, 0.30), rgba(34, 211, 238, 0.12) 50%, transparent 70%);
     transition: background 0.18s;
     mix-blend-mode: screen;
   }
