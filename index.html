@@ -13,51 +13,51 @@
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,700;0,800;0,900;1,700;1,800&display=swap" rel="stylesheet">
 <style>
   :root {
-    /* Sakura cream backdrop */
-    --bg: #FFF1F0;
-    --bg-2: #FFE4E6;
-    --bg-3: #FFD7DD;
-    --cream: #FFF6EF;
+    /* Virtual / Cyberpunk dark backdrop */
+    --bg: #050217;
+    --bg-2: #0a0524;
+    --bg-3: #0d0635;
+    --cream: #0a0524;
 
-    /* Pink palette */
-    --pink-50:  #FFF5F7;
-    --pink-100: #FFE4EC;
-    --pink-200: #FFCCE0;
-    --pink-300: #FFADCC;
-    --pink-400: #f9a8d4;
-    --pink-500: #ec4899;
-    --pink-600: #db2777;
-    --pink-700: #be185d;
-    --rose:     #f43f5e;
-    --rose-soft:#fda4af;
+    /* Neon palette (pink-* variables — virtual rangga ko'chirildi) */
+    --pink-50:  #1a0f3d;
+    --pink-100: #2a1a52;
+    --pink-200: #4c1d95;
+    --pink-300: #7c3aed;
+    --pink-400: #a78bfa;
+    --pink-500: #22d3ee;   /* asosiy aksent — cyan */
+    --pink-600: #06b6d4;   /* qorongiroq cyan */
+    --pink-700: #0891b2;
+    --rose:     #d946ef;   /* magenta */
+    --rose-soft:#f0abfc;
 
-    /* Subtle peach */
-    --peach-100: #FFE9D6;
-    --peach-200: #FFD0B0;
+    /* Subtle accents (peach o'rniga elektr binafsha) */
+    --peach-100: #1e1b4b;
+    --peach-200: #312e81;
 
-    /* Glass surfaces (oq, translucent) */
-    --surface:   rgba(255, 255, 255, 0.55);
-    --surface-2: rgba(255, 255, 255, 0.78);
-    --surface-3: rgba(255, 255, 255, 0.94);
+    /* Glass surfaces (qora-binafsha, translucent) */
+    --surface:   rgba(30, 16, 70, 0.55);
+    --surface-2: rgba(30, 16, 70, 0.78);
+    --surface-3: rgba(20, 10, 50, 0.94);
 
-    /* Dark text on pastel */
-    --text:    #2a1a2e;
-    --text-2:  rgba(42, 26, 46, 0.62);
-    --text-3:  rgba(42, 26, 46, 0.36);
+    /* Yorqin matn qora fonda */
+    --text:    #e0e7ff;
+    --text-2:  rgba(224, 231, 255, 0.72);
+    --text-3:  rgba(224, 231, 255, 0.46);
 
-    --border:  rgba(236, 72, 153, 0.10);
-    --border-2:rgba(236, 72, 153, 0.22);
+    --border:  rgba(34, 211, 238, 0.18);
+    --border-2:rgba(34, 211, 238, 0.35);
 
-    --grad-pink:   linear-gradient(135deg, #f9a8d4 0%, #ec4899 50%, #db2777 100%);
-    --grad-soft:   linear-gradient(135deg, #FFE4EC 0%, #FFCCE0 50%, #f9a8d4 100%);
-    --grad-rose:   linear-gradient(135deg, #fda4af 0%, #f43f5e 100%);
-    --grad-blossom:linear-gradient(135deg, #FFCCE0 0%, #FFE4EC 50%, #FFE9D6 100%);
+    --grad-pink:   linear-gradient(135deg, #a78bfa 0%, #22d3ee 50%, #06b6d4 100%);
+    --grad-soft:   linear-gradient(135deg, #4c1d95 0%, #7c3aed 50%, #22d3ee 100%);
+    --grad-rose:   linear-gradient(135deg, #d946ef 0%, #a855f7 100%);
+    --grad-blossom:linear-gradient(135deg, #1e1b4b 0%, #4c1d95 50%, #22d3ee 100%);
 
     --shadow-soft:
-      0 1px 0 rgba(255,255,255,0.85) inset,
-      0 2px 6px rgba(252, 165, 207, 0.18),
-      0 8px 22px rgba(252, 165, 207, 0.20),
-      0 18px 40px rgba(244, 63, 94, 0.16);
+      0 1px 0 rgba(167, 139, 250, 0.25) inset,
+      0 2px 6px rgba(34, 211, 238, 0.22),
+      0 8px 22px rgba(168, 85, 247, 0.25),
+      0 18px 40px rgba(34, 211, 238, 0.18);
 
     --safe-top: env(safe-area-inset-top, 0px);
     --safe-bot: env(safe-area-inset-bottom, 0px);
@@ -65,7 +65,7 @@
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  *::selection { background: rgba(236, 72, 153, 0.35); color: var(--text); }
+  *::selection { background: rgba(34, 211, 238, 0.35); color: var(--text); }
 
   button { -webkit-appearance: none; appearance: none; outline: none; border: none; background: none; }
   input { -webkit-appearance: none; appearance: none; outline: none; border: none; background: none; }
@@ -85,47 +85,56 @@
     position: relative;
   }
 
-  /* ── BG: Virtual / Cyberpunk — neon grid + holographic glow ── */
+  /* ── BG: Virtual AI city — electric blue/purple holographic ── */
   .bg-aurora {
     position: fixed; inset: 0; z-index: 0;
     overflow: hidden;
     background:
-      /* Neon glow blobs */
-      radial-gradient(900px 500px at 15% 10%, rgba(168, 85, 247, 0.45), transparent 60%),
-      radial-gradient(800px 500px at 90% 15%, rgba(236, 72, 153, 0.38), transparent 60%),
-      radial-gradient(1000px 600px at 50% 50%, rgba(14, 165, 233, 0.30), transparent 65%),
-      radial-gradient(700px 500px at 0% 90%, rgba(34, 211, 238, 0.40), transparent 60%),
-      radial-gradient(800px 500px at 100% 95%, rgba(167, 139, 250, 0.35), transparent 60%),
-      /* Cyberpunk dark base */
-      linear-gradient(180deg, #050217 0%, #0a0524 30%, #0d0635 60%, #07021a 100%);
+      /* Electric streaks (rasmiy energiya chiziqlari) */
+      radial-gradient(ellipse 100% 50% at 10% 30%, rgba(124, 58, 237, 0.55), transparent 55%),
+      radial-gradient(ellipse 100% 50% at 90% 60%, rgba(34, 211, 238, 0.55), transparent 55%),
+      radial-gradient(ellipse 60% 90% at 50% 100%, rgba(168, 85, 247, 0.45), transparent 60%),
+      /* Markaziy ko'k glow (laptop ekranidagi neon) */
+      radial-gradient(circle 700px at 50% 45%, rgba(59, 130, 246, 0.35), transparent 65%),
+      /* Shahar lights — atrofdagi nuqtalar */
+      radial-gradient(circle 5px at 12% 8%, rgba(255, 255, 255, 0.7), transparent 100%),
+      radial-gradient(circle 4px at 25% 14%, rgba(167, 139, 250, 0.6), transparent 100%),
+      radial-gradient(circle 6px at 78% 6%, rgba(34, 211, 238, 0.75), transparent 100%),
+      radial-gradient(circle 3px at 92% 18%, rgba(255, 255, 255, 0.65), transparent 100%),
+      radial-gradient(circle 5px at 18% 22%, rgba(192, 132, 252, 0.55), transparent 100%),
+      radial-gradient(circle 4px at 68% 12%, rgba(59, 130, 246, 0.6), transparent 100%),
+      radial-gradient(circle 3px at 85% 28%, rgba(255, 255, 255, 0.55), transparent 100%),
+      radial-gradient(circle 5px at 8% 36%, rgba(217, 70, 239, 0.5), transparent 100%),
+      /* Asosiy chuqur navy fon */
+      linear-gradient(180deg, #050a1f 0%, #0a1235 25%, #0d1b48 50%, #0a1235 75%, #050a1f 100%);
   }
-  /* Digital grid pattern overlay */
+  /* Curving light streaks (rasmdagi yorug'lik to'lqinlari) */
   .bg-aurora::before {
     content: ''; position: absolute; inset: 0;
-    background-image:
-      linear-gradient(rgba(34, 211, 238, 0.08) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(168, 85, 247, 0.08) 1px, transparent 1px);
-    background-size: 50px 50px;
-    mask-image: radial-gradient(ellipse at center, black 30%, transparent 90%);
-    -webkit-mask-image: radial-gradient(ellipse at center, black 30%, transparent 90%);
-    animation: grid-pulse 8s ease-in-out infinite;
-    opacity: 0.7;
+    background:
+      linear-gradient(95deg, transparent 30%, rgba(34, 211, 238, 0.18) 47%, rgba(34, 211, 238, 0.32) 50%, rgba(34, 211, 238, 0.18) 53%, transparent 70%),
+      linear-gradient(85deg, transparent 35%, rgba(168, 85, 247, 0.15) 49%, rgba(168, 85, 247, 0.28) 51%, rgba(168, 85, 247, 0.15) 54%, transparent 68%);
+    filter: blur(2px);
+    mix-blend-mode: screen;
+    animation: streak-flow 14s ease-in-out infinite;
+    opacity: 0.85;
   }
-  /* Scan lines + neon glow blob */
+  /* Markaziy holografik glow */
   .bg-aurora::after {
     content: ''; position: absolute;
-    width: 520px; height: 520px;
+    width: 640px; height: 640px;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(34, 211, 238, 0.55), transparent 70%);
-    filter: blur(120px);
-    top: 40%; left: 50%;
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.50) 0%, rgba(124, 58, 237, 0.28) 35%, transparent 70%);
+    filter: blur(110px);
+    top: 30%; left: 50%;
     transform: translate(-50%, -50%);
-    animation: aurora-1 26s ease-in-out infinite;
+    animation: aurora-1 24s ease-in-out infinite;
+    mix-blend-mode: screen;
     will-change: transform;
   }
-  @keyframes grid-pulse {
-    0%, 100% { opacity: 0.5; }
-    50% { opacity: 0.85; }
+  @keyframes streak-flow {
+    0%, 100% { transform: translateX(-3%) scale(1); opacity: 0.6; }
+    50% { transform: translateX(3%) scale(1.05); opacity: 1; }
   }
   @keyframes aurora-1 {
     0%, 100% { transform: translate(0,0) scale(1); }
@@ -369,7 +378,7 @@
     padding: 6px 0 14px;
     display: flex; align-items: center; gap: 8px;
   }
-  .section-label::before { content: '🌸'; font-size: 14px; }
+  .section-label::before { content: '◆'; font-size: 12px; color: var(--pink-500); }
 
   /* ── TYPE CARDS ── */
   .type-grid {
@@ -407,7 +416,7 @@
   .type-card.selected::before {
     content: ''; position: absolute; inset: -1.5px;
     border-radius: 22px;
-    background: conic-gradient(from 0deg, #FFCCE0, #ec4899, #f9a8d4, #FFE4EC, #FFD0B0, #ec4899, #FFCCE0);
+    background: conic-gradient(from 0deg, #22d3ee, #7c3aed, #a78bfa, #d946ef, #22d3ee, #7c3aed, #22d3ee);
     z-index: -1;
     animation: rotate-border 5s linear infinite;
     filter: blur(0.6px);
@@ -421,27 +430,27 @@
     transform: translateY(-3px);
   }
   .type-card.selected {
-    background: linear-gradient(135deg, rgba(255, 204, 224, 0.5), rgba(255, 255, 255, 0.6));
+    background: linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(124, 58, 237, 0.25));
   }
-  .type-card.selected .card-title { color: var(--pink-600); }
+  .type-card.selected .card-title { color: var(--pink-500); }
 
   .card-glow {
     position: absolute; top: 0; right: 0;
     width: 110px; height: 110px; border-radius: 0 22px 0 60%;
-    opacity: 0.22; filter: blur(24px);
+    opacity: 0.35; filter: blur(24px);
     pointer-events: none;
     z-index: 0;
   }
-  .type-card:nth-child(1) .card-glow { background: var(--pink-300); }
-  .type-card:nth-child(2) .card-glow { background: var(--pink-200); }
-  .type-card:nth-child(3) .card-glow { background: var(--peach-200); }
-  .type-card:nth-child(4) .card-glow { background: var(--pink-300); }
+  .type-card:nth-child(1) .card-glow { background: #22d3ee; }
+  .type-card:nth-child(2) .card-glow { background: #a78bfa; }
+  .type-card:nth-child(3) .card-glow { background: #d946ef; }
+  .type-card:nth-child(4) .card-glow { background: #06b6d4; }
 
   .card-icon {
     width: 50px; height: 50px; border-radius: 16px;
     margin-bottom: 14px;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 6px 18px rgba(236, 72, 153, 0.35), inset 0 1px 0 rgba(255,255,255,0.65);
+    box-shadow: 0 6px 18px rgba(34, 211, 238, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.25);
     transition: transform 0.32s cubic-bezier(.34,1.56,.64,1);
     overflow: hidden;
   }
@@ -453,15 +462,15 @@
     100% { transform: scale(1.04); }
   }
 
-  .icon-pink   { background: linear-gradient(135deg, #FFCCE0, #ec4899); }
-  .icon-rose   { background: linear-gradient(135deg, #fda4af, #f43f5e); }
-  .icon-peach  { background: linear-gradient(135deg, #FFE9D6, #FFD0B0); }
-  .icon-blossom{ background: linear-gradient(135deg, #FFE4EC, #f9a8d4); }
+  .icon-pink   { background: linear-gradient(135deg, #22d3ee, #06b6d4); }
+  .icon-rose   { background: linear-gradient(135deg, #a78bfa, #7c3aed); }
+  .icon-peach  { background: linear-gradient(135deg, #d946ef, #a855f7); }
+  .icon-blossom{ background: linear-gradient(135deg, #38bdf8, #6366f1); }
 
-  .card-icon svg { width: 24px; height: 24px; filter: drop-shadow(0 1px 2px rgba(190, 24, 93, 0.25)); }
+  .card-icon svg { width: 24px; height: 24px; filter: drop-shadow(0 0 4px rgba(34, 211, 238, 0.6)); }
   .card-icon svg * { stroke: #fff; }
 
-  /* Aylanuvchi sakura — vinyl o'rniga (kreativ) */
+  /* Aylanuvchi holografik aksent — neon disk */
   .vinyl {
     position: relative;
     width: 64px; height: 64px;
@@ -469,36 +478,37 @@
     display: flex; align-items: center; justify-content: center;
     isolation: isolate;
   }
-  /* Halo glow (orqada) */
+  /* Halo glow (orqada) — neon cyan */
   .vinyl::before {
     content: ''; position: absolute; inset: -6px;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(252,165,207,0.55), rgba(255,228,236,0.3) 50%, transparent 70%);
+    background: radial-gradient(circle, rgba(34, 211, 238, 0.65), rgba(168, 85, 247, 0.35) 50%, transparent 70%);
     filter: blur(8px);
     animation: vinyl-pulse 3s ease-in-out infinite;
     z-index: -1;
   }
-  /* Tashqi gulli halqa (sekin aylanadi) */
+  /* Tashqi neon halqa (sekin aylanadi) */
   .vinyl::after {
     content: ''; position: absolute; inset: 0;
     border-radius: 50%;
     background:
       conic-gradient(from 0deg,
-        rgba(255,204,224,0.6),
-        rgba(252,165,207,0.4),
-        rgba(255,228,236,0.7),
-        rgba(252,165,207,0.4),
-        rgba(255,204,224,0.6));
+        rgba(34, 211, 238, 0.7),
+        rgba(167, 139, 250, 0.5),
+        rgba(217, 70, 239, 0.6),
+        rgba(34, 211, 238, 0.7),
+        rgba(167, 139, 250, 0.5),
+        rgba(34, 211, 238, 0.7));
     animation: vinyl-spin 12s linear infinite;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
   }
-  /* Aylanuvchi katta sakura SVG */
+  /* Markaz icon (sakura SVG — neon glow filter bilan) */
   .vinyl-flower {
     position: absolute; inset: 4px;
     width: calc(100% - 8px); height: calc(100% - 8px);
     z-index: 2;
     animation: vinyl-spin 6s linear infinite;
-    filter: drop-shadow(0 2px 6px rgba(236, 72, 153, 0.5));
+    filter: drop-shadow(0 0 6px rgba(34, 211, 238, 0.8)) drop-shadow(0 0 12px rgba(168, 85, 247, 0.55)) hue-rotate(180deg) saturate(1.4);
   }
   .vinyl-flower svg { width: 100%; height: 100%; }
   /* Markaziy oltin nuqta (statik) */
