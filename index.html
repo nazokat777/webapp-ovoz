@@ -1293,36 +1293,25 @@
     </div>
   </div>
 
-  <!-- === [TARJIMA WEBAPP] Source + Target til tanlash === -->
+  <!-- === [TARJIMA WEBAPP] Faqat hosil til tanlash — manba avto === -->
   <div class="reveal" id="translateLangPicker">
     <div style="position: relative; background: linear-gradient(135deg, rgba(45, 27, 94, 0.82), rgba(20, 10, 50, 0.94)); backdrop-filter: blur(22px); border: 1.5px solid rgba(0, 245, 255, 0.45); border-radius: 22px; padding: 20px; margin-bottom: 22px; box-shadow: 0 8px 32px rgba(131, 56, 236, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); overflow: hidden;">
-      <!-- Iridescent glow accents -->
       <div style="position: absolute; top: -50%; right: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(255, 0, 110, 0.4), transparent 70%); filter: blur(30px); pointer-events: none;"></div>
       <div style="position: absolute; bottom: -50%; left: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(0, 245, 255, 0.4), transparent 70%); filter: blur(30px); pointer-events: none;"></div>
       <div style="position: relative; z-index: 2;">
-        <div style="font-family:'Playfair Display',serif; font-size: 18px; font-weight: 800; color: #ffffff; margin-bottom: 4px; text-align: center; text-shadow: 0 2px 8px rgba(0, 245, 255, 0.5);">🌐 Tarjima yo'nalishi</div>
-        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.7); text-align: center; margin-bottom: 14px; font-weight: 500;">Qaysi tildan qaysi tilga aylantirilsin?</div>
+        <div style="font-family:'Playfair Display',serif; font-size: 18px; font-weight: 800; color: #ffffff; margin-bottom: 4px; text-align: center; text-shadow: 0 2px 8px rgba(0, 245, 255, 0.5);">🎯 Qaysi tilga aylantirilsin?</div>
+        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.7); text-align: center; margin-bottom: 14px; font-weight: 500;">Manba tilini bot o'zi aniqlaydi — siz faqat hosil tilni tanlang</div>
 
-        <!-- SOURCE -->
-        <div style="font-size: 10px; font-weight: 800; color: rgba(0, 245, 255, 0.9); margin-bottom: 6px; letter-spacing: 1px;">📡 MANBA TIL</div>
-        <button onclick="selectTranslateLang('auto')" id="tlangAuto" class="tlang-btn" style="width: 100%; padding: 12px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.25); color: rgba(255, 255, 255, 0.85); font-weight: 800; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 8px;">🌐 Avto aniqlash</button>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 14px;">
-          <button onclick="selectTranslateLang('ru')" id="tlangRu" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-          <button onclick="selectTranslateLang('en')" id="tlangEn" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-          <button onclick="selectTranslateLang('ar')" id="tlangAr" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
+        <!-- TARGET ONLY -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+          <button onclick="selectTargetLang('uz')" id="ttgtUz" class="ttgt-btn" style="padding: 16px 4px; border-radius: 12px; background: linear-gradient(135deg, #ff006e, #8338ec); border: 2px solid #ff006e; color: #fff; font-weight: 900; font-size: 14px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 0 20px rgba(255, 0, 110, 0.55);">🇺🇿 O'zbek</button>
+          <button onclick="selectTargetLang('ru')" id="ttgtRu" class="ttgt-btn" style="padding: 16px 4px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 14px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
+          <button onclick="selectTargetLang('en')" id="ttgtEn" class="ttgt-btn" style="padding: 16px 4px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 14px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
+          <button onclick="selectTargetLang('ar')" id="ttgtAr" class="ttgt-btn" style="padding: 16px 4px; border-radius: 12px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 14px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
         </div>
 
-        <!-- TARGET -->
-        <div style="font-size: 10px; font-weight: 800; color: rgba(255, 0, 110, 0.95); margin-bottom: 6px; letter-spacing: 1px;">🎯 HOSIL TIL</div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
-          <button onclick="selectTargetLang('uz')" id="ttgtUz" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #ff006e, #8338ec); border: 2px solid #ff006e; color: #fff; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 0 18px rgba(255, 0, 110, 0.55);">🇺🇿 O'zbek</button>
-          <button onclick="selectTargetLang('ru')" id="ttgtRu" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-          <button onclick="selectTargetLang('en')" id="ttgtEn" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-          <button onclick="selectTargetLang('ar')" id="ttgtAr" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1.5px solid rgba(255, 255, 255, 0.18); color: rgba(255, 255, 255, 0.7); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
-        </div>
-
-        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.55); text-align: center; margin-top: 12px;">💡 Manba tanlanmasdan oddiy audio→matn yuborilsa, tarjima qilinmaydi</div>
-        <div id="tlangSelected" style="display:none; margin-top: 10px; text-align: center; font-size: 12px; color: #00f5ff; font-weight: 700;"></div>
+        <div style="font-size: 11px; color: rgba(224, 231, 255, 0.6); text-align: center; margin-top: 12px;">💡 Pastda fayl yuborsangiz: matn + PDF + audio (tanlangan tilda)</div>
+        <div id="tlangSelected" style="display:none;"></div>
       </div>
     </div>
   </div>
@@ -1389,24 +1378,6 @@
         <div class="pdf-title" data-i18n="pdf_title">📄 PDF faylni ovozga aylantirish</div>
         <div class="pdf-sub" data-i18n="pdf_sub">PDF hujjatni yuklang — biz uni ovozli MP3 ga aylantiramiz. Yo'lda yoki dam olishda tinglash uchun qulay.</div>
         <span class="card-pill pill-blossom" data-i18n="pdf_pill">Yangi xizmat</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- === [TARJIMA WEBAPP CARD] Xorijiy tildan tarjima === -->
-  <div class="reveal">
-    <div class="pdf-card" onclick="selectType(this,'translate')" data-type="translate" style="background: linear-gradient(135deg, rgba(255, 0, 110, 0.18), rgba(0, 245, 255, 0.18), rgba(131, 56, 236, 0.18));">
-      <div class="card-glow" style="background: #ff006e;"></div>
-      <div class="pdf-icon" style="background: linear-gradient(135deg, #ff006e, #8338ec, #00f5ff); background-size: 200% 200%; animation: btn-grad 4s ease-in-out infinite;">
-        <svg viewBox="0 0 24 24" fill="none" style="width:28px;height:28px;stroke:#fff;stroke-width:2;">
-          <path d="M5 8l6 6 6-6M9 16h6"/>
-          <circle cx="12" cy="12" r="10"/>
-        </svg>
-      </div>
-      <div class="pdf-info">
-        <div class="pdf-title">🌐 Xorijiy tildan tarjima</div>
-        <div class="pdf-sub">Audio/video xorijiy tildan (Rus / Ingliz / Arab) avtomatik O'zbek tiliga tarjima qilinadi.</div>
-        <span class="card-pill" style="background: rgba(0, 245, 255, 0.18); color: #00f5ff; border: 1px solid rgba(0, 245, 255, 0.55);">🌐 Yangi xizmat</span>
       </div>
     </div>
   </div>

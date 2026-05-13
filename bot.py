@@ -3264,6 +3264,70 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
 # === [/TARJIMA — WEBAPP THREAD MODE] ===========================================
 
 
+def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", target_lang="uz"):
+    """PDF'ni xorijiy tildan tanlangan tilga tarjima qilib audio + PDF chiqarish.
+    User PDF yuklaydi → matn ajratiladi → GPT-4o target tilga tarjima qiladi →
+    Edge TTS audio yaratadi → 3 ta natija: matn + tarjima PDF + audio."""
+    try:
+        # 1) PDF dan matn ajratish
+        try:
+            original_text = extract_pdf_text(pdf_path)
+        except Exception as e:
+            telegram_send_message(user_id, f"❌ PDF o'qib bo'lmadi: {str(e)[:200]}")
+            return
+        if not original_text or not original_text.strip():
+            telegram_send_message(user_id, "❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).")
+            return
+        # 2) PDF uzunligi (so'z) tarif uchun — taxminiy 1 so'z = 0.4 sek audio
+        word_count = len(original_text.split())
+        estimated_audio_sec = max(60, int(word_count * 0.4))  # kamida 1 daqiqa
+        if not _is_admin_id(user_id):
+            if not check_limit_by_user_id(user_id, estimated_audio_sec):
+                return
+        telegram_send_message(user_id, "⏳ Biroz kuting, PDF tarjima qilinmoqda...")
+        # 3) GPT tarjima (agar source != target bo'lsa)
+        if source_lang and source_lang != target_lang and source_lang != "":
+            translated = translate_with_claude(original_text, source_lang, None, target_lang)
+        else:
+            # Agar source berilmagan bo'lsa, auto-detect orqali tarjima
+            translated = translate_with_claude(original_text, "auto", None, target_lang)
+        if not translated or not translated.strip():
+            telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
+            return
+        # 4) Natija — matn + PDF + audio (target tilda)
+        tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
+        telegram_send_message(user_id, f"🌐 PDF tarjima ({tgt_label}):")
+        for i in range(0, len(translated), 4000):
+            telegram_send_message(user_id, translated[i:i+4000])
+        # PDF
+        try:
+            pdf_out = make_pdf(translated, f"Tarjima — {tgt_label}")
+            telegram_send_document(user_id, pdf_out, filename=f"tarjima_pdf_{target_lang}.pdf", caption=f"📎 Tarjima PDF ({tgt_label})")
+            try: os.remove(pdf_out)
+            except Exception: pass
+        except Exception as e:
+            logging.warning(f"PDF tarjima PDF yaratishda xato: {e}")
+        # Audio (TTS target tilda)
+        try:
+            tts_path = make_tts(translated, target_lang)
+            if tts_path:
+                telegram_send_voice(user_id, tts_path, caption=f"🔊 Audio versiya ({tgt_label})")
+                try: os.remove(tts_path)
+                except Exception: pass
+        except Exception as e:
+            logging.warning(f"PDF tarjima TTS xato: {e}")
+        # 5) Tarif daqiqalari
+        if not _is_admin_id(user_id) and estimated_audio_sec > 0:
+            add_user_usage(user_id, estimated_audio_sec)
+    except Exception as e:
+        logging.error(f"process_pdf_translation_for_user xato: {e}")
+        telegram_send_message(user_id, f"❌ PDF tarjima xato: {str(e)[:300]}")
+    finally:
+        if pdf_path and os.path.exists(pdf_path):
+            try: os.remove(pdf_path)
+            except Exception: pass
+
+
 def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"):
     """URL'dan video yuklab xorijiy tildan tanlangan tilga tarjima — matn + PDF + audio."""
     audio_path = None
