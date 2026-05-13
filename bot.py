@@ -1093,7 +1093,7 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
                     data["language"] = source_lang
                 resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
             if resp.status_code != 200:
-                raise Exception(f"Whisper xato (bo'lak {idx}/{total}): HTTP {resp.status_code} — {resp.text[:200]}")
+                raise Exception(f"Transkripsiya xatosi (bo'lak {idx}/{total}): HTTP {resp.status_code}")
             result = resp.json()
             text = (result.get("text") or "").strip()
             if text:
@@ -1140,7 +1140,7 @@ def _gpt_translate_one(text, source_lang, target_lang="uz"):
     }
     resp = requests.post(url, headers=headers, json=payload, timeout=300)
     if resp.status_code != 200:
-        raise Exception(f"GPT xato: HTTP {resp.status_code} — {resp.text[:200]}")
+        raise Exception(f"Tarjima xatosi: HTTP {resp.status_code}")
     data = resp.json()
     choices = data.get("choices", [])
     if not choices:
@@ -2982,8 +2982,7 @@ async def translate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons.append([InlineKeyboardButton("❌ Bekor qilish", callback_data="transl:cancel")])
     await update.message.reply_text(
         "🌐 *Xorijiy tildan tarjima*\n\n"
-        "Audio yoki videoni xorijiy tildan O'zbek tiliga tarjima qilamiz.\n"
-        "Whisper (transkripsiya) + GPT-4o (tarjima).\n\n"
+        "Audio yoki videoni xorijiy tildan O'zbek tiliga tarjima qilamiz.\n\n"
         f"💡 *Tarif daqiqalari:* tarjima ham boshqa xizmatlar bilan birga umumiy "
         f"daqiqa hisobidan sanaydi (1 daqiqa audio = 1 daqiqa tarifdan).\n\n"
         "Qaysi tildan tarjima qilamiz?",
