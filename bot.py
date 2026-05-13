@@ -1513,29 +1513,37 @@ def _gpt_translate_one(text, source_lang, target_lang="uz"):
         "transliteratsiya qilma.\n"
     )
 
-    # Target tilni mukammal aniqlash uchun maxsus eslatmalar
+    # Target tilni mukammal aniqlash uchun maxsus, ingliz tilida (GPT uchun aniq) qoidalar
+    target_english_name = {
+        "uz": "Uzbek (Latin alphabet)",
+        "ru": "Russian (Cyrillic alphabet)",
+        "en": "English",
+        "ar": "Arabic (Arabic script العربية)",
+    }
     target_strict_rules = {
         "uz": (
-            "MUHIM: Tarjima FAQAT O'ZBEK TILIDA bo'lishi kerak (Turk tili EMAS, "
-            "Uyghur EMAS, Qozoq EMAS). O'zbek lotin alifbosi ishlatilsin: "
-            "o', g', sh, ch, ng. Misol: 'O'zbekiston', 'kishi', 'g'oyat', "
-            "'qiyinchilik'. Turkcha so'zlar ('ı', 'ş', 'ğ', 'ç', 'ö', 'ü') "
-            "BO'LMASIN. Agar shubhalansangiz — har doim o'zbek tilini tanlang."
+            "CRITICAL: Output MUST be in UZBEK LATIN alphabet (o', g', sh, ch, ng). "
+            "NOT Turkish, NOT Uyghur, NOT Kazakh. Use: 'O'zbekiston', 'kishi', "
+            "'g'oyat'. NEVER use Turkish characters (ı, ş, ğ, ç, ö, ü)."
         ),
-        "ru": "MUHIM: Tarjima FAQAT rus tilida (kirill alifbosi).",
-        "en": "MUHIM: Tarjima FAQAT ingliz tilida.",
-        "ar": "MUHIM: Tarjima FAQAT arab tilida (arab yozuvi).",
+        "ru": "CRITICAL: Output MUST be in Russian (Cyrillic script only).",
+        "en": "CRITICAL: Output MUST be in English only.",
+        "ar": (
+            "CRITICAL: Output MUST be in ARABIC SCRIPT only (العربية). "
+            "Do NOT output Latin or Cyrillic. Use proper Modern Standard Arabic. "
+            "If input is in another language, you MUST translate ALL of it to Arabic."
+        ),
     }
     target_rule = target_strict_rules.get(target_lang, "")
+    target_eng = target_english_name.get(target_lang, tgt_name)
 
     base_system = (
-        f"Sen {tgt_name} tilini mukammal biladigan professional tarjimon va "
-        f"diniy/akademik matnlar mutaxassisi. Xorijiy tildagi matnni {tgt_name} "
-        f"tiliga adabiy, tabiiy va to'liq aniq ma'noni saqlagan holda tarjima qil. "
-        f"Iboralar va idiomalarni {tgt_name}cha ekvivalent bilan almashtir, "
-        f"so'zma-so'z tarjima qilma. "
-        f"Faqat tarjimani qaytar — boshqa hech qanday izoh, sarlavha yoki "
-        f"kirish so'zi yozma.\n\n"
+        f"You are a professional translator specializing in religious and academic texts. "
+        f"Translate the given text into {target_eng}. "
+        f"Use literary, natural style while preserving exact meaning. "
+        f"Replace idioms with equivalent expressions in the target language. "
+        f"Do NOT translate word-by-word. "
+        f"Return ONLY the translation — no explanations, no headers, no introductions.\n\n"
         f"{target_rule}"
     )
 
@@ -1549,27 +1557,29 @@ def _gpt_translate_one(text, source_lang, target_lang="uz"):
             "ularni tarjima qilma — asl arab tilida qoldir."
         )
 
-    # Maqsadli tilni har gal eslatib turish (uzun matnda GPT chalg'imasligi uchun)
-    target_clear = {
-        "uz": "🇺🇿 O'ZBEK TILI (lotin alifbosi: o', g', sh, ch — TURK EMAS!)",
-        "ru": "🇷🇺 RUS TILI (kirill alifbosi)",
-        "en": "🇬🇧 INGLIZ TILI",
-        "ar": "🇸🇦 ARAB TILI (arab yozuvi)",
+    # Ingliz tilida aniq instructions — GPT ularni yaxshiroq tushinadi
+    source_english = {
+        "auto": "the input language (auto-detect)",
+        "uz": "Uzbek",
+        "ru": "Russian",
+        "en": "English",
+        "ar": "Arabic",
     }
-    target_name_clear = target_clear.get(target_lang, tgt_name)
+    src_eng = source_english.get(source_lang, source_lang)
 
     if source_lang == "auto":
         user_prompt = (
-            f"Quyidagi matnni {target_name_clear} ga tarjima qil. "
-            f"Avval qaysi tilda ekanini aniqla, keyin tarjima qil. "
-            f"Diniy terminlarga va asl arabcha oyatlarga e'tibor ber. "
-            f"FAQAT tarjima matnini qaytar, izoh yo'q:\n\n{text}"
+            f"Translate the following text into {target_eng}.\n"
+            f"First detect the source language, then translate ALL of it into {target_eng}.\n"
+            f"Preserve religious terms and Arabic Quranic verses in their original form.\n"
+            f"Return ONLY the translation:\n\n{text}"
         )
     else:
         user_prompt = (
-            f"{src_name.capitalize()} tilidagi matnni {target_name_clear} ga tarjima qil. "
-            f"Diniy terminlarga va asl arabcha oyatlarga e'tibor ber. "
-            f"FAQAT tarjima matnini qaytar:\n\n{text}"
+            f"Translate the following {src_eng} text into {target_eng}.\n"
+            f"Translate EVERYTHING — do not leave any words in the source language.\n"
+            f"Preserve religious terms and Arabic Quranic verses in their original form.\n"
+            f"Return ONLY the translation:\n\n{text}"
         )
     payload = {
         "model": "gpt-4o",
