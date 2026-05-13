@@ -78,7 +78,7 @@ PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 PAYMENT_CURRENCY = os.getenv("PAYMENT_CURRENCY", "UZS")
 
 # === [TARJIMA MODULI — YANGI] ====================================================
-# Whisper (OpenAI) + GPT-4o-mini (Anthropic) orqali xorijiy tildan tarjima
+# Whisper (OpenAI) + GPT-4o (Anthropic) orqali xorijiy tildan tarjima
 # Railway'da quyidagi env'larni qo'shing:
 #   OPENAI_API_KEY=sk-...
 #   ANTHROPIC_API_KEY=sk-ant-...
@@ -1029,8 +1029,8 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
 
 
 def _gpt_translate_one(text, source_lang):
-    """Bir bo'lakni OpenAI GPT-4o-mini bilan tarjima qilish.
-    GPT-4o-mini Claude darajasida sifatli, lekin 25x arzonroq."""
+    """Bir bo'lakni OpenAI GPT-4o bilan tarjima qilish — Claude darajasida sifat.
+    GPT-4o (mini emas) — eng yuqori tarjima sifati, ma'no buzilmaydi."""
     src_name = TRANSLATION_LANG_NAMES.get(source_lang, source_lang)
     url = "https://api.openai.com/v1/chat/completions"
     headers = {
@@ -1038,13 +1038,16 @@ def _gpt_translate_one(text, source_lang):
         "Content-Type": "application/json",
     }
     system_prompt = (
-        "Sen professional tarjimon — xorijiy tildan O'zbek tiliga adabiy, "
-        "tabiiy va aniq tarjima qilasan. Faqat tarjimani qaytar — boshqa "
-        "izoh, sarlavha yoki kirish so'zi yozma."
+        "Sen O'zbek tilini mukammal biladigan professional tarjimon. "
+        "Xorijiy tildagi matnni O'zbek tiliga adabiy, tabiiy va to'liq aniq "
+        "ma'noni saqlagan holda tarjima qil. Iboralar va idiomalarni "
+        "O'zbekcha ekvivalent bilan almashtir, so'zma-so'z tarjima qilma. "
+        "Faqat tarjimani qaytar — boshqa hech qanday izoh, sarlavha yoki "
+        "kirish so'zi yozma."
     )
     user_prompt = f"{src_name.capitalize()} tilidagi matnni O'zbekchaga tarjima qil:\n\n{text}"
     payload = {
-        "model": "gpt-4o-mini",
+        "model": "gpt-4o",
         "max_tokens": 16000,
         "temperature": 0.3,
         "messages": [
@@ -1063,7 +1066,7 @@ def _gpt_translate_one(text, source_lang):
 
 
 def translate_with_claude(text, source_lang, progress_cb=None):
-    """Tarjima — OpenAI GPT-4o-mini orqali (avval Claude edi).
+    """Tarjima — OpenAI GPT-4o orqali (avval Claude edi).
     Funksiya nomi mavjud chaqiruvchilarga mos qoldirildi.
     progress_cb(current_chunk, total_chunks) — async progress callback."""
     if not OPENAI_API_KEY:
@@ -2308,7 +2311,7 @@ async def process_pdf_to_voice(update, context, file_id):
 # === [TARJIMA MODULI — ASOSIY WORKFLOW] =========================================
 async def process_translation(update, context, file_path, duration_sec, source_lang):
     """Audio'ni xorijiy tildan O'zbekchaga tarjima qilish.
-    Workflow: Whisper STT (verbose_json) → GPT-4o-mini (translation) → matn + PDF.
+    Workflow: Whisper STT (verbose_json) → GPT-4o (translation) → matn + PDF.
     Tarif: duration * TRANSLATION_MULTIPLIER (2x) ga sanaydi.
     Original transkripsiya user'ga ko'rsatilmaydi — faqat tarjima."""
     if not is_admin(update):
@@ -2784,7 +2787,7 @@ async def translate_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌐 *Xorijiy tildan tarjima*\n\n"
         "Audio yoki videoni xorijiy tildan O'zbek tiliga tarjima qilamiz.\n"
-        "Whisper (transkripsiya) + GPT-4o-mini (tarjima).\n\n"
+        "Whisper (transkripsiya) + GPT-4o (tarjima).\n\n"
         f"⚠️ *Diqqat:* tarjima xizmati uchun daqiqalar *{TRANSLATION_MULTIPLIER}x* sanaydi "
         f"(masalan 1 daqiqalik audio = {TRANSLATION_MULTIPLIER} daqiqa tarifdan ayriladi).\n\n"
         "Qaysi tildan tarjima qilamiz?",
