@@ -1720,10 +1720,10 @@
       hero_desc: 'Audio, video, ovozli xabar yoki YouTube/Instagram havolasini yuboring — biz uni matn, PDF va ovozli formatga aylantiramiz.',
       section_files: 'Fayl turini tanlang',
       section_pdf: 'PDF → Ovoz',
-      card1_title: '🎵 Audio yuborish',  card1_sub: 'MP3, WAV, OGG fayllarini matnga aylantirish', card1_pill: '📁 Fayl',
-      card2_title: '🎬 Video yuborish',  card2_sub: 'MP4, MKV, dumaloq video — matnga aylantirish', card2_pill: '📁 Fayl',
-      card3_title: '🔗 Havola yuborish', card3_sub: 'YouTube, TikTok, Instagram havolasi', card3_pill: '🌐 Link',
-      card4_title: '🎤 Hozir yozish',    card4_sub: 'Mikrofondan ovoz yozib, matnga aylantirish',  card4_pill: '🎙 Mikrofon',
+      card1_title: '🎵 Audio fayl',     card1_sub: 'MP3, WAV, OGG yuborish',       card1_pill: '🎵 Audio',
+      card2_title: '🎬 Video fayl',     card2_sub: 'MP4, MKV, dumaloq video',      card2_pill: '🎬 Video',
+      card3_title: '🔗 YouTube havola', card3_sub: 'YouTube, TikTok, Instagram',  card3_pill: '🔗 Link',
+      card4_title: '🎤 Mikrofondan',    card4_sub: 'Hozir ovoz yozib yuborish',    card4_pill: '🎤 Yozish',
       pdf_title: '📄 PDF faylni ovozga aylantirish',
       pdf_sub: "PDF hujjatni yuklang — biz uni ovozli MP3 ga aylantiramiz. Yo'lda yoki dam olishda tinglash uchun qulay.",
       pdf_pill: 'Yangi xizmat',
@@ -2118,9 +2118,9 @@
     const uploadTitle = uploadZone.querySelector('.upload-title');
     const uploadHint  = uploadZone.querySelector('.upload-hint');
     const fileInput = document.getElementById('fileInput');
-    // === [TARJIMA] Til tanlash UI faqat 'translate' rejimida ko'rinadi ===
+    // === [TARJIMA] Til tanlash UI: 'translate' rejimida YOKI til allaqachon tanlangan bo'lsa ko'rinadi ===
     const tlangPicker = document.getElementById('translateLangPicker');
-    if (tlangPicker) tlangPicker.style.display = (type === 'translate') ? '' : 'none';
+    if (tlangPicker) tlangPicker.style.display = (type === 'translate' || translateLang) ? '' : 'none';
     if (type === 'translate') {
       // === [TARJIMA] Til tanlash UI faqat shu yerda ochiladi, qolgan zonalar saqlanadi ===
       uploadZone.style.display = '';
@@ -2147,18 +2147,26 @@
       // Sahifani PDF kartiga skroll
       try { el.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch (e) {}
     } else if (type === 'voice') {
+      // === Mikrofondan yozish — upload zonani yashirib, "Mikrofondan yozish" tugmasini ko'rsatamiz ===
       uploadZone.style.display = '';
       urlZone.classList.remove('visible');
       fileInput.accept = 'audio/*';
-      uploadTitle.textContent = 'Faylni bu yerga torting yoki tanlang';
-      uploadHint.innerHTML = 'Audio fayl<br><span>Drag & Drop or Click to Upload</span>';
+      uploadTitle.innerHTML = '🎤 Mikrofondan ovoz yozish';
+      uploadHint.innerHTML = '<b>Pastdagi qizil "MIKROFONGA YOZISH" tugmasini bosing</b><br><span>Yoki audio faylni tanlang</span>';
+      setMainBtn(selectedFile ? 'send' : 'mic');
+    } else if (type === 'video') {
+      uploadZone.style.display = '';
+      urlZone.classList.remove('visible');
+      fileInput.accept = 'video/*';
+      uploadTitle.textContent = '🎬 Video faylni yuklang';
+      uploadHint.innerHTML = 'MP4, MKV, AVI yoki dumaloq video<br><span>Drag & Drop yoki bosing</span>';
       setMainBtn(selectedFile ? 'send' : 'mic');
     } else {
       uploadZone.style.display = '';
       urlZone.classList.remove('visible');
-      fileInput.accept = (type === 'video') ? 'video/*' : 'audio/*,video/*';
-      uploadTitle.textContent = 'Faylni bu yerga torting yoki tanlang';
-      uploadHint.innerHTML = 'Audio yoki video<br><span>Drag & Drop or Click to Upload</span>';
+      fileInput.accept = 'audio/*,video/*';
+      uploadTitle.textContent = '🎵 Audio yoki video faylni yuklang';
+      uploadHint.innerHTML = 'MP3, WAV, OGG, MP4 va boshqalar<br><span>Drag & Drop yoki bosing</span>';
       setMainBtn(selectedFile ? 'send' : 'mic');
     }
     hideResult();
