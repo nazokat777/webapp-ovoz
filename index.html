@@ -1359,6 +1359,38 @@
     </div>
   </div>
 
+  <!-- === [TARJIMA WEBAPP CARD] Xorijiy tildan tarjima === -->
+  <div class="reveal">
+    <div class="pdf-card" onclick="selectType(this,'translate')" data-type="translate" style="background: linear-gradient(135deg, rgba(255, 0, 110, 0.18), rgba(0, 245, 255, 0.18), rgba(131, 56, 236, 0.18));">
+      <div class="card-glow" style="background: #ff006e;"></div>
+      <div class="pdf-icon" style="background: linear-gradient(135deg, #ff006e, #8338ec, #00f5ff); background-size: 200% 200%; animation: btn-grad 4s ease-in-out infinite;">
+        <svg viewBox="0 0 24 24" fill="none" style="width:28px;height:28px;stroke:#fff;stroke-width:2;">
+          <path d="M5 8l6 6 6-6M9 16h6"/>
+          <circle cx="12" cy="12" r="10"/>
+        </svg>
+      </div>
+      <div class="pdf-info">
+        <div class="pdf-title">🌐 Tarjima qilish</div>
+        <div class="pdf-sub">Xorijiy tildagi audio/videoni avtomatik O'zbek tiliga tarjima qilamiz (RU/EN/AR).</div>
+        <span class="card-pill" style="background: rgba(255, 0, 110, 0.25); color: #ff006e; border: 1px solid rgba(255, 0, 110, 0.55);">⚡ 2x tarif</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- === [TARJIMA WEBAPP] Til tanlash UI (avval yashirin) === -->
+  <div class="reveal" id="translateLangPicker" style="display:none;">
+    <div style="background: linear-gradient(135deg, rgba(45, 27, 94, 0.65), rgba(20, 10, 50, 0.85)); backdrop-filter: blur(22px); border: 1px solid rgba(0, 245, 255, 0.35); border-radius: 22px; padding: 22px; margin-bottom: 22px;">
+      <div style="font-family:'Playfair Display',serif; font-size:18px; font-weight:800; color: var(--text); margin-bottom: 8px; text-align: center;">🌐 Manba tilini tanlang</div>
+      <div style="font-size: 12px; color: var(--text-2); text-align: center; margin-bottom: 18px;">Audio yoki video qaysi tildan O'zbekchaga tarjima qilinsin?</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
+        <button onclick="selectTranslateLang('ru')" id="tlangRu" class="tlang-btn" style="padding: 16px 8px; border-radius: 14px; background: rgba(0, 245, 255, 0.12); border: 1.5px solid rgba(0, 245, 255, 0.4); color: var(--text); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.2s;">🇷🇺 Rus</button>
+        <button onclick="selectTranslateLang('en')" id="tlangEn" class="tlang-btn" style="padding: 16px 8px; border-radius: 14px; background: rgba(255, 0, 110, 0.12); border: 1.5px solid rgba(255, 0, 110, 0.4); color: var(--text); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.2s;">🇬🇧 Ingliz</button>
+        <button onclick="selectTranslateLang('ar')" id="tlangAr" class="tlang-btn" style="padding: 16px 8px; border-radius: 14px; background: rgba(255, 190, 11, 0.12); border: 1.5px solid rgba(255, 190, 11, 0.4); color: var(--text); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.2s;">🇸🇦 Arab</button>
+      </div>
+      <div id="tlangSelected" style="display:none; margin-top: 14px; text-align: center; font-size: 12.5px; color: #00f5ff; font-weight: 700;">✅ Til tanlandi — endi audio/video yuboring (yoki YouTube link)</div>
+    </div>
+  </div>
+
   <div class="upload-zone reveal" id="uploadZone">
     <input type="file" id="fileInput" accept="audio/*,video/*,.pdf,application/pdf" onchange="handleFile(this)">
     <svg class="deco-flower md tl"><use href="#sakura"/></svg>
@@ -1978,6 +2010,25 @@
     });
   }
 
+  // === [TARJIMA] WebApp tarjima rejimi holatlari ===
+  let translateLang = null;  // tanlangan manba til (ru/en/ar)
+
+  function selectTranslateLang(lang) {
+    translateLang = lang;
+    // Hammasidan 'selected' olib tashlaymiz, tanlangan tugmaga qo'shamiz
+    document.querySelectorAll('.tlang-btn').forEach(b => {
+      b.style.background = b.id === 'tlang' + lang.charAt(0).toUpperCase() + lang.slice(1)
+        ? 'linear-gradient(135deg, #ff006e, #8338ec, #00f5ff)'
+        : b.style.background.replace(/background:.*?;/, '');
+      b.style.color = b.id === 'tlang' + lang.charAt(0).toUpperCase() + lang.slice(1) ? '#fff' : 'var(--text)';
+      b.style.boxShadow = b.id === 'tlang' + lang.charAt(0).toUpperCase() + lang.slice(1)
+        ? '0 4px 14px rgba(255, 0, 110, 0.5)'
+        : 'none';
+    });
+    document.getElementById('tlangSelected').style.display = 'block';
+    if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.selectionChanged(); } catch (e) {} }
+  }
+
   function selectType(el, type) {
     document.querySelectorAll('.type-card, .pdf-card').forEach(c => c.classList.remove('selected'));
     el.classList.add('selected');
@@ -1988,6 +2039,20 @@
     const uploadTitle = uploadZone.querySelector('.upload-title');
     const uploadHint  = uploadZone.querySelector('.upload-hint');
     const fileInput = document.getElementById('fileInput');
+    // === [TARJIMA] Til tanlash UI faqat 'translate' rejimida ko'rinadi ===
+    const tlangPicker = document.getElementById('translateLangPicker');
+    if (tlangPicker) tlangPicker.style.display = (type === 'translate') ? '' : 'none';
+    if (type === 'translate') {
+      // Til tanlashga qadar yashirin, til tanlangach upload ochiladi
+      uploadZone.style.display = '';
+      urlZone.classList.remove('visible');
+      fileInput.accept = 'audio/*,video/*';
+      uploadTitle.textContent = '🌐 Tarjima qilinadigan audio/video';
+      uploadHint.innerHTML = 'Yuqorida tilni tanlang, keyin fayl yuklang<br><span>⚡ Tarif daqiqalari 2x sanaydi</span>';
+      setMainBtn(selectedFile ? 'send' : 'mic');
+      try { el.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch (e) {}
+      return;
+    }
     if (type === 'youtube') {
       uploadZone.style.display = 'none';
       urlZone.classList.add('visible');
@@ -2078,11 +2143,20 @@
     }
     if (!selectedFile) { showToast(t('t_no_file'), 'error'); return; }
     if (!userId) { showToast(userIdMissingMessage(), 'error', 8000); return; }
+    // === [TARJIMA] Tarjima rejimida til tanlash shart ===
+    if (currentType === 'translate' && !translateLang) {
+      showToast('🌐 Avval manba tilni tanlang (Rus / Ingliz / Arab)', 'error', 5000);
+      return;
+    }
     showProcessing();
     try {
       const fd = new FormData();
       fd.append('user_id', String(userId));
       fd.append('language', currentLang);
+      // === [TARJIMA] Agar tarjima rejimi bo'lsa, manba tilni qo'shamiz ===
+      if (currentType === 'translate' && translateLang) {
+        fd.append('translation_lang', translateLang);
+      }
       fd.append('file', selectedFile, selectedFile.name);
       const r = await fetch(window.location.origin + '/upload', { method: 'POST', body: fd });
       const json = await r.json();

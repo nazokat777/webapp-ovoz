@@ -2859,6 +2859,60 @@ def process_audio_for_user(user_id, file_path, language="uz"):
                 pass
 
 
+# === [TARJIMA — WEBAPP THREAD MODE] ============================================
+def process_translation_for_user(user_id, file_path, source_lang):
+    """WebApp orqali yuborilgan audio'ni xorijiy tildan O'zbekchaga tarjima.
+    Update obyektisiz, thread-mode. Tarif 2x koeffitsient bilan."""
+    try:
+        if source_lang not in TRANSLATION_LANGS:
+            telegram_send_message(user_id, "❌ Noma'lum manba til.")
+            return
+        # Davomiylik aniqlash
+        try:
+            actual_duration = int(get_duration_or_estimate(file_path))
+        except Exception:
+            actual_duration = 60
+        cost = actual_duration * TRANSLATION_MULTIPLIER
+        if not _is_admin_id(user_id):
+            if not check_limit_by_user_id(user_id, cost):
+                return
+        src_label = TRANSLATION_LANGS[source_lang]
+        telegram_send_message(user_id, f"🌐 Tarjima boshlandi ({src_label})\n📝 1/2 — Whisper transkripsiya...")
+        # 1) Whisper STT
+        original_text = transcribe_whisper(file_path, source_lang)
+        if not original_text or not original_text.strip():
+            telegram_send_message(user_id, "❌ Audiodan matn topilmadi.")
+            return
+        # 2) Claude tarjima
+        telegram_send_message(user_id, "✨ 2/2 — Claude 3.5 Sonnet tarjima qilmoqda...")
+        translated = translate_with_claude(original_text, source_lang)
+        if not translated or not translated.strip():
+            telegram_send_message(user_id, "❌ Tarjima bo'sh qaytdi.")
+            return
+        # 3) Natija — matn + PDF
+        telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → 🇺🇿 O'zbek):")
+        for i in range(0, len(translated), 4000):
+            telegram_send_message(user_id, translated[i:i+4000])
+        try:
+            pdf_path = make_pdf(translated, "Tarjima — O'zbek")
+            telegram_send_document(user_id, pdf_path, filename="tarjima.pdf", caption="📎 Tarjima PDF")
+            try: os.remove(pdf_path)
+            except Exception: pass
+        except Exception as e:
+            logging.warning(f"Tarjima PDF xato (HTTP): {e}")
+        # 4) Tarif daqiqalari (2x)
+        if not _is_admin_id(user_id) and actual_duration > 0:
+            add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
+    except Exception as e:
+        logging.error(f"process_translation_for_user xato: {e}")
+        telegram_send_message(user_id, f"❌ Tarjima xato: {str(e)[:300]}")
+    finally:
+        if file_path and os.path.exists(file_path):
+            try: os.remove(file_path)
+            except Exception: pass
+# === [/TARJIMA — WEBAPP THREAD MODE] ===========================================
+
+
 def process_url_for_user(user_id, url, language="uz"):
     """WebApp URL'idan video yuklab matnga aylantirish — tarif limiti qo'llanadi."""
     audio_path = None
@@ -2898,7 +2952,7 @@ def process_url_for_user(user_id, url, language="uz"):
 
 
 async def handle_webapp_audio(request):
-    """WebApp mikrofon yozuvi (base64)."""
+    """WebApp mikrofon yozuvi (base64). === [TARJIMA] translation_lang qo'llab-quvvatlanadi ==="""
     try:
         data = await request.json()
         user_id = data.get("user_id")
@@ -2907,13 +2961,21 @@ async def handle_webapp_audio(request):
         language = (data.get("language") or "uz").lower()
         if language not in ("uz", "ru", "en"):
             language = "uz"
+        # === [TARJIMA] manba til (RU/EN/AR) ===
+        translation_lang = (data.get("translation_lang") or "").lower()
+        if translation_lang and translation_lang not in TRANSLATION_LANGS:
+            translation_lang = ""
         if not user_id or not audio_data:
             return web.json_response({"error": "user_id yoki audio yo'q"}, status=400, headers=cors_headers())
         ext = format_hint.split("/")[-1].split(";")[0] if "/" in format_hint else format_hint
         if not ext.startswith('.'):
             ext = '.' + ext
         tmp_path = save_base64_audio(audio_data, ext)
-        threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language), daemon=True).start()
+        # === [TARJIMA] Agar translation_lang berilgan bo'lsa, tarjima thread'iga uzatamiz ===
+        if translation_lang:
+            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang), daemon=True).start()
+        else:
+            threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP audio xatosi: {e}")
@@ -2921,13 +2983,14 @@ async def handle_webapp_audio(request):
 
 
 async def handle_webapp_upload(request):
-    """WebApp dan fayl yuklash (multipart) — audio/video."""
+    """WebApp dan fayl yuklash (multipart) — audio/video. === [TARJIMA] translation_lang ==="""
     try:
         reader = await request.multipart()
         user_id = None
         file_data = None
         file_name = None
         language = "uz"
+        translation_lang = ""  # === [TARJIMA] ===
         while True:
             part = await reader.next()
             if part is None:
@@ -2938,6 +3001,10 @@ async def handle_webapp_upload(request):
                 lang_val = (await part.text()).strip().lower()
                 if lang_val in ("uz", "ru", "en"):
                     language = lang_val
+            elif part.name == "translation_lang":
+                tl = (await part.text()).strip().lower()
+                if tl in TRANSLATION_LANGS:
+                    translation_lang = tl
             elif part.name == "file":
                 file_name = part.filename or "upload.bin"
                 file_data = await part.read()
@@ -2947,8 +3014,10 @@ async def handle_webapp_upload(request):
         with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
             tmp.write(file_data)
             tmp_path = tmp.name
-        # PDF -> ovoz, audio/video -> matn+PDF
-        if ext == ".pdf":
+        # === [TARJIMA] Agar translation_lang bo'lsa - tarjima rejimi ===
+        if translation_lang and ext != ".pdf":
+            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang), daemon=True).start()
+        elif ext == ".pdf":
             threading.Thread(target=process_pdf_for_user, args=(int(user_id), tmp_path), daemon=True).start()
         else:
             threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language), daemon=True).start()
