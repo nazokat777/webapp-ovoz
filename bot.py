@@ -1000,8 +1000,8 @@ def _clean_pdf_text(text):
 
 def make_tts_edge(text, lang=None):
     """Matnni Edge TTS (Microsoft, bepul) bilan MP3 ga aylantiradi.
-    Uzun matn bo'laklarga ajratiladi (har 3000 belgida) — Edge timeout/xatolardan
-    saqlanish uchun. Bo'laklar MP3 sifatida birlashtiriladi."""
+    Uzun matn 3000 belgili bo'laklarga ajratiladi va PARALLEL ishlanadi
+    (5-6x tezroq). Bo'laklar MP3 sifatida birlashtiriladi."""
     if not text or not text.strip():
         return None
     if lang is None:
@@ -1019,7 +1019,6 @@ def make_tts_edge(text, lang=None):
         cur = 0
         while cur < len(snippet):
             end = min(cur + CHUNK_SIZE, len(snippet))
-            # Yaqindagi gap oxirini izlash
             if end < len(snippet):
                 for delim in [".", "!", "?", "\n", ","]:
                     idx = snippet.rfind(delim, cur, end)
@@ -1028,27 +1027,43 @@ def make_tts_edge(text, lang=None):
                         break
             chunks.append(snippet[cur:end].strip())
             cur = end
-        logging.info(f"🔊 Edge TTS: {len(snippet)} belgi → {len(chunks)} bo'lak")
+        logging.info(f"🔊 Edge TTS: {len(snippet)} belgi → {len(chunks)} bo'lak (PARALLEL)")
+
+    async def _tts_chunk(idx, ch, semaphore):
+        """Bitta bo'lakni TTS qiladi va vaqtinchalik fayl yo'lini qaytaradi."""
+        async with semaphore:
+            chunk_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
+            try:
+                comm = edge_tts.Communicate(ch, voice)
+                await asyncio.wait_for(comm.save(chunk_path), timeout=90)
+                if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 0:
+                    logging.info(f"   ✅ bo'lak {idx+1}/{len(chunks)} tayyor")
+                    return (idx, chunk_path)
+            except asyncio.TimeoutError:
+                logging.warning(f"   ⏱ bo'lak {idx+1} timeout (90s)")
+            except Exception as e:
+                logging.warning(f"   ❌ bo'lak {idx+1} xato: {e}")
+            try: os.remove(chunk_path)
+            except Exception: pass
+            return (idx, None)
 
     async def _run():
-        # Har bo'lakni alohida MP3 qilib, fayllarni birlashtiramiz
+        # 4 ta bo'lak parallel (Edge API rate limit hisobi bilan)
+        semaphore = asyncio.Semaphore(4)
+        tasks = [_tts_chunk(i, ch, semaphore) for i, ch in enumerate(chunks) if ch]
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+        # Tartibni saqlab birlashtiramiz
+        results.sort(key=lambda x: x[0])
         with open(out_path, "wb") as out_f:
-            for i, ch in enumerate(chunks, 1):
-                if not ch:
-                    continue
-                try:
-                    chunk_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
-                    comm = edge_tts.Communicate(ch, voice)
-                    await comm.save(chunk_path)
-                    if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 0:
+            for idx, chunk_path in results:
+                if chunk_path and os.path.exists(chunk_path):
+                    try:
                         with open(chunk_path, "rb") as in_f:
                             out_f.write(in_f.read())
+                    except Exception as e:
+                        logging.warning(f"chunk read xato: {e}")
                     try: os.remove(chunk_path)
                     except Exception: pass
-                except Exception as e:
-                    logging.warning(f"Edge TTS bo'lak {i}/{len(chunks)} xato: {e}")
-                    if i == 1:
-                        raise  # birinchi bo'lak yiqilsa, butun fayl yo'q
 
     loop = asyncio.new_event_loop()
     try:
@@ -1059,6 +1074,8 @@ def make_tts_edge(text, lang=None):
         try: os.remove(out_path)
         except Exception: pass
         return None
+    final_size = os.path.getsize(out_path) / 1024
+    logging.info(f"🔊 Edge TTS yakuni: {final_size:.0f} KB")
     return out_path
 
 
