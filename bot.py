@@ -2098,7 +2098,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Menu button set xato: {e}")
 
     await update.message.reply_text(
-        "🌸 Assalomu alaykum, 👑👑*{}*👑👑!\n\n"
+        "🌸 Assalomu alaykum, *{}*!\n\n"
         "Men audio va videolarni matn hamda PDF formatiga aylantiruvchi va "
         "istalgan tildan istalgan tilga yoki o'zbek tiliga tarjima qilib PDF qilib "
         "bera oladigan aqlli botman. Men bilan darslaringizni yanada oson va "
