@@ -2114,8 +2114,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚠️ *Muhim eslatma:*\n"
         "Odamlar xato qilgani kabi men ham xato qilishim mumkin — men odam emas, "
         "botman. Istalgan soatli audio va videolarni matn qila olaman, ammo "
-        "*aniqlik sifati uchun* uzun videolarni *10 yoki 20 daqiqali bo'laklarga* "
-        "ajratib yuboring. Shunda xato qilish koeffitsientim sezilarli kamayadi.\n\n"
+        "*aniqlik sifati uchun* quyidagilarga rioya qiling:\n"
+        "• Uzun videolarni *10 yoki 20 daqiqali bo'laklarga* ajratib yuboring\n"
+        "• *Aniq, tiniq ovozli* audio yuboring (shovqin va orqa fon kam bo'lsin)\n"
+        "• Bir vaqtda bitta odam gapirsa, natija eng yaxshi chiqadi\n\n"
+        "Bu maslahatlarga rioya qilsangiz xato qilish koeffitsientim sezilarli "
+        "kamayadi.\n\n"
         "Quyidagi tugma orqali *Web ilovani* oching 👇".format(
             update.effective_user.first_name
         ),
