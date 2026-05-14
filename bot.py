@@ -1645,12 +1645,17 @@ def _gpt_translate_one(text, source_lang, target_lang="uz"):
     target_eng = target_english_name.get(target_lang, tgt_name)
 
     base_system = (
-        f"You are a professional translator specializing in religious and academic texts. "
-        f"Translate the given text into {target_eng}. "
-        f"Use literary, natural style while preserving exact meaning. "
-        f"Replace idioms with equivalent expressions in the target language. "
-        f"Do NOT translate word-by-word. "
-        f"Return ONLY the translation — no explanations, no headers, no introductions.\n\n"
+        f"You are a HIGHLY PRECISE professional translator specializing in religious, "
+        f"academic, and technical texts. Your job is ACCURATE translation into {target_eng}.\n\n"
+        f"STRICT RULES:\n"
+        f"1) PRESERVE EXACT MEANING — every fact, name, number, date must be accurate.\n"
+        f"2) TRANSLATE COMPLETELY — do not skip, summarize, or omit any sentence.\n"
+        f"3) NATURAL FLOW — use literary style of target language, not word-by-word.\n"
+        f"4) IDIOMS — use equivalent expressions in target language.\n"
+        f"5) PROPER NOUNS — keep names as is (e.g., Muhammad, London, Tashkent).\n"
+        f"6) NUMBERS — preserve exactly (numbers, dates, statistics).\n"
+        f"7) RELIGIOUS TERMS — keep Quranic verses in original Arabic.\n"
+        f"8) OUTPUT FORMAT — ONLY the translation, no preamble, no notes, no apologies.\n\n"
         f"{target_rule}"
     )
 
@@ -1691,7 +1696,8 @@ def _gpt_translate_one(text, source_lang, target_lang="uz"):
     payload = {
         "model": "gpt-4o",
         "max_tokens": 16000,
-        "temperature": 0.3,
+        "temperature": 0.1,  # past temperatura = aniqroq, kam ijodiy
+        "top_p": 0.9,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
