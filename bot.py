@@ -2099,7 +2099,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🌸 Assalomu alaykum, *{}*!\n\n"
-        "Men audio, video va PDF fayllaringizni qayta ishlovchi aqlli botman.\n\n"
+        "Men audio va videolardan *matn va PDF*, PDFdan esa *audio* yasaydigan botman.\n\n"
         "🎯 *Imkoniyatlarim:*\n"
         "• 🎤 Audio/video (har tilda) → 🇺🇿 O'zbek matn + PDF\n"
         "• 📄 O'zbek PDF → 🇺🇿 O'zbek audio MP3\n\n"
