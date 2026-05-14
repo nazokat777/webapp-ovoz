@@ -1301,7 +1301,7 @@ def transcribe_unified(file_path, progress_cb=None, language="uz"):
 WHISPER_CHUNK_SECONDS = 600    # 10 daqiqa per chunk (xavfsiz, kichik fayllar)
 WHISPER_MAX_FILE_MB = 22        # 22 MB dan oshganda bo'laklash (25 MB Whisper chegarasi - 3 MB margin)
 WHISPER_CHUNK_BITRATE = "64k"   # 64 kbps mono — 10 daqiqa ≈ 4.8 MB
-CLAUDE_CHUNK_WORDS = 2000       # Claude'ga max 2000 so'zlik bo'lak
+CLAUDE_CHUNK_WORDS = 3000       # GPT-4o uchun 3000 so'z (16k token output limitida xavfsiz)
 
 
 def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
@@ -1654,37 +1654,81 @@ def _gpt_translate_one(text, source_lang, target_lang="uz"):
     return choices[0].get("message", {}).get("content", "").strip()
 
 
+def _gpt_translate_with_retry(chunk, source_lang, target_lang, max_retries=3):
+    """Bitta bo'lakni GPT bilan tarjima qilish — 3 marta urinish (retry).
+    Birinchi urinish 1 sek pauza, keyingilari 2, 4 sek (exponential backoff)."""
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            result = _gpt_translate_one(chunk, source_lang, target_lang)
+            if result and result.strip():
+                return result
+            # Bo'sh natija — qayta urinish
+            last_err = Exception("GPT bo'sh natija qaytardi")
+        except Exception as e:
+            last_err = e
+            logging.warning(f"   GPT urinish #{attempt+1} xato: {e}")
+        # Pauza (exponential backoff: 1, 2, 4 sek)
+        if attempt < max_retries - 1:
+            time.sleep(1 << attempt)  # 1, 2, 4
+    # 3 marta ham yiqilsa — exception
+    raise last_err or Exception("GPT 3 marta yiqildi")
+
+
 def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz"):
     """Tarjima — OpenAI GPT-4o orqali.
+    Uzun matn 3000 so'zlik bo'laklarga ajratiladi va har biri 3 marta urinish bilan
+    tarjima qilinadi. Agar bir bo'lak 3 marta ham yiqilsa — butun tarjima xato qaytaradi
+    (qisman natija bilan emas, to'liq xato bilan).
+
     source_lang: manba til (yoki 'auto')
     target_lang: hosil til ('uz', 'ru', 'en', 'ar')"""
     if not OPENAI_API_KEY:
         raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing.")
 
     words = text.split()
-    # Kichik matn — bir martada tarjima
+    # Kichik matn — bir martada tarjima (retry bilan)
     if len(words) <= CLAUDE_CHUNK_WORDS:
         if progress_cb:
             try: progress_cb(1, 1)
             except Exception: pass
-        return _gpt_translate_one(text, source_lang, target_lang)
+        return _gpt_translate_with_retry(text, source_lang, target_lang)
 
     # Uzun matn — bo'laklarga ajratamiz (so'zlar chegarasida)
     chunks = []
     for i in range(0, len(words), CLAUDE_CHUNK_WORDS):
         chunks.append(" ".join(words[i:i + CLAUDE_CHUNK_WORDS]))
     logging.info(f"🔪 GPT bo'laklash: {len(words)} so'z → {len(chunks)} bo'lak (target: {target_lang})")
+
     translations = []
+    failed_chunks = []
     for idx, chunk in enumerate(chunks, 1):
         if progress_cb:
             try: progress_cb(idx, len(chunks))
             except Exception: pass
         try:
-            translations.append(_gpt_translate_one(chunk, source_lang, target_lang))
+            result = _gpt_translate_with_retry(chunk, source_lang, target_lang)
+            translations.append(result)
+            logging.info(f"   ✅ bo'lak {idx}/{len(chunks)} tarjima qilindi ({len(result)} belgi)")
         except Exception as e:
-            logging.warning(f"GPT bo'lak {idx}/{len(chunks)} xato: {e}")
-            translations.append(f"[Bo'lak {idx} tarjima xatosi]")
-    return "\n\n".join(translations)
+            logging.error(f"GPT bo'lak {idx}/{len(chunks)} 3 marta ham yiqildi: {e}")
+            failed_chunks.append((idx, str(e)[:100]))
+            # Bo'lakni saqlab qolamiz, lekin xato deb belgilaymiz
+            translations.append("")  # bo'sh joy
+
+    # Agar 30% dan ko'p bo'lak yiqilgan bo'lsa — butun tarjima xato
+    if len(failed_chunks) > len(chunks) * 0.3:
+        err_msg = ", ".join([f"#{idx}: {err}" for idx, err in failed_chunks[:3]])
+        raise Exception(
+            f"Tarjima yiqildi: {len(failed_chunks)}/{len(chunks)} bo'lak xato. "
+            f"Misol: {err_msg}"
+        )
+
+    # Bo'sh bo'laklarni o'chiramiz va birlashtiramiz
+    result = "\n\n".join([t for t in translations if t])
+    if failed_chunks:
+        logging.warning(f"⚠️ {len(failed_chunks)} bo'lak yo'qoldi, lekin asosiy tarjima yetkazildi")
+    return result
 # === [/TARJIMA MODULI — API HELPERS] ============================================
 
 
