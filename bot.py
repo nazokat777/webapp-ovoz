@@ -893,6 +893,84 @@ def _normalize_uzbek_apostrophes(text):
     return out
 
 
+def convert_latin_to_cyrillic(text):
+    """O'zbek Lotin alifbosidagi matnni Kirill alifbosiga o'tkazish — GPT-4o orqali.
+    Yuqori sifat, imloviy xatolarsiz. Uzun matn 3000 so'zlik bo'laklarda ishlanadi.
+    """
+    if not text or not text.strip():
+        return text
+    if not OPENAI_API_KEY:
+        logging.warning("OPENAI_API_KEY yo'q, Kirill konversiya imkonsiz")
+        return text
+
+    text = _normalize_uzbek_apostrophes(text)
+    words = text.split()
+
+    def _convert_chunk(chunk_text):
+        """Bitta bo'lakni GPT bilan kirillga o'tkazish."""
+        url_api = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        }
+        system_prompt = (
+            "You are a PRECISE Uzbek alphabet converter. Convert the given Uzbek "
+            "LATIN text to Uzbek CYRILLIC alphabet (current official Uzbek Cyrillic).\n\n"
+            "STRICT RULES:\n"
+            "1) Keep meaning EXACTLY — do not translate, only transliterate.\n"
+            "2) Use correct Uzbek Cyrillic letters: а, б, в, г, ғ, д, е, ё, ж, з, и, й, "
+            "к, қ, л, м, н, нг, о, ў, п, р, с, т, у, ф, х, ҳ, ч, ш, ъ, э, ю, я.\n"
+            "3) Common conversions: o' → ў, g' → ғ, ch → ч, sh → ш, h → ҳ, x → х, "
+            "q → қ, ng → нг, yo → ё, yu → ю, ya → я, ts → ц.\n"
+            "4) 'e' at word start = 'э' (echki → эчки), inside word = 'е' (men → мен).\n"
+            "5) PRESERVE proper nouns (foreign names like London, Microsoft stay as-is).\n"
+            "6) PRESERVE numbers, dates, English/Arabic words unchanged.\n"
+            "7) PRESERVE punctuation and formatting.\n"
+            "8) NO spelling errors — use literary Uzbek Cyrillic norms.\n\n"
+            "Return ONLY the converted Cyrillic text, no explanations."
+        )
+        payload = {
+            "model": "gpt-4o",
+            "max_tokens": 16000,
+            "temperature": 0.0,  # eng aniq, ijodga ehtiyoj yo'q
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"Convert this Uzbek Latin text to Uzbek Cyrillic:\n\n{chunk_text}"},
+            ],
+        }
+        resp = requests.post(url_api, headers=headers, json=payload, timeout=300)
+        if resp.status_code != 200:
+            raise Exception(f"Kirill konversiya xatosi: HTTP {resp.status_code}")
+        data = resp.json()
+        return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+
+    # Kichik matn — bir martada
+    CYR_CHUNK_WORDS = 3000
+    if len(words) <= CYR_CHUNK_WORDS:
+        try:
+            return _convert_chunk(text)
+        except Exception as e:
+            logging.error(f"Kirill konversiya xato: {e}")
+            return text  # asl matnni qaytarib, hech bo'lmaganda yetkazamiz
+
+    # Uzun matn — bo'laklarga
+    chunks = []
+    for i in range(0, len(words), CYR_CHUNK_WORDS):
+        chunks.append(" ".join(words[i:i + CYR_CHUNK_WORDS]))
+    logging.info(f"🔤 Kirill konversiya: {len(words)} so'z → {len(chunks)} bo'lak")
+
+    converted_parts = []
+    for idx, chunk in enumerate(chunks, 1):
+        try:
+            converted_parts.append(_convert_chunk(chunk))
+            logging.info(f"   ✅ bo'lak {idx}/{len(chunks)} kirillga o'tkazildi")
+        except Exception as e:
+            logging.warning(f"   ❌ bo'lak {idx} kirill konversiya xato: {e}")
+            converted_parts.append(chunk)  # asl bo'lakni qaytaramiz
+
+    return "\n\n".join(converted_parts)
+
+
 def make_pdf(text, title="Audio & Konspekt — Matn"):
     """Matnni PDF qiladi va vaqtinchalik fayl yo'lini qaytaradi.
     DejaVuSans yoki Noto Sans Unicode fontidan foydalanadi —
@@ -4350,9 +4428,10 @@ def process_pdf_for_user(user_id, pdf_path):
             except Exception: pass
 
 
-def process_audio_for_user(user_id, file_path, language="uz"):
+def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="latin"):
     """WebApp orqali yuborilgan audio'ni matnga aylantirish — tarif limiti qo'llanadi.
-    XAVFSIZ TO'LOV: daqiqa faqat muvaffaqiyatli natija yuborilgandan keyin yechiladi."""
+    XAVFSIZ TO'LOV: daqiqa faqat muvaffaqiyatli natija yuborilgandan keyin yechiladi.
+    output_alphabet: 'latin' yoki 'cyrillic' — O'zbek matni alifbosi."""
     success = False  # natija userga yetkazilganmi
     try:
         # Audio davomiyligini avval aniqlaymiz va limitni tekshiramiz
@@ -4369,6 +4448,10 @@ def process_audio_for_user(user_id, file_path, language="uz"):
         telegram_send_message(user_id, "🎙 Web ilova yuborgan fayl tanilmoqda...")
         text = transcribe_unified(file_path, language=language)
         if text and text.strip() and text.strip() != "Matn aniqlanmadi.":
+            # === [ALIFBO] Kirill so'ralsa matnni o'tkazamiz ===
+            if output_alphabet == "cyrillic":
+                telegram_send_message(user_id, "🔤 Matn Kirill alifbosiga o'tkazilmoqda...")
+                text = convert_latin_to_cyrillic(text)
             _send_text_and_pdf(user_id, text)
             success = True
         else:
@@ -4396,11 +4479,12 @@ def process_audio_for_user(user_id, file_path, language="uz"):
 
 
 # === [TARJIMA — WEBAPP THREAD MODE] ============================================
-def process_translation_for_user(user_id, file_path, source_lang, target_lang="uz"):
+def process_translation_for_user(user_id, file_path, source_lang, target_lang="uz", output_alphabet="latin"):
     """WebApp orqali yuborilgan audio'ni xorijiy tildan tanlangan tilga tarjima.
     Hosil: matn + PDF (audio yo'q).
     XAVFSIZ TO'LOV: daqiqa faqat tarjima muvaffaqiyatli yetkazilgandan keyin yechiladi.
-    PROGRESS: aylanuvchi qum soat ⏳↔⌛ bilan animatsion xabar."""
+    PROGRESS: aylanuvchi qum soat ⏳↔⌛ bilan animatsion xabar.
+    output_alphabet: 'latin' yoki 'cyrillic' (faqat target=uz uchun ahamiyatli)."""
     success = False
     actual_duration = 0
     progress = ProgressIndicator(user_id, base_text="Biroz kuting, tarjima qilinmoqda...", action="typing")
@@ -4460,6 +4544,11 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
         # 3) Natija — matn + PDF
         src_label = TRANSLATION_LANGS.get(source_lang, source_lang)
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
+        # === [ALIFBO] target=uz va Kirill so'ralsa, kirill alifbosiga o'tkazamiz ===
+        if output_alphabet == "cyrillic" and target_lang == "uz":
+            progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
+            translated = convert_latin_to_cyrillic(translated)
+            tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
         telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
         for i in range(0, len(translated), 4000):
             telegram_send_message(user_id, translated[i:i+4000])
@@ -4611,10 +4700,11 @@ def process_pdf_audio_only(user_id, pdf_path, target_lang="uz"):
             except Exception: pass
 
 
-def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", target_lang="uz"):
+def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", target_lang="uz", output_alphabet="latin"):
     """PDF'ni xorijiy tildan tanlangan tilga tarjima qilib audio + PDF chiqarish.
     XAVFSIZ TO'LOV: faqat audio MUVAFFAQIYATLI yuborilgandan keyin daqiqa yechiladi.
-    PROGRESS: Telegram'da 'bot yozmoqda...' indikatori ishlaydi."""
+    PROGRESS: Telegram'da 'bot yozmoqda...' indikatori ishlaydi.
+    output_alphabet: 'latin' yoki 'cyrillic' — O'zbek matn alifbosi (target=uz uchun)."""
     success = False
     estimated_audio_sec = 0
     progress = ProgressIndicator(user_id, action="typing")
@@ -4663,6 +4753,11 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
             return
         # 4) Natija — matn + PDF + audio (target tilda)
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
+        # === [ALIFBO] Kirill so'ralsa O'zbek matni kirillga o'tkazamiz ===
+        if output_alphabet == "cyrillic" and target_lang == "uz":
+            progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
+            translated = convert_latin_to_cyrillic(translated)
+            tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
         telegram_send_message(user_id, f"🌐 PDF tarjima ({tgt_label}):")
         for i in range(0, len(translated), 4000):
             telegram_send_message(user_id, translated[i:i+4000])
@@ -4895,6 +4990,7 @@ async def handle_webapp_upload(request):
         translation_lang = ""  # === [TARJIMA] source ===
         target_lang = "uz"      # === [TARJIMA] target — default uzbek ===
         pdf_audio_lang = ""     # === [PDF→MP3] alohida audio rejimi (faqat audio chiqsin) ===
+        output_alphabet = "latin"  # === [ALIFBO] O'zbek matni Lotin yoki Kirill ===
         while True:
             part = await reader.next()
             if part is None:
@@ -4917,6 +5013,10 @@ async def handle_webapp_upload(request):
                 pal = (await part.text()).strip().lower()
                 if pal in TRANSLATION_TARGETS:
                     pdf_audio_lang = pal
+            elif part.name == "output_alphabet":
+                oa = (await part.text()).strip().lower()
+                if oa in ("latin", "cyrillic"):
+                    output_alphabet = oa
             elif part.name == "file":
                 file_name = part.filename or "upload.bin"
                 file_data = await part.read()
@@ -4935,16 +5035,16 @@ async def handle_webapp_upload(request):
             ).start()
         # === [TARJIMA] PDF + translation_lang/target -> PDF tarjima (matn+PDF+audio target tilda) ===
         elif ext == ".pdf" and translation_lang:
-            threading.Thread(target=process_pdf_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang), daemon=True).start()
+            threading.Thread(target=process_pdf_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang, output_alphabet), daemon=True).start()
         # PDF tarjimasiz — oddiy PDF -> ovoz (default O'zbekcha)
         elif ext == ".pdf":
             threading.Thread(target=process_pdf_for_user, args=(int(user_id), tmp_path), daemon=True).start()
         # Audio/video + translation_lang -> tarjima
         elif translation_lang:
-            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang), daemon=True).start()
+            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang, output_alphabet), daemon=True).start()
         # Oddiy audio/video -> oddiy STT
         else:
-            threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language), daemon=True).start()
+            threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language, output_alphabet), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP upload xatosi: {e}")

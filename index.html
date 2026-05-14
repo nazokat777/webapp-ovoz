@@ -1323,6 +1323,16 @@
           <button id="ttgtEn"></button>
           <button id="ttgtAr"></button>
         </div>
+
+        <!-- ALIFBO tanlash — Lotin yoki Kirill -->
+        <div style="margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(212, 175, 55, 0.18);">
+          <div style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; letter-spacing: 1.5px; text-transform: uppercase;">🔤 O'zbek alifbosi</div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+            <button onclick="selectAlphabet('latin')" id="alphaLatin" class="alpha-btn" style="padding: 12px 4px; border-radius: 10px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);">Lotin (O'zbek)</button>
+            <button onclick="selectAlphabet('cyrillic')" id="alphaCyrillic" class="alpha-btn" style="padding: 12px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">Кирилл (Ўзбек)</button>
+          </div>
+        </div>
+
         <div id="tlangSelected" style="display:none;"></div>
       </div>
     </div>
@@ -2074,6 +2084,32 @@
   let translateLang = null;  // SOURCE manba til (ru/en/ar/auto)
   let targetLang = 'uz';     // TARGET hosil til (default O'zbek)
   let pdfLang = 'uz';        // PDF → MP3 audio til (default O'zbek)
+  let outputAlphabet = 'latin';  // O'zbek alifbosi: 'latin' yoki 'cyrillic'
+
+  // === [ALIFBO] Lotin / Kirill tanlash ===
+  function selectAlphabet(alpha) {
+    outputAlphabet = alpha;
+    const latinBtn = document.getElementById('alphaLatin');
+    const cyrBtn = document.getElementById('alphaCyrillic');
+    if (!latinBtn || !cyrBtn) return;
+    const active = (btn) => {
+      btn.style.background = 'linear-gradient(135deg, #d4af37, #b8941f)';
+      btn.style.borderColor = '#d4af37';
+      btn.style.color = '#0a0a0a';
+      btn.style.boxShadow = '0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25)';
+      btn.style.fontWeight = '900';
+    };
+    const inactive = (btn) => {
+      btn.style.background = 'rgba(245, 240, 224, 0.04)';
+      btn.style.borderColor = 'rgba(212, 175, 55, 0.20)';
+      btn.style.color = 'rgba(245, 240, 224, 0.72)';
+      btn.style.boxShadow = 'none';
+      btn.style.fontWeight = '700';
+    };
+    if (alpha === 'latin') { active(latinBtn); inactive(cyrBtn); }
+    else                   { active(cyrBtn);   inactive(latinBtn); }
+    if (tg && tg.HapticFeedback) { try { tg.HapticFeedback.selectionChanged(); } catch (e) {} }
+  }
 
   // === [PDF→MP3] Audio til tanlash (faqat PDF kart uchun) ===
   function selectPdfLang(lang) {
@@ -2359,6 +2395,8 @@
         fd.append('translation_lang', translateLang);
         fd.append('target_lang', 'uz');  // Natija doim O'zbek
       }
+      // === [ALIFBO] O'zbek alifbosi (Lotin / Kirill) ===
+      fd.append('output_alphabet', outputAlphabet || 'latin');
       // === [PDF→MP3] PDF → O'zbek audio (avto-detect manba) ===
       const isPdfFile = (selectedFile.name || '').toLowerCase().endsWith('.pdf')
                          || (selectedFile.type || '').includes('pdf');
