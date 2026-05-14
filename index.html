@@ -1286,8 +1286,8 @@
     <svg class="deco-flower md bl" style="animation-delay:1.2s"><use href="#sakura"/></svg>
     <div class="hero-content">
       <div class="hero-badge" data-i18n="hero_badge">Artificial Intelligence Solutions</div>
-      <div class="hero-title" data-i18n="hero_title" data-i18n-html>Istalgan <em>tildan</em><br>istalgan <em>tilga</em></div>
-      <div class="hero-desc" data-i18n="hero_desc" data-i18n-html>📄 PDF • 🔊 Audio • 📝 Matn<br>Istalgan tildan istalgan tilga PDF va PDFdan istalgan tilga audio — bir bosishda.</div>
+      <div class="hero-title" data-i18n="hero_title" data-i18n-html>Istalgan <em>tildan</em><br><em>O'zbek tiliga</em> matn</div>
+      <div class="hero-desc" data-i18n="hero_desc" data-i18n-html>📄 PDF • 📝 Matn • 🔊 Audio<br>Istalgan tildagi audio/video → O'zbek tilida matn va PDF. PDF → istalgan tilda audio.</div>
     </div>
   </div>
 
@@ -1297,30 +1297,32 @@
       <div style="position: absolute; top: -50%; right: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(212, 175, 55, 0.18), transparent 70%); filter: blur(40px); pointer-events: none;"></div>
       <div style="position: absolute; bottom: -50%; left: -20%; width: 240px; height: 240px; background: radial-gradient(circle, rgba(184, 148, 31, 0.14), transparent 70%); filter: blur(40px); pointer-events: none;"></div>
       <div style="position: relative; z-index: 2;">
-        <div data-i18n="tlp_title" style="font-family:'Playfair Display',serif; font-size: 19px; font-weight: 800; background: linear-gradient(135deg, #f0d878 0%, #d4af37 60%, #b8941f 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 6px; text-align: center; letter-spacing: 0.3px;">Til tanlash</div>
-        <div data-i18n="tlp_sub" style="font-size: 11px; color: rgba(245, 240, 224, 0.55); text-align: center; margin-bottom: 18px; font-weight: 500; letter-spacing: 0.5px;">Audio / video / PDF uchun fayl va natija tilini tanlang</div>
+        <div data-i18n="tlp_title" style="font-family:'Playfair Display',serif; font-size: 19px; font-weight: 800; background: linear-gradient(135deg, #f0d878 0%, #d4af37 60%, #b8941f 100%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 6px; text-align: center; letter-spacing: 0.3px;">Istalgan tildan O'zbek tiliga matn</div>
+        <div data-i18n="tlp_sub" style="font-size: 11px; color: rgba(245, 240, 224, 0.55); text-align: center; margin-bottom: 18px; font-weight: 500; letter-spacing: 0.5px;">Audio / video → O'zbek tilida matn va PDF</div>
 
-        <!-- MANBA -->
+        <!-- MANBA — faqat fayl tilini tanlash -->
         <div data-i18n="tlp_source_label" style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; letter-spacing: 1.5px; text-transform: uppercase;">Fayl tili (audio/video qaysi tilda?)</div>
         <button onclick="selectTranslateLang('auto')" id="tlangAuto" data-i18n="tlp_auto" class="tlang-btn" style="width: 100%; padding: 13px; border-radius: 12px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 8px; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25); letter-spacing: 0.3px;">Avto aniqlash</button>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 16px;">
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px; margin-bottom: 12px;">
           <button onclick="selectTranslateLang('uz')" id="tlangUz" data-i18n="lang_uz" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇺🇿 O'zbek</button>
           <button onclick="selectTranslateLang('ru')" id="tlangRu" data-i18n="lang_ru" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
           <button onclick="selectTranslateLang('en')" id="tlangEn" data-i18n="lang_en" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
           <button onclick="selectTranslateLang('ar')" id="tlangAr" data-i18n="lang_ar" class="tlang-btn" style="padding: 11px 4px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
         </div>
 
-        <!-- HOSIL TIL -->
-        <div data-i18n="tlp_target_label" style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; margin-top: 14px; letter-spacing: 1.5px; text-transform: uppercase;">PDF tili (qaysi tilda olasiz?)</div>
-        <button onclick="selectTargetLang('auto')" id="ttgtAuto" data-i18n="tlp_target_auto" class="ttgt-btn" style="width: 100%; padding: 13px; border-radius: 12px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.30); color: rgba(245, 240, 224, 0.85); font-weight: 700; font-size: 13px; cursor: pointer; transition: all 0.25s ease; margin-bottom: 6px;">Avto — manba tilida qoldirish</button>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
-          <button onclick="selectTargetLang('uz')" id="ttgtUz" data-i18n="lang_uz" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);">🇺🇿 O'zbek</button>
-          <button onclick="selectTargetLang('ru')" id="ttgtRu" data-i18n="lang_ru" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-          <button onclick="selectTargetLang('en')" id="ttgtEn" data-i18n="lang_en" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-          <button onclick="selectTargetLang('ar')" id="ttgtAr" data-i18n="lang_ar" class="ttgt-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
+        <!-- NATIJA: doim O'zbek (avtomatik) -->
+        <div style="font-size: 11px; color: rgba(245, 240, 224, 0.55); text-align: center; padding: 10px; border-radius: 10px; background: rgba(212, 175, 55, 0.08); border: 1px solid rgba(212, 175, 55, 0.18);">
+          🎯 <b style="color: #d4af37;">Natija doim 🇺🇿 O'zbek tilida</b><br>
+          <span style="font-size: 10px; color: rgba(245, 240, 224, 0.45);">Matn va PDF formatida</span>
         </div>
-
-        <div data-i18n="tlp_result_hint" style="font-size: 11px; color: rgba(245, 240, 224, 0.45); text-align: center; margin-top: 14px; letter-spacing: 0.3px;">Natija: matn + PDF + audio (tanlangan tilda)</div>
+        <!-- Yashirin tugmalar — JS uchun kerak (selectTargetLang) -->
+        <div style="display: none;">
+          <button id="ttgtAuto"></button>
+          <button id="ttgtUz"></button>
+          <button id="ttgtRu"></button>
+          <button id="ttgtEn"></button>
+          <button id="ttgtAr"></button>
+        </div>
         <div id="tlangSelected" style="display:none;"></div>
       </div>
     </div>
@@ -1385,21 +1387,17 @@
       <svg class="deco-flower sm bl faded" style="animation-delay:1.1s"><use href="#sakura"/></svg>
       <div class="pdf-icon"><svg><use href="#i-pdf"/></svg></div>
       <div class="pdf-info">
-        <div class="pdf-title" data-i18n="pdf_title">📄 Istalgan PDF → audio MP3</div>
-        <div class="pdf-sub" data-i18n="pdf_sub">PDF tili avtomatik aniqlanadi. Audio MP3 qaysi tilda bo'lishini pastdan tanlang.</div>
+        <div class="pdf-title" data-i18n="pdf_title">📄 Istalgan PDF → 🇺🇿 O'zbek audio MP3</div>
+        <div class="pdf-sub" data-i18n="pdf_sub">PDF hujjatni yuklang — biz O'zbek tilida ovozli MP3 qilib qaytaramiz.</div>
         <span class="card-pill pill-blossom" data-i18n="pdf_pill">Yangi xizmat</span>
       </div>
     </div>
-
-    <!-- PDF → MP3 til tanlash (faqat audio output tili) -->
-    <div onclick="event.stopPropagation();" style="margin-top: 12px; padding: 16px; border-radius: 18px; background: linear-gradient(135deg, rgba(20, 18, 14, 0.85), rgba(10, 9, 6, 0.95)); border: 1px solid rgba(212, 175, 55, 0.35); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);">
-      <div data-i18n="pdf_mp3_label" style="font-size: 10px; font-weight: 800; color: rgba(212, 175, 55, 0.85); margin-bottom: 8px; letter-spacing: 1.5px; text-transform: uppercase;">🔊 MP3 audio tili (qaysi tilda olasiz?)</div>
-      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 6px;">
-        <button onclick="selectPdfLang('uz')" id="pdflangUz" data-i18n="lang_uz" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: linear-gradient(135deg, #d4af37, #b8941f); border: 1px solid #d4af37; color: #0a0a0a; font-weight: 900; font-size: 12px; cursor: pointer; transition: all 0.25s ease; box-shadow: 0 6px 18px rgba(212, 175, 55, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.25);">🇺🇿 O'zbek</button>
-        <button onclick="selectPdfLang('ru')" id="pdflangRu" data-i18n="lang_ru" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇷🇺 Rus</button>
-        <button onclick="selectPdfLang('en')" id="pdflangEn" data-i18n="lang_en" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇬🇧 Ingliz</button>
-        <button onclick="selectPdfLang('ar')" id="pdflangAr" data-i18n="lang_ar" class="pdflang-btn" style="padding: 12px 2px; border-radius: 10px; background: rgba(245, 240, 224, 0.04); border: 1px solid rgba(212, 175, 55, 0.20); color: rgba(245, 240, 224, 0.72); font-weight: 700; font-size: 12px; cursor: pointer; transition: all 0.25s ease;">🇸🇦 Arab</button>
-      </div>
+    <!-- Yashirin tugmalar — JS uchun kerak (selectPdfLang) -->
+    <div style="display: none;">
+      <button id="pdflangUz"></button>
+      <button id="pdflangRu"></button>
+      <button id="pdflangEn"></button>
+      <button id="pdflangAr"></button>
     </div>
   </div>
 
@@ -2355,20 +2353,20 @@
       const fd = new FormData();
       fd.append('user_id', String(userId));
       fd.append('language', currentLang);
-      // === [TARJIMA] source + target birga yuboriladi ===
+      // === [TARJIMA] Natija doim O'zbek tilida — soddalashtirildi ===
+      // Audio/video uchun source tanlanadi, target doim 'uz'
       if (translateLang) {
         fd.append('translation_lang', translateLang);
-        fd.append('target_lang', targetLang || 'uz');
+        fd.append('target_lang', 'uz');  // Natija doim O'zbek
       }
-      // === [PDF→MP3] PDF uchun audio til (avto-detect manba, output til tanlangan) ===
+      // === [PDF→MP3] PDF → O'zbek audio (avto-detect manba) ===
       const isPdfFile = (selectedFile.name || '').toLowerCase().endsWith('.pdf')
                          || (selectedFile.type || '').includes('pdf');
       if (isPdfFile) {
-        fd.append('pdf_audio_lang', pdfLang || 'uz');
-        // PDF uchun source = auto, target = MP3 til
+        fd.append('pdf_audio_lang', 'uz');  // PDF audio doim O'zbek
         if (!translateLang) {
           fd.append('translation_lang', 'auto');
-          fd.append('target_lang', pdfLang || 'uz');
+          fd.append('target_lang', 'uz');
         }
       }
       fd.append('file', selectedFile, selectedFile.name);
