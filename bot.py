@@ -2098,7 +2098,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Menu button set xato: {e}")
 
     await update.message.reply_text(
-        "🌸 Assalomu alaykum, 👑*{}*👑!\n\n"
+        "🌸 Assalomu alaykum, 👑👑*{}*👑👑!\n\n"
         "Men audio va videolarni matn hamda PDF formatiga aylantiruvchi va "
         "istalgan tildan istalgan tilga yoki o'zbek tiliga tarjima qilib PDF qilib "
         "bera oladigan aqlli botman. Men bilan darslaringizni yanada oson va "
@@ -2111,6 +2111,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 🎬 Video / dumaloq video\n"
         "• 🔗 YouTube / TikTok / Instagram havolasi\n"
         "• 📄 PDF fayl (matn ovozga aylanadi)\n\n"
+        "⚠️ *Muhim eslatma:*\n"
+        "Odamlar xato qilgani kabi men ham xato qilishim mumkin — men odam emas, "
+        "botman. Istalgan soatli audio va videolarni matn qila olaman, ammo "
+        "*aniqlik sifati uchun* uzun videolarni *10 yoki 20 daqiqali bo'laklarga* "
+        "ajratib yuboring. Shunda xato qilish koeffitsientim sezilarli kamayadi.\n\n"
         "Quyidagi tugma orqali *Web ilovani* oching 👇".format(
             update.effective_user.first_name
         ),
