@@ -2108,8 +2108,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Video, dumaloq video\n"
         "• YouTube / TikTok / Instagram havolasi\n"
         "• PDF fayl\n\n"
-        "⚠️ *Aniqlik uchun:*\n"
-        "• Uzun videolarni *10-20 daqiqali* qiling\n"
+        "💡 Istalgan uzunlikdagi audio va videolarni (hatto bir necha soatli) "
+        "matn va PDF qila olaman. Ammo *aniqlik sifati uchun* uzun videolarni "
+        "*10-20 daqiqali* bo'laklarga ajratib yuborganingiz afzal "
+        "(YouTube havolasini bo'lish shart emas — uni shundayicha yuboring).\n\n"
+        "⚠️ *Yana yaxshiroq natija uchun:*\n"
         "• *Aniq, tiniq ovoz* yuboring (shovqin kam bo'lsin)\n"
         "• Bir vaqtda bitta odam gapirsa, sifat yaxshi chiqadi\n\n"
         "Quyidagi tugma orqali *Web ilovani* oching 👇".format(
