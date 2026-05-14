@@ -4804,7 +4804,7 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
             except Exception: pass
 
 
-def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"):
+def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz", output_alphabet="latin"):
     """URL'dan video yuklab xorijiy tildan tanlangan tilga tarjima — matn + PDF.
     XAVFSIZ TO'LOV: faqat matn yetkazilgandan keyin daqiqa yechiladi.
     PROGRESS: Telegram'da 'bot yozmoqda...' indikatori ishlaydi."""
@@ -4878,6 +4878,11 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
         # 5) Natija — matn + PDF
         src_label = TRANSLATION_LANGS[source_lang]
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
+        # === [ALIFBO] Kirill so'ralsa O'zbek matni kirillga o'tkazamiz ===
+        if output_alphabet == "cyrillic" and target_lang == "uz":
+            progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
+            translated = convert_latin_to_cyrillic(translated)
+            tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
         telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
         for i in range(0, len(translated), 4000):
             telegram_send_message(user_id, translated[i:i+4000])
@@ -4906,8 +4911,9 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
             except Exception: pass
 
 
-def process_url_for_user(user_id, url, language="uz"):
-    """WebApp URL'idan video yuklab matnga aylantirish — tarif limiti qo'llanadi."""
+def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
+    """WebApp URL'idan video yuklab matnga aylantirish — tarif limiti qo'llanadi.
+    output_alphabet: 'latin' yoki 'cyrillic'."""
     audio_path = None
     try:
         # Limit dastlabki tekshiruvi (davomiylik hali noma'lum)
@@ -4930,6 +4936,10 @@ def process_url_for_user(user_id, url, language="uz"):
         telegram_send_message(user_id, "✅ Yuklanidi! 🎙 Matn tanilmoqda...")
         text = transcribe_unified(audio_path, language=language)
         if text and text.strip() != "Matn aniqlanmadi.":
+            # === [ALIFBO] Kirill so'ralsa o'tkazamiz ===
+            if output_alphabet == "cyrillic":
+                telegram_send_message(user_id, "🔤 Matn Kirill alifbosiga o'tkazilmoqda...")
+                text = convert_latin_to_cyrillic(text)
             _send_text_and_pdf(user_id, text)
         else:
             telegram_send_message(user_id, "Matn aniqlanmadi.")
@@ -5069,13 +5079,17 @@ async def handle_webapp_url_post(request):
         target_lang = (data.get("target_lang") or "uz").lower()
         if target_lang not in TRANSLATION_TARGETS:
             target_lang = "uz"
+        # === [ALIFBO] O'zbek alifbosi ===
+        output_alphabet = (data.get("output_alphabet") or "latin").lower()
+        if output_alphabet not in ("latin", "cyrillic"):
+            output_alphabet = "latin"
         if not user_id or not url:
             return web.json_response({"error": "user_id yoki url yo'q"}, status=400, headers=cors_headers())
         # === [TARJIMA] Tarjima rejimi (source + target) ===
         if translation_lang:
-            threading.Thread(target=process_url_translation_for_user, args=(int(user_id), url, translation_lang, target_lang), daemon=True).start()
+            threading.Thread(target=process_url_translation_for_user, args=(int(user_id), url, translation_lang, target_lang, output_alphabet), daemon=True).start()
         else:
-            threading.Thread(target=process_url_for_user, args=(int(user_id), url, language), daemon=True).start()
+            threading.Thread(target=process_url_for_user, args=(int(user_id), url, language, output_alphabet), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP URL xatosi: {e}")
