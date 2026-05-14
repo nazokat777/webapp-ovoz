@@ -1490,36 +1490,89 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
     results = []
     total = len(chunks_to_process)
+    failed_chunks = []
     try:
         for idx, chunk_path in enumerate(chunks_to_process, 1):
             if progress_cb:
                 try: progress_cb(idx, total)
                 except Exception: pass
-            with open(chunk_path, "rb") as f:
-                files = {"file": (os.path.basename(chunk_path), f, "application/octet-stream")}
-                data = {
-                    "model": "whisper-1",
-                    "response_format": "verbose_json",
-                }
-                # === 'auto' bo'lsa language yuborilmaydi (Whisper o'zi aniqlaydi) ===
-                if source_lang and source_lang != "auto":
-                    data["language"] = source_lang
-                resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
-            if resp.status_code != 200:
-                raise Exception(f"Transkripsiya xatosi (bo'lak {idx}/{total}): HTTP {resp.status_code}")
-            result = resp.json()
-            text = (result.get("text") or "").strip()
-            if text:
-                # Hallucination tozalash — bo'lak darajasida
-                text = _clean_whisper_hallucination(text)
-                results.append(text)
+
+            # Bo'lak hajmini tekshirish (juda kichik bo'lsa Whisper rad qiladi)
+            try:
+                chunk_size_kb = os.path.getsize(chunk_path) / 1024
+            except Exception:
+                chunk_size_kb = 0
+            if chunk_size_kb < 5:  # 5 KB dan kichik bo'lsa skip
+                logging.warning(f"Bo'lak {idx} juda kichik ({chunk_size_kb:.1f}KB), o'tkazib yuborildi")
+                continue
+
+            # 3 marta urinish (retry) — HTTP 400/429/500 uchun
+            last_error = None
+            chunk_text = None
+            for attempt in range(3):
+                try:
+                    with open(chunk_path, "rb") as f:
+                        files = {"file": (os.path.basename(chunk_path), f, "application/octet-stream")}
+                        data = {
+                            "model": "whisper-1",
+                            "response_format": "verbose_json",
+                        }
+                        if source_lang and source_lang != "auto":
+                            data["language"] = source_lang
+                        resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
+
+                    if resp.status_code == 200:
+                        result = resp.json()
+                        text = (result.get("text") or "").strip()
+                        if text:
+                            chunk_text = _clean_whisper_hallucination(text)
+                        else:
+                            logging.info(f"Bo'lak {idx} bo'sh natija (audio jim?)")
+                        break  # muvaffaqiyat
+                    elif resp.status_code == 400:
+                        # 400 — audio buzuq yoki noto'g'ri format. Qayta urinish foydasiz.
+                        err_text = resp.text[:200] if resp.text else "Unknown"
+                        last_error = f"HTTP 400 (audio rad etildi): {err_text}"
+                        logging.warning(f"Bo'lak {idx} HTTP 400: {err_text}")
+                        break  # 400 da retry yo'q
+                    elif resp.status_code in (429, 500, 502, 503):
+                        # Rate limit yoki vaqtinchalik xato — retry
+                        last_error = f"HTTP {resp.status_code}"
+                        wait = 2 ** attempt  # 1, 2, 4 sek
+                        logging.warning(f"Bo'lak {idx} HTTP {resp.status_code}, {wait}s pauza...")
+                        time.sleep(wait)
+                    else:
+                        last_error = f"HTTP {resp.status_code}"
+                        break
+                except requests.exceptions.Timeout:
+                    last_error = "Timeout (10 daq)"
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)
+                except Exception as e:
+                    last_error = str(e)[:200]
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)
+
+            if chunk_text:
+                results.append(chunk_text)
+            elif last_error:
+                failed_chunks.append((idx, last_error))
+                logging.error(f"Bo'lak {idx}/{total} 3 urinishdan keyin yiqildi: {last_error}")
     finally:
         if chunk_dir_to_cleanup:
             try: shutil.rmtree(chunk_dir_to_cleanup, ignore_errors=True)
             except Exception: pass
 
+    # Agar BARCHA bo'laklar yiqilgan bo'lsa — xato qaytaramiz
+    if not results and failed_chunks:
+        first_err = failed_chunks[0][1] if failed_chunks else "Noma'lum"
+        raise Exception(f"Whisper barcha bo'laklarda yiqildi. Sabab: {first_err}")
+
+    # Qisman muvaffaqiyat — log qoldiramiz lekin natijani qaytaramiz
+    if failed_chunks:
+        logging.warning(f"⚠️ {len(failed_chunks)}/{total} bo'lak yo'qoldi, lekin {len(results)} bo'lak yetkazildi")
+
     final_text = "\n\n".join(results)
-    # Yakuniy tekshiruv — birlashtirilgan matn ham toza bo'lsin
     return _clean_whisper_hallucination(final_text)
 
 
