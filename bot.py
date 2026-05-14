@@ -154,6 +154,12 @@ pending_payments = {}
 pending_translations = {}
 # === [USERS] Admin ko'rishi uchun user info: {user_id: {"username": "@x", "first_name": "Ali", "last_seen": 1234567890}} ===
 user_info = {}
+# === [AI TOOLS] Oxirgi transkripsiya matni — Konspekt va Savol-javob uchun ===
+# {user_id: {"text": "...", "ts": timestamp}} — RAM'da saqlanadi (qisqa muddatli)
+last_transcripts = {}
+# === [Q&A] User savol kutish rejimida bo'lsa shu yerda saqlanadi ===
+# {user_id: True} — bot user yangi savolini kutadi
+pending_questions = {}
 # Admin tomonidan /setcard va /setholder orqali sozlanadigan karta ma'lumotlari
 # Env variable yo'q bo'lsa yoki adminb buyruq bilan yangilangan bo'lsa shu ishlatiladi.
 runtime_settings = {"payment_card": "", "payment_card_holder": ""}
@@ -3670,6 +3676,9 @@ async def text_to_voice(update, context, text):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
+    # === [AI] User savol berish rejimida bo'lsa, savoliga javob beramiz ===
+    if await handle_ai_question(update, context):
+        return
     # Admin "Javob yozish" tugmasini bosgan va keyingi matnni yozyapti
     if (context.user_data and context.user_data.get("awaiting_reply_for")
             and is_admin(update)):
@@ -4077,6 +4086,126 @@ async def translation_target_callback(update: Update, context: ContextTypes.DEFA
 # === [/TARJIMA MODULI — KOMANDA HANDLERS] =======================================
 
 
+# === [AI TOOLS — Konspekt / Savol-javob / TXT] ===========================
+async def ai_tools_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """AI tugmalar uchun callback:
+      ai:summary   — matnni konspekt qilish
+      ai:question  — savol berishni boshlash
+      ai:txt       — matnni TXT fayl sifatida yuborish"""
+    query = update.callback_query
+    if not query or not query.data:
+        return
+    await query.answer()
+    if not query.data.startswith("ai:"):
+        return
+    action = query.data.split(":", 1)[1]
+    user_id = query.from_user.id
+
+    # Saqlangan matn bormi?
+    record = last_transcripts.get(user_id)
+    if not record or not record.get("text"):
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="⚠️ Saqlangan matn yo'q. Avval audio/video yuboring.",
+        )
+        return
+    text = record["text"]
+
+    if action == "summary":
+        # === Konspekt ===
+        await context.bot.send_message(chat_id=user_id, text="⏳ Konspekt tayyorlanmoqda...")
+        try:
+            summary = await asyncio.to_thread(_ai_summarize_text, text)
+        except Exception as e:
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"❌ Konspekt yaratilmadi: {str(e)[:200]}",
+            )
+            return
+        # Konspektni yuborish
+        for i in range(0, len(summary), 4000):
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"📋 *Konspekt:*\n\n{summary[i:i+4000]}" if i == 0 else summary[i:i+4000],
+                parse_mode="Markdown" if i == 0 else None,
+            )
+        # PDF formatida ham
+        try:
+            pdf_path = await asyncio.to_thread(make_pdf, summary, "Konspekt")
+            with open(pdf_path, "rb") as f:
+                await context.bot.send_document(
+                    chat_id=user_id, document=f,
+                    filename="konspekt.pdf",
+                    caption="📎 Konspekt PDF formatda",
+                )
+            try: os.remove(pdf_path)
+            except Exception: pass
+        except Exception as e:
+            logging.warning(f"Konspekt PDF xato: {e}")
+        return
+
+    if action == "question":
+        # === Savol berish ===
+        pending_questions[user_id] = True
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="🤔 *Matn haqida savol bering:*\n\n"
+                 "Yozing savolingizni, men matn asosida javob beraman.\n"
+                 "Bekor qilish uchun: /cancel",
+            parse_mode="Markdown",
+        )
+        return
+
+    if action == "txt":
+        # === TXT yuklab olish ===
+        await asyncio.to_thread(_send_txt_file, user_id, text, "matn.txt")
+        return
+
+
+async def handle_ai_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User savol berish rejimida bo'lsa, savoliga javob beradi.
+    text_router yoki MessageHandler chaqirishi mumkin."""
+    user_id = update.effective_user.id
+    if not pending_questions.get(user_id):
+        return False  # bu savol rejimida emas
+    question = (update.message.text or "").strip()
+    if not question:
+        return True
+    # /cancel
+    if question.lower() in ("/cancel", "bekor", "❌ bekor"):
+        pending_questions.pop(user_id, None)
+        await update.message.reply_text("❌ Savol berish bekor qilindi.")
+        return True
+    # Saqlangan matn bormi?
+    record = last_transcripts.get(user_id)
+    if not record or not record.get("text"):
+        pending_questions.pop(user_id, None)
+        await update.message.reply_text(
+            "⚠️ Saqlangan matn yo'q. Avval audio/video yuboring."
+        )
+        return True
+    text = record["text"]
+    # Savol-javob rejimini saqlab qolamiz (yangi savolga ham javob bera olsin)
+    msg = await update.message.reply_text("⏳ Javob tayyorlanmoqda...")
+    try:
+        answer = await asyncio.to_thread(_ai_answer_question, text, question)
+    except Exception as e:
+        await msg.edit_text(f"❌ Javob tayyorlanmadi: {str(e)[:200]}")
+        return True
+    # Javobni yuborish
+    full = f"🤔 *Savol:* {question}\n\n💡 *Javob:*\n{answer}\n\n_Yana savol bermoqchi bo'lsangiz yozavering. Bekor qilish: /cancel_"
+    await msg.edit_text(full, parse_mode="Markdown")
+    return True
+
+
+async def cancel_question_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/cancel — savol berish rejimini bekor qilish."""
+    user_id = update.effective_user.id
+    if pending_questions.pop(user_id, None):
+        await update.message.reply_text("❌ Savol berish bekor qilindi.")
+# === [/AI TOOLS] ==========================================================
+
+
 # ── HTTP API (WebApp uchun) ─────────────────────────────────────────────────
 
 def telegram_send_message(chat_id, text):
@@ -4090,6 +4219,93 @@ def telegram_send_message(chat_id, text):
             requests.post(url, data={"chat_id": chat_id, "text": chunk}, timeout=60)
     except Exception as e:
         logging.error(f"Telegram send error: {e}")
+
+
+def _ai_summarize_text(text):
+    """Matnni qisqacha xulosa qilish — GPT-4o orqali."""
+    if not OPENAI_API_KEY:
+        raise Exception("OPENAI_API_KEY sozlanmagan")
+    url_api = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    system_prompt = (
+        "Sen O'zbek tilida yaxshi yozadigan professional konspekt yozuvchisan. "
+        "Berilgan matnni qisqa, aniq va o'qish uchun qulay konspekt qilib ber.\n\n"
+        "QOIDALAR:\n"
+        "1) Matn O'zbek tilida bo'lishi kerak\n"
+        "2) Asosiy fikrlarni 5-10 ta bullet point shaklida ko'rsat\n"
+        "3) Mavzu sarlavhasi bilan boshlash mumkin\n"
+        "4) Ortiqcha so'zlardan voz kech, faqat muhim ma'lumot\n"
+        "5) Diniy atamalar, ismlar va shahar nomlarini saqla\n"
+        "6) Qur'on oyatlari arab tilida qoldirilsin\n"
+        "7) Faqat konspektni qaytar, hech qanday izoh yo'q"
+    )
+    payload = {
+        "model": "gpt-4o",
+        "max_tokens": 4000,
+        "temperature": 0.3,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Quyidagi matnni konspekt qil:\n\n{text}"},
+        ],
+    }
+    resp = requests.post(url_api, headers=headers, json=payload, timeout=300)
+    if resp.status_code != 200:
+        raise Exception(f"Konspekt xatosi: HTTP {resp.status_code}")
+    return resp.json()["choices"][0]["message"]["content"].strip()
+
+
+def _ai_answer_question(text, question):
+    """Matn haqida savolga javob — GPT-4o orqali."""
+    if not OPENAI_API_KEY:
+        raise Exception("OPENAI_API_KEY sozlanmagan")
+    url_api = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    system_prompt = (
+        "Sen O'zbek tilida yaxshi javob beradigan AI yordamchisan. "
+        "Foydalanuvchi senga matn va shu matn haqida savol beradi. "
+        "Javobni FAQAT shu matn asosida ber, o'zingdan qo'shma. "
+        "Agar matnda javob yo'q bo'lsa, 'Bu haqida matnda ma'lumot yo'q' deb yoz. "
+        "Javob O'zbek tilida, qisqa va aniq bo'lsin."
+    )
+    user_prompt = f"MATN:\n\n{text}\n\n---\n\nSAVOL: {question}\n\nO'zbek tilida javob ber:"
+    payload = {
+        "model": "gpt-4o",
+        "max_tokens": 2000,
+        "temperature": 0.2,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+    }
+    resp = requests.post(url_api, headers=headers, json=payload, timeout=180)
+    if resp.status_code != 200:
+        raise Exception(f"Savol-javob xatosi: HTTP {resp.status_code}")
+    return resp.json()["choices"][0]["message"]["content"].strip()
+
+
+def _send_txt_file(user_id, text, filename="matn.txt"):
+    """Matnni TXT fayl sifatida yuborish."""
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False, mode="w", encoding="utf-8") as tmp:
+            tmp.write(text)
+            tmp_path = tmp.name
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+        with open(tmp_path, 'rb') as f:
+            files = {"document": (filename, f, "text/plain")}
+            data = {"chat_id": user_id, "caption": "📄 Matn TXT formatda"}
+            requests.post(url, data=data, files=files, timeout=60)
+        try: os.remove(tmp_path)
+        except Exception: pass
+        return True
+    except Exception as e:
+        logging.error(f"TXT yuborish xato: {e}")
+        return False
 
 
 def telegram_send_chat_action(chat_id, action="typing"):
@@ -4300,7 +4516,14 @@ def telegram_send_voice(chat_id, file_path, caption=None):
 
 
 def _send_text_and_pdf(user_id, text):
-    """Matn + PDF yuborish (HTTP fallback yo'lida) — audio kontekstida TTS yo'q."""
+    """Matn + PDF + AI tugmalar yuborish (HTTP fallback yo'lida).
+    Tugmalar: 📋 Konspekt, 🤔 Savol berish, 📥 TXT yuklab olish"""
+    # Matnni keyingi AI tugmalar uchun saqlaymiz
+    try:
+        last_transcripts[int(user_id)] = {"text": text, "ts": time.time()}
+    except Exception:
+        pass
+
     telegram_send_message(user_id, f"📝 Matn:\n\n{text}")
     try:
         pdf_path = make_pdf(text)
@@ -4312,6 +4535,41 @@ def _send_text_and_pdf(user_id, text):
                 except Exception: pass
     except Exception as e:
         logging.error(f"PDF (HTTP) xato: {e}")
+
+    # AI tugmalar — Konspekt, Savol, TXT
+    _send_ai_tools_buttons(user_id)
+
+
+def _send_ai_tools_buttons(user_id):
+    """Transkripsiya/tarjimadan keyin AI tugmalar yuborish."""
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "📋 Konspekt", "callback_data": "ai:summary"},
+                    {"text": "🤔 Savol berish", "callback_data": "ai:question"},
+                ],
+                [
+                    {"text": "📥 TXT yuklab olish", "callback_data": "ai:txt"},
+                ],
+            ]
+        }
+        requests.post(
+            url,
+            json={
+                "chat_id": user_id,
+                "text": "🤖 *Yana qanday yordam bersam?*\n\n"
+                        "📋 *Konspekt* — matnni qisqacha xulosa qilib beradi\n"
+                        "🤔 *Savol berish* — matn haqida AI'dan so'rang\n"
+                        "📥 *TXT* — matnni TXT fayl sifatida olish",
+                "parse_mode": "Markdown",
+                "reply_markup": keyboard,
+            },
+            timeout=10,
+        )
+    except Exception as e:
+        logging.debug(f"AI tools tugmalar yuborilmadi: {e}")
 
 
 # ── HTTP/THREAD CONTEXT UCHUN LIMIT TEKSHIRUVI ─────────────────────────────
@@ -5254,6 +5512,8 @@ def main():
     # === [TARJIMA] callback handler (manba til tanlash) ===
     app.add_handler(CallbackQueryHandler(translation_lang_callback, pattern=r"^transl:"))
     app.add_handler(CallbackQueryHandler(translation_target_callback, pattern=r"^transltgt:"))
+    # === [AI TOOLS] Konspekt / Savol berish / TXT tugmalar ===
+    app.add_handler(CallbackQueryHandler(ai_tools_callback, pattern=r"^ai:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Telegram Payments handlerlari (kelajakda PROVIDER_TOKEN qo'shilsa avtomat ishlaydi)
