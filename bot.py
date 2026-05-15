@@ -1409,9 +1409,9 @@ def transcribe_unified(file_path, progress_cb=None, language="uz"):
     # 1) STT
     text = transcribe_whisper(file_path, language, None) or ""
 
-    # 2) Agar O'zbek so'ralgan va natijada arab alifbosi topilsa, tozalash
+    # 2) O'zbek matn — HAR DOIM GPT-4o bilan tozalash (TAK! TEXT darajasidagi sifat)
     if language == "uz" and text:
-        text = _cleanup_mixed_uzbek_arabic(text)
+        text = _cleanup_uzbek_transcript(text)
 
     return text
 # === [/WHISPER UNIFIED STT] =====================================================
@@ -1598,57 +1598,105 @@ def _clean_whisper_hallucination(text):
     return result
 
 
-def _cleanup_mixed_uzbek_arabic(text):
-    """Agar Whisper o'zbek matnda arab alifbosini aralashtirib chiqarsa,
-    arabchani o'zbek lotin transliteratsiyasiga aylantirish.
-    Foydalanish: faqat O'zbek STT natijasida arab harflar topilsa."""
-    if not text:
+def _cleanup_uzbek_transcript(text):
+    """O'zbek transkripsiyani GPT-4o bilan tozalash — TAK! TEXT darajasidagi sifat.
+
+    Bu funksiya HAR DOIM o'zbek STT natijasi uchun chaqiriladi:
+    1) Arab alifbosini Uzbek lotin transliteratsiyasiga aylantirish
+    2) Noto'g'ri so'zlarni to'g'rilash (Whisper xatolari)
+    3) Apostroflar (o', g') to'g'ri yozish
+    4) Buzilgan qismlarni kontekstdan tiklash
+    5) Diniy atamalar va ismlarni rasmiy shaklda
+    6) Tinish belgilarini qo'shish
+    """
+    if not text or not OPENAI_API_KEY:
         return text
-    # Arab harfi bormi (U+0600 — U+06FF)?
-    has_arabic = any('؀' <= ch <= 'ۿ' for ch in text)
-    if not has_arabic:
-        return text
-    if not OPENAI_API_KEY:
+    # Uzun matn — chunklash kerak
+    if len(text) > 30000:
+        # Juda uzun, chunklab tozalash
+        words = text.split()
+        chunks = []
+        cur, count = [], 0
+        for w in words:
+            cur.append(w)
+            count += len(w) + 1
+            if count >= 8000:
+                chunks.append(" ".join(cur))
+                cur, count = [], 0
+        if cur:
+            chunks.append(" ".join(cur))
+        cleaned_parts = []
+        for ch in chunks:
+            cleaned_parts.append(_cleanup_uzbek_transcript_chunk(ch))
+        return "\n\n".join(cleaned_parts)
+    return _cleanup_uzbek_transcript_chunk(text)
+
+
+def _cleanup_uzbek_transcript_chunk(text):
+    """Bitta chunk uchun cleanup."""
+    if not text or not OPENAI_API_KEY:
         return text
 
-    logging.info("🧹 Whisper natijasida arab alifbosi topildi — GPT bilan tozalash...")
+    logging.info(f"🧹 Uzbek transkripsiyani GPT bilan tozalash ({len(text)} belgi)...")
     url_api = "https://api.openai.com/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json",
     }
     system_prompt = (
-        "You are a text cleanup specialist for Uzbek language. "
-        "The input text is mostly Uzbek (Latin script) but contains "
-        "Arabic script fragments (probably Quranic verses or religious phrases).\n\n"
+        "You are a professional Uzbek language editor. Your job is to clean up "
+        "speech transcription output to produce PERFECT Uzbek Latin text.\n\n"
+        "INPUT: Speech-to-text output that may have errors:\n"
+        "- Mixed Latin and Arabic scripts\n"
+        "- Misspelled or garbled words\n"
+        "- Wrong apostrophe styles (o`, o', ó instead of o')\n"
+        "- Missing or wrong punctuation\n"
+        "- Phonetic errors from speech recognition\n\n"
         "RULES:\n"
-        "1) Keep Uzbek Latin text AS-IS, do not change it.\n"
-        "2) Convert ALL Arabic script to Uzbek Latin transliteration:\n"
-        "   - Common phrases: 'Bismillah', 'Allohu akbar', 'Subhanalloh', 'Alhamdulillah'\n"
-        "   - Quranic verses: transliterate to Uzbek Latin spelling\n"
-        "   - Names: 'Muhammad sallallohu alayhi va sallam', 'Alloh', 'sahobalar'\n"
-        "3) Output the CORRECTED text only, no explanations.\n"
-        "4) Preserve the original meaning and order of sentences."
+        "1) OUTPUT MUST be 100% Uzbek Latin alphabet (no Arabic script).\n"
+        "2) Transliterate Arabic religious phrases to Latin Uzbek:\n"
+        "   - 'بسم الله' → 'Bismillahir Rohmanir Rohim'\n"
+        "   - 'الله اكبر' → 'Allohu akbar'\n"
+        "   - 'سبحان الله' → 'Subhanalloh'\n"
+        "   - 'الحمد لله' → 'Alhamdulillah'\n"
+        "3) Use proper Uzbek Latin: o', g', sh, ch, ng (not o`, ó, oʻ).\n"
+        "4) Fix obvious phonetic transcription errors using context.\n"
+        "5) Religious terms in standard Uzbek form:\n"
+        "   - 'payg'ambar', 'sallallohu alayhi va sallam' (or 's.a.v.')\n"
+        "   - 'Imom Buxoriy', 'Imom Muslim'\n"
+        "   - 'sahobalar', 'ulamolar', 'shariat'\n"
+        "6) Proper punctuation: capital letters, periods, commas.\n"
+        "7) DO NOT translate, DO NOT summarize, DO NOT add new content.\n"
+        "8) Preserve ALL information from input — just clean and correct.\n\n"
+        "Output ONLY the cleaned Uzbek text, no explanations."
     )
     payload = {
         "model": "gpt-4o",
-        "max_tokens": 8000,
+        "max_tokens": 16000,
         "temperature": 0.0,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Clean up this Uzbek text (transliterate Arabic to Latin):\n\n{text}"},
+            {"role": "user", "content": f"Clean up this Uzbek transcription:\n\n{text}"},
         ],
     }
     try:
-        resp = requests.post(url_api, headers=headers, json=payload, timeout=180)
+        resp = requests.post(url_api, headers=headers, json=payload, timeout=300)
         if resp.status_code == 200:
             cleaned = resp.json()["choices"][0]["message"]["content"].strip()
-            if cleaned and len(cleaned) > 50:
-                logging.info("✅ Aralash matn tozalandi")
+            # Tekshiruv: tozalangan matn juda qisqarib ketmaganmi?
+            if cleaned and len(cleaned) >= len(text) * 0.5:
+                logging.info(f"✅ Uzbek matn tozalandi ({len(text)} → {len(cleaned)} belgi)")
                 return cleaned
+            else:
+                logging.warning(f"Tozalangan matn juda qisqa, asl matnni qaytaramiz")
     except Exception as e:
-        logging.warning(f"Aralash matn tozalash xato: {e}")
+        logging.warning(f"Uzbek cleanup xato: {e}")
     return text
+
+
+# Eski nom uchun backward-compat (boshqa joylarda chaqiriladi)
+def _cleanup_mixed_uzbek_arabic(text):
+    return _cleanup_uzbek_transcript(text)
 
 
 def _get_whisper_prompt(source_lang):
