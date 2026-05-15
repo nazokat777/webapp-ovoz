@@ -6008,12 +6008,13 @@ async def handle_webapp_upload(request):
         # PDF tarjimasiz — oddiy PDF -> ovoz (default O'zbekcha)
         elif ext == ".pdf":
             threading.Thread(target=process_pdf_for_user, args=(int(user_id), tmp_path), daemon=True).start()
-        # Audio/video + translation_lang -> tarjima
-        elif translation_lang:
+        # Audio/video + translation_lang -> tarjima (faqat source != target bo'lsa)
+        elif translation_lang and translation_lang != target_lang:
             threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang, output_alphabet), daemon=True).start()
-        # Oddiy audio/video -> oddiy STT
+        # Oddiy audio/video -> oddiy STT (source==target yoki til tanlanmagan)
         else:
-            threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language, output_alphabet), daemon=True).start()
+            stt_lang = translation_lang if translation_lang else language
+            threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, stt_lang, output_alphabet), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP upload xatosi: {e}")
@@ -6045,10 +6046,13 @@ async def handle_webapp_url_post(request):
         if not user_id or not url:
             return web.json_response({"error": "user_id yoki url yo'q"}, status=400, headers=cors_headers())
         # === [TARJIMA] Tarjima rejimi (source + target) ===
-        if translation_lang:
+        # MUHIM: agar source == target (masalan, Uz->Uz) tarjimasiz oddiy STT
+        if translation_lang and translation_lang != target_lang:
             threading.Thread(target=process_url_translation_for_user, args=(int(user_id), url, translation_lang, target_lang, output_alphabet), daemon=True).start()
         else:
-            threading.Thread(target=process_url_for_user, args=(int(user_id), url, language, output_alphabet), daemon=True).start()
+            # Oddiy transkripsiya — manba til tanlangan bo'lsa shuni ishlatamiz
+            stt_lang = translation_lang if translation_lang else language
+            threading.Thread(target=process_url_for_user, args=(int(user_id), url, stt_lang, output_alphabet), daemon=True).start()
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP URL xatosi: {e}")
