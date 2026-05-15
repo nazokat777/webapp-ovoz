@@ -1547,7 +1547,7 @@ WHISPER_SUPPORTED_LANGS = {
     "nl", "en", "et", "fi", "fr", "gl", "de", "el", "he", "hi", "hu", "is",
     "id", "it", "ja", "kn", "kk", "ko", "lv", "lt", "mk", "ms", "mr", "mi",
     "ne", "no", "fa", "pl", "pt", "ro", "ru", "sr", "sk", "sl", "es", "sw",
-    "sv", "tl", "ta", "th", "tr", "uk", "ur", "vi", "cy",
+    "sv", "tl", "ta", "th", "tr", "uk", "ur", "uz", "vi", "cy",  # 'uz' qo'shildi
 }
 WHISPER_MAX_FILE_MB = 22        # 22 MB dan oshganda bo'laklash (25 MB Whisper chegarasi - 3 MB margin)
 WHISPER_CHUNK_BITRATE = "64k"   # 64 kbps mono — 10 daqiqa ≈ 4.8 MB
@@ -2070,33 +2070,46 @@ def _cleanup_uzbek_transcript_chunk(text):
         "speech transcription output to produce PERFECT Uzbek Latin text.\n\n"
         "INPUT: Speech-to-text output that may have errors:\n"
         "- Mixed Latin and Arabic scripts\n"
+        "- TURKISH or KAZAKH contamination (Whisper auto-detect confuses Uzbek "
+        "with Turkish/Kazakh because they are Turkic languages)\n"
         "- Misspelled or garbled words\n"
         "- Wrong apostrophe styles (o`, o', ó instead of o')\n"
         "- Missing or wrong punctuation\n"
         "- Phonetic errors from speech recognition\n"
         "- REPEATED phrases (hallucination): same phrase 10-500 times in a row\n\n"
         "RULES:\n"
-        "1) OUTPUT MUST be 100% Uzbek Latin alphabet (no Arabic script).\n"
-        "2) Transliterate Arabic religious phrases to Latin Uzbek:\n"
+        "1) OUTPUT MUST be 100% PURE Uzbek Latin alphabet — NOT Turkish, NOT Kazakh.\n"
+        "2) CRITICAL: Convert Turkish/Kazakh letters to Uzbek equivalents:\n"
+        "   - Turkish 'ş' → Uzbek 'sh' ('şu' → 'shu', 'şubatlarini' → 'shu bo'latlarini' or context)\n"
+        "   - Turkish 'ç' → Uzbek 'ch'\n"
+        "   - Turkish 'ı' → Uzbek 'i' ('tanışalım' → 'tanishaylik' or 'tanishaylik')\n"
+        "   - Turkish 'ö', 'ü' → Uzbek 'o'', 'u'\n"
+        "   - Turkish 'ğ' → Uzbek 'g''\n"
+        "   - Kazakh 'қ' (k') → Uzbek 'q'\n"
+        "   - Kazakh 'ң' → Uzbek 'ng'\n"
+        "   - Kazakh 'ы' → Uzbek 'i' or 'y' (context)\n"
+        "   - 'İslom', 'İnşolloh' → 'Islom', 'Inshalloh'\n"
+        "3) Transliterate Arabic religious phrases to Latin Uzbek:\n"
         "   - 'بسم الله' → 'Bismillahir Rohmanir Rohim'\n"
         "   - 'الله اكبر' → 'Allohu akbar'\n"
         "   - 'سبحان الله' → 'Subhanalloh'\n"
         "   - 'الحمد لله' → 'Alhamdulillah'\n"
-        "3) Use proper Uzbek Latin: o', g', sh, ch, ng (not o`, ó, oʻ).\n"
-        "4) Fix obvious phonetic transcription errors using context.\n"
-        "5) Religious terms in standard Uzbek form:\n"
+        "4) Use proper Uzbek Latin: o', g', sh, ch, ng (not o`, ó, oʻ).\n"
+        "5) Fix obvious phonetic transcription errors using context.\n"
+        "   - If Turkish/Kazakh word doesn't fit Uzbek meaning, replace with Uzbek equivalent based on context.\n"
+        "6) Religious terms in standard Uzbek form:\n"
         "   - 'payg'ambar', 'sallallohu alayhi va sallam' (or 's.a.v.')\n"
         "   - 'Imom Buxoriy', 'Imom Muslim'\n"
         "   - 'sahobalar', 'ulamolar', 'shariat'\n"
-        "6) Proper punctuation: capital letters, periods, commas.\n"
-        "7) CRITICAL — REMOVE REPETITIVE HALLUCINATION:\n"
+        "7) Proper punctuation: capital letters, periods, commas.\n"
+        "8) CRITICAL — REMOVE REPETITIVE HALLUCINATION:\n"
         "   - If a SAME phrase appears 3+ times in a row, keep ONLY ONE instance.\n"
         "   - Example INPUT: 'salom salom salom salom salom' → OUTPUT: 'salom'\n"
-        "   - Example INPUT: 'va shu va shu va shu va shu' → OUTPUT: 'va shu'\n"
         "   - Be AGGRESSIVE about removing repetitions.\n"
-        "8) DO NOT translate, DO NOT summarize, DO NOT add new content.\n"
-        "9) Preserve ALL UNIQUE information from input — just clean and correct.\n\n"
-        "Output ONLY the cleaned Uzbek text, no explanations."
+        "9) DO NOT translate, DO NOT summarize, DO NOT add new content.\n"
+        "10) Preserve ALL UNIQUE information from input — just clean and correct.\n\n"
+        "Output ONLY the cleaned PURE Uzbek text, no explanations. "
+        "Reader MUST be able to understand it 100% as native Uzbek speaker."
     )
     payload = {
         "model": "gpt-4o",
