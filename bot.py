@@ -1468,15 +1468,12 @@ def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
 
     logging.info(f"🔪 split_audio: orig size={orig_size_mb:.1f}MB")
 
-    # === Qadam 1: butun audioni qayta kodlash + sukunatni olib tashlash + normalizatsiya ===
-    # ffmpeg filtrlar:
-    #   1) silenceremove: 3+ sek jim joylarni olib tashlaydi (hallucination'ning asosiy sababi)
-    #   2) loudnorm: ovoz balandligini normallashtiradi
-    #   3) highpass=80: past chastotali shovqinni filtrlaydi (vibratsiya, conditioner)
+    # === Qadam 1: butun audioni qayta kodlash + normalizatsiya (silenceremove YO'Q!) ===
+    # silenceremove olib tashlandi — u so'zlarni kesib, Whisper'ni chalkashtirardi.
+    # Faqat normalizatsiya va highpass shovqin filtri qoldi.
     tmp_dir = tempfile.mkdtemp(prefix="whisper_recode_")
     recoded_path = os.path.join(tmp_dir, "recoded.mp3")
     audio_filter = (
-        "silenceremove=stop_periods=-1:stop_duration=3:stop_threshold=-50dB,"
         "loudnorm=I=-16:LRA=11:TP=-1.5,"
         "highpass=f=80"
     )
@@ -2017,17 +2014,17 @@ def _get_whisper_prompt(source_lang):
     Bu so'zlar Whisper'ga 'shu mavzularda gap bo'ladi' deb signal beradi.
     Sifatni 30-40% oshiradi (ayniqsa o'zbek diniy/akademik matnlarda)."""
 
-    # O'zbek tili uchun kontekst — FAQAT LOTIN ALIFBOSI, oddiy so'zlar
-    # MUHIM: arabcha translit so'zlar (Bismillah, alayhissalom) prompt'da BO'LMASIN,
-    # chunki Whisper ularni ko'rsa, output'ni arab alifbosida qaytarishi mumkin.
+    # O'zbek tili uchun kontekst — oddiy va xilma-xil so'zlar (takror prompt'da bo'lmasin!)
+    # MUHIM: prompt'da bir so'z takror yozilmaslik kerak, aks holda Whisper takror yozadi.
+    # Arabcha translit so'zlar ham yo'q (output'ni arab alifbosida qaytarmasligi uchun).
     uz_prompt = (
-        "Bu o'zbek tilidagi yozuv. O'zbekcha lotin alifbosida yoziladi. "
-        "Salom, yaxshi, kerak, bo'lsin, qilamiz, o'tirgan, ko'rgan, gapirgan. "
-        "Toshkent, Samarqand, Buxoro, Andijon, Namangan, Farg'ona. "
-        "Maktab, dars, kitob, talaba, o'qituvchi, ilm, fikr, mavzu. "
-        "Bugun, kecha, ertaga, hozir, men, sen, biz, ular. "
-        "Apostrof bilan: o'zbek, g'oyat, qo'l, so'z, ko'rdim. "
-        "Sh, ch, ng tovushlari: shahar, chiroyli, ko'ngil."
+        "Bu o'zbek tilidagi nutq. Salom, qanday yaxshi yashayapsiz. "
+        "Bugun maktabda dars o'tdik. Talabalar ko'p kitob o'qiydi. "
+        "Toshkent shahrida yangi bino qurildi. Samarqand chiroyli joy. "
+        "Otam mehnat qilib pul topadi, onam ovqat pishiradi. "
+        "Bola maktabga boradi va dars tayyorlaydi. "
+        "Birinchidan, ikkinchidan, uchinchidan deb tushuntiraman. "
+        "Ko'ngil quvonadi, fikr aniq bo'ladi, hayot davom etadi."
     )
 
     # Rus tili uchun
