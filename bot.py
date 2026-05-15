@@ -2284,6 +2284,48 @@ def _format_failed_ranges_text(failed_ranges):
     return "\n".join(lines)
 
 
+class TypingPing:
+    """Telegram'da chat tepasida 'bot yozmoqda...' indikatorini har 4 sek yuborib turadi.
+    Telegram chat action 5 sek davom etadi — shuning uchun 4 sek interval.
+    Bot ishlamasligi/stuck holatini userdan yashirmasligi uchun foydali.
+
+    Misol:
+        ping = TypingPing(user_id)
+        ping.start()
+        try:
+            ... uzun ish ...
+        finally:
+            ping.stop()
+    """
+    def __init__(self, chat_id, action="typing", interval=4):
+        self.chat_id = chat_id
+        self.action = action
+        self.interval = interval
+        self._stop = threading.Event()
+        self._thread = None
+
+    def _loop(self):
+        # Darrov yuborib qo'yamiz
+        telegram_send_chat_action(self.chat_id, self.action)
+        while not self._stop.is_set():
+            self._stop.wait(self.interval)
+            if self._stop.is_set():
+                break
+            telegram_send_chat_action(self.chat_id, self.action)
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+
 def _make_http_progress_cb(user_id, message_id, base_label="🎙 Matn tayyorlanmoqda"):
     """HTTP/WebApp flow uchun progress callback — Telegram xabarini edit qilib turadi.
     Bosqichlar:
@@ -5442,6 +5484,8 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
     XAVFSIZ TO'LOV: daqiqa faqat muvaffaqiyatli natija yuborilgandan keyin yechiladi.
     output_alphabet: 'latin' yoki 'cyrillic' — O'zbek matni alifbosi."""
     success = False  # natija userga yetkazilganmi
+    typing = TypingPing(user_id)
+    typing.start()
     try:
         # Audio davomiyligini avval aniqlaymiz va limitni tekshiramiz
         actual_duration = 0
@@ -5503,6 +5547,7 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
             f"💚 Daqiqa hisobingizdan yechilmadi."
         )
     finally:
+        typing.stop()
         if file_path and os.path.exists(file_path):
             try:
                 os.remove(file_path)
@@ -5950,6 +5995,8 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
     """WebApp URL'idan video yuklab matnga aylantirish — tarif limiti qo'llanadi.
     output_alphabet: 'latin' yoki 'cyrillic'."""
     audio_path = None
+    typing = TypingPing(user_id)  # chat tepasida 'yozmoqda...' indikatori
+    typing.start()
     try:
         # Limit dastlabki tekshiruvi (davomiylik hali noma'lum)
         if not check_limit_by_user_id(user_id, 0):
@@ -6008,6 +6055,7 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
         logging.error(f"process_url_for_user xato: {e}")
         telegram_send_message(user_id, f"❌ Xato: {str(e)[:300]}")
     finally:
+        typing.stop()
         if audio_path:
             shutil.rmtree(os.path.dirname(audio_path), ignore_errors=True)
 
