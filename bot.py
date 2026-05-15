@@ -16,6 +16,7 @@ import subprocess
 import shutil
 import requests
 import re
+import html
 import asyncio
 import threading
 from telegram import (
@@ -2416,30 +2417,43 @@ async def send_result(update, msg, text):
     if not text:
         await msg.edit_text("Matn aniqlanmadi.")
         return
-    # Matnni xabarda yuborish
-    if len(text) <= 4000:
-        await msg.edit_text(f"📝 Matn:\n\n{text}")
+
+    user_id = update.effective_user.id
+    # Matnni keyingi yuklab olishlar uchun saqlaymiz (PDF/TXT tugma)
+    try:
+        last_transcripts[int(user_id)] = {"text": text, "ts": time.time()}
+    except Exception:
+        pass
+
+    # Inline tugmalar — PDF, TXT, Yopish
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("📥 PDF yuklab olish", callback_data="dl:pdf"),
+            InlineKeyboardButton("📥 TXT yuklab olish", callback_data="dl:txt"),
+        ],
+        [InlineKeyboardButton("✕ Yopish", callback_data="dl:close")],
+    ])
+
+    # <pre> bloki — Telegram'da copy tugmasi bilan keladi
+    CHUNK = 3900  # <pre> tag + header bilan 4096 char limit'ga sig'ishi uchun
+    if len(text) <= CHUNK:
+        escaped = html.escape(text)
+        await msg.edit_text(
+            f"📝 <b>Matn:</b>\n<pre>{escaped}</pre>",
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
     else:
         await msg.edit_text("✅ Tayyor! Qismlarga bo'lib yuborilmoqda...")
-        parts = [text[i:i+4000] for i in range(0, len(text), 4000)]
+        parts = [text[i:i+CHUNK] for i in range(0, len(text), CHUNK)]
         for i, part in enumerate(parts):
-            await update.message.reply_text(f"📄 Qism {i+1}/{len(parts)}:\n\n{part}")
-    # PDF qilib yuborish (audio kontekstida — TTS yo'q)
-    pdf_path = None
-    try:
-        pdf_path = await asyncio.to_thread(make_pdf, text)
-        with open(pdf_path, "rb") as f:
-            await update.message.reply_document(
-                document=f,
-                filename="mnsm-matn.pdf",
-                caption="📎 Matn PDF formatda"
+            escaped = html.escape(part)
+            is_last = (i == len(parts) - 1)
+            await update.message.reply_text(
+                f"📄 <b>Qism {i+1}/{len(parts)}:</b>\n<pre>{escaped}</pre>",
+                parse_mode="HTML",
+                reply_markup=(keyboard if is_last else None),
             )
-    except Exception as e:
-        logging.error(f"PDF yaratish xatosi: {e}")
-    finally:
-        if pdf_path and os.path.exists(pdf_path):
-            try: os.remove(pdf_path)
-            except Exception: pass
 
 
 def make_progress_cb(loop, msg, base_label="🎙 Tanilmoqda"):
@@ -4138,28 +4152,12 @@ async def process_translation(update, context, file_path, duration_sec, source_l
             await msg.edit_text("❌ Tarjima bo'sh qaytdi.")
             return
 
-        # 4) Natija — matn + PDF + audio
+        # 4) Natija — matn (PDF tugma orqali) + audio
         await msg.delete()
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
         src_label = TRANSLATION_LANGS.get(source_lang, source_lang) if source_lang else "🌐 Avto"
-        await update.message.reply_text(
-            f"🌐 *Tarjima ({src_label} → {tgt_label}):*",
-            parse_mode="Markdown"
-        )
-        for i in range(0, len(translated), 4000):
-            await update.message.reply_text(translated[i:i+4000])
-        # PDF
-        try:
-            pdf_path = await asyncio.to_thread(make_pdf, translated, f"Tarjima — {tgt_label}")
-            with open(pdf_path, "rb") as f:
-                await update.message.reply_document(
-                    document=f, filename=f"tarjima_{target_lang}.pdf",
-                    caption=f"📎 Tarjima PDF ({tgt_label})"
-                )
-            try: os.remove(pdf_path)
-            except Exception: pass
-        except Exception as e:
-            logging.warning(f"Tarjima PDF xato: {e}")
+        header = f"🌐 <b>Tarjima ({html.escape(src_label)} → {html.escape(tgt_label)}):</b>"
+        await asyncio.to_thread(_send_text_card, update.effective_user.id, translated, header)
 
         # 5) Tarif daqiqalari
         if not is_admin(update) and actual_duration > 0:
@@ -4650,18 +4648,31 @@ async def translation_target_callback(update: Update, context: ContextTypes.DEFA
 # === [/TARJIMA MODULI — KOMANDA HANDLERS] =======================================
 
 
-# === [TXT EXPORT — matnni TXT fayl sifatida yuklab olish] ================
+# === [DOWNLOAD TUGMALAR — PDF/TXT/Yopish] ================================
 async def ai_tools_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """TXT tugmasi uchun callback: ai:txt — matnni TXT fayl sifatida yuboradi."""
+    """Matn ostidagi tugmalar:
+      dl:pdf   — matnni PDF qilib yuborish
+      dl:txt   — matnni TXT fayl qilib yuborish
+      dl:close — matn xabarini o'chirish
+    """
     query = update.callback_query
     if not query or not query.data:
         return
     await query.answer()
-    if not query.data.startswith("ai:"):
+    if not (query.data.startswith("dl:") or query.data.startswith("ai:")):
         return
     action = query.data.split(":", 1)[1]
     user_id = query.from_user.id
 
+    # Yopish — xabarni o'chirish
+    if action == "close":
+        try:
+            await query.message.delete()
+        except Exception as e:
+            logging.debug(f"Yopish xato: {e}")
+        return
+
+    # PDF/TXT — matn kerak
     record = last_transcripts.get(user_id)
     if not record or not record.get("text"):
         await context.bot.send_message(
@@ -4671,10 +4682,29 @@ async def ai_tools_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     text = record["text"]
 
+    if action == "pdf":
+        await context.bot.send_message(chat_id=user_id, text="📎 PDF tayyorlanmoqda...")
+        try:
+            pdf_path = await asyncio.to_thread(make_pdf, text)
+        except Exception as e:
+            await context.bot.send_message(chat_id=user_id, text=f"❌ PDF yaratilmadi: {str(e)[:200]}")
+            return
+        try:
+            with open(pdf_path, "rb") as f:
+                await context.bot.send_document(
+                    chat_id=user_id, document=f,
+                    filename="mnsm-matn.pdf",
+                    caption="📎 Matn PDF formatda",
+                )
+        finally:
+            try: os.remove(pdf_path)
+            except Exception: pass
+        return
+
     if action == "txt":
         await asyncio.to_thread(_send_txt_file, user_id, text, "matn.txt")
         return
-# === [/TXT EXPORT] ========================================================
+# === [/DOWNLOAD TUGMALAR] =================================================
 
 
 # ── HTTP API (WebApp uchun) ─────────────────────────────────────────────────
@@ -4918,51 +4948,63 @@ def telegram_send_voice(chat_id, file_path, caption=None):
         return False
 
 
-def _send_text_and_pdf(user_id, text):
-    """Matn + PDF + TXT tugma yuborish (HTTP fallback yo'lida)."""
-    # Matnni TXT yuklab olish uchun saqlaymiz
+def _send_text_card(user_id, text, header="📝 <b>Matn:</b>"):
+    """Matnni <pre> blokida + PDF/TXT/Yopish tugmalar bilan yuborish.
+    Telegram'ning copy tugmasi <pre> blokida avtomatik chiqadi.
+    Sync — async kontekstda ham xavfsiz ishlaydi (requests orqali).
+    """
     try:
         last_transcripts[int(user_id)] = {"text": text, "ts": time.time()}
     except Exception:
         pass
 
-    telegram_send_message(user_id, f"📝 Matn:\n\n{text}")
-    try:
-        pdf_path = make_pdf(text)
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "📥 PDF yuklab olish", "callback_data": "dl:pdf"},
+                {"text": "📥 TXT yuklab olish", "callback_data": "dl:txt"},
+            ],
+            [{"text": "✕ Yopish", "callback_data": "dl:close"}],
+        ]
+    }
+
+    CHUNK = 3900
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    if len(text) <= CHUNK:
+        escaped = html.escape(text)
         try:
-            telegram_send_document(user_id, pdf_path, filename="mnsm-matn.pdf", caption="📎 Matn PDF formatda")
-        finally:
-            if os.path.exists(pdf_path):
-                try: os.remove(pdf_path)
-                except Exception: pass
-    except Exception as e:
-        logging.error(f"PDF (HTTP) xato: {e}")
-
-    _send_ai_tools_buttons(user_id)
-
-
-def _send_ai_tools_buttons(user_id):
-    """Transkripsiyadan keyin TXT yuklab olish tugmasini yuborish."""
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        keyboard = {
-            "inline_keyboard": [
-                [
-                    {"text": "📥 TXT yuklab olish", "callback_data": "ai:txt"},
-                ],
-            ]
-        }
-        requests.post(
-            url,
-            json={
+            requests.post(url, json={
                 "chat_id": user_id,
-                "text": "📥 Matnni TXT fayl sifatida ham olishingiz mumkin:",
+                "text": f"{header}\n<pre>{escaped}</pre>",
+                "parse_mode": "HTML",
                 "reply_markup": keyboard,
-            },
-            timeout=10,
-        )
-    except Exception as e:
-        logging.debug(f"TXT tugmasi yuborilmadi: {e}")
+            }, timeout=30)
+        except Exception as e:
+            logging.error(f"Matn card yuborish xato: {e}")
+        return
+
+    # Uzun matn — qismlarga bo'linadi, oxirgi qismda tugmalar
+    parts = [text[i:i+CHUNK] for i in range(0, len(text), CHUNK)]
+    for i, part in enumerate(parts):
+        escaped = html.escape(part)
+        is_last = (i == len(parts) - 1)
+        body = {
+            "chat_id": user_id,
+            "text": f"{header} <i>Qism {i+1}/{len(parts)}</i>\n<pre>{escaped}</pre>",
+            "parse_mode": "HTML",
+        }
+        if is_last:
+            body["reply_markup"] = keyboard
+        try:
+            requests.post(url, json=body, timeout=30)
+        except Exception as e:
+            logging.error(f"Matn qism yuborish xato: {e}")
+
+
+def _send_text_and_pdf(user_id, text):
+    """Backwards-compatible wrapper — endi PDF avtomatik yuborilmaydi,
+    foydalanuvchi tugma bosishi orqali yuklaydi."""
+    _send_text_card(user_id, text, header="📝 <b>Matn:</b>")
 
 
 # ── HTTP/THREAD CONTEXT UCHUN LIMIT TEKSHIRUVI ─────────────────────────────
@@ -5232,17 +5274,8 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
                 progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
                 translated = convert_latin_to_cyrillic(translated)
                 tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
-            telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
-            for i in range(0, len(translated), 4000):
-                telegram_send_message(user_id, translated[i:i+4000])
-            # PDF (best-effort)
-            try:
-                pdf_path = make_pdf(translated, f"Tarjima — {tgt_label}")
-                telegram_send_document(user_id, pdf_path, filename=f"tarjima_{target_lang}.pdf", caption=f"📎 Tarjima PDF ({tgt_label})")
-                try: os.remove(pdf_path)
-                except Exception: pass
-            except Exception as e:
-                logging.warning(f"Tarjima PDF xato (HTTP): {e}")
+            header = f"🌐 <b>Tarjima ({html.escape(src_label)} → {html.escape(tgt_label)}):</b>"
+            _send_text_card(user_id, translated, header=header)
             success = True
 
         # 4) Tarif daqiqalari — faqat success va sifat OK bo'lsa
@@ -5442,17 +5475,8 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
             progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
             translated = convert_latin_to_cyrillic(translated)
             tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
-        telegram_send_message(user_id, f"🌐 PDF tarjima ({tgt_label}):")
-        for i in range(0, len(translated), 4000):
-            telegram_send_message(user_id, translated[i:i+4000])
-        # PDF (best-effort)
-        try:
-            pdf_out = make_pdf(translated, f"Tarjima — {tgt_label}")
-            telegram_send_document(user_id, pdf_out, filename=f"tarjima_pdf_{target_lang}.pdf", caption=f"📎 Tarjima PDF ({tgt_label})")
-            try: os.remove(pdf_out)
-            except Exception: pass
-        except Exception as e:
-            logging.warning(f"PDF tarjima PDF yaratishda xato: {e}")
+        header = f"🌐 <b>PDF tarjima ({html.escape(tgt_label)}):</b>"
+        _send_text_card(user_id, translated, header=header)
         # 5) Audio (TTS target tilda) — bu asosiy natija, success bunga bog'liq
         try:
             tts_path = make_tts(translated, target_lang)
@@ -5568,17 +5592,8 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
             progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
             translated = convert_latin_to_cyrillic(translated)
             tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
-        telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
-        for i in range(0, len(translated), 4000):
-            telegram_send_message(user_id, translated[i:i+4000])
-        # PDF (best-effort)
-        try:
-            pdf_path = make_pdf(translated, f"Tarjima — {tgt_label}")
-            telegram_send_document(user_id, pdf_path, filename=f"tarjima_{target_lang}.pdf", caption=f"📎 Tarjima PDF ({tgt_label})")
-            try: os.remove(pdf_path)
-            except Exception: pass
-        except Exception as e:
-            logging.warning(f"URL tarjima PDF xato: {e}")
+        header = f"🌐 <b>Tarjima ({html.escape(src_label)} → {html.escape(tgt_label)}):</b>"
+        _send_text_card(user_id, translated, header=header)
         success = True
         # 6) Tarif daqiqalari — faqat success'da
         if success and not _is_admin_id(user_id) and actual_duration > 0:
@@ -5940,8 +5955,8 @@ def main():
     # === [TARJIMA] callback handler (manba til tanlash) ===
     app.add_handler(CallbackQueryHandler(translation_lang_callback, pattern=r"^transl:"))
     app.add_handler(CallbackQueryHandler(translation_target_callback, pattern=r"^transltgt:"))
-    # === [TXT EXPORT] Matnni TXT fayl sifatida yuklab olish ===
-    app.add_handler(CallbackQueryHandler(ai_tools_callback, pattern=r"^ai:"))
+    # === [DOWNLOAD] Matn ostidagi PDF/TXT/Yopish tugmalari ===
+    app.add_handler(CallbackQueryHandler(ai_tools_callback, pattern=r"^(dl|ai):"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     # Telegram Payments handlerlari (kelajakda PROVIDER_TOKEN qo'shilsa avtomat ishlaydi)
