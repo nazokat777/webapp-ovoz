@@ -1394,18 +1394,26 @@ def _uzbek_transcription_quality(text):
 
 
 def transcribe_unified(file_path, progress_cb=None, language="uz"):
-    """Audio/video'ni matnga aylantirish — FAQAT Whisper (OpenAI) orqali.
+    """Audio/video'ni matnga aylantirish — FAQAT Whisper/gpt-4o-transcribe (OpenAI) orqali.
 
     User talabi: Muxlisa AI faqat PDF→audio uchun va faqat OpenAI yiqilganda.
-    STT (audio→matn) — har doim Whisper. Muxlisa STT olib tashlandi.
+    STT (audio→matn) — har doim OpenAI.
+
+    O'zbek + diniy aralash matnlar uchun: natijada arab alifbosi topilsa,
+    GPT-4o bilan transliteratsiya qilinib, sof o'zbek lotin matn qaytariladi.
     """
     if not OPENAI_API_KEY:
-        # Faqat OPENAI_API_KEY yo'q bo'lsa, Muxlisa STT ishlatiladi (juda kam holat)
         logging.warning("OPENAI_API_KEY yo'q — Muxlisa fallback ishlatiladi")
         return transcribe(file_path, progress_cb, language)
 
-    # Whisper STT — yagona yo'l. Xato bo'lsa user'ga aytamiz, Muxlisa ishlatmaymiz
-    return transcribe_whisper(file_path, language, None) or ""
+    # 1) STT
+    text = transcribe_whisper(file_path, language, None) or ""
+
+    # 2) Agar O'zbek so'ralgan va natijada arab alifbosi topilsa, tozalash
+    if language == "uz" and text:
+        text = _cleanup_mixed_uzbek_arabic(text)
+
+    return text
 # === [/WHISPER UNIFIED STT] =====================================================
 
 
@@ -1590,6 +1598,59 @@ def _clean_whisper_hallucination(text):
     return result
 
 
+def _cleanup_mixed_uzbek_arabic(text):
+    """Agar Whisper o'zbek matnda arab alifbosini aralashtirib chiqarsa,
+    arabchani o'zbek lotin transliteratsiyasiga aylantirish.
+    Foydalanish: faqat O'zbek STT natijasida arab harflar topilsa."""
+    if not text:
+        return text
+    # Arab harfi bormi (U+0600 — U+06FF)?
+    has_arabic = any('؀' <= ch <= 'ۿ' for ch in text)
+    if not has_arabic:
+        return text
+    if not OPENAI_API_KEY:
+        return text
+
+    logging.info("🧹 Whisper natijasida arab alifbosi topildi — GPT bilan tozalash...")
+    url_api = "https://api.openai.com/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    system_prompt = (
+        "You are a text cleanup specialist for Uzbek language. "
+        "The input text is mostly Uzbek (Latin script) but contains "
+        "Arabic script fragments (probably Quranic verses or religious phrases).\n\n"
+        "RULES:\n"
+        "1) Keep Uzbek Latin text AS-IS, do not change it.\n"
+        "2) Convert ALL Arabic script to Uzbek Latin transliteration:\n"
+        "   - Common phrases: 'Bismillah', 'Allohu akbar', 'Subhanalloh', 'Alhamdulillah'\n"
+        "   - Quranic verses: transliterate to Uzbek Latin spelling\n"
+        "   - Names: 'Muhammad sallallohu alayhi va sallam', 'Alloh', 'sahobalar'\n"
+        "3) Output the CORRECTED text only, no explanations.\n"
+        "4) Preserve the original meaning and order of sentences."
+    )
+    payload = {
+        "model": "gpt-4o",
+        "max_tokens": 8000,
+        "temperature": 0.0,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Clean up this Uzbek text (transliterate Arabic to Latin):\n\n{text}"},
+        ],
+    }
+    try:
+        resp = requests.post(url_api, headers=headers, json=payload, timeout=180)
+        if resp.status_code == 200:
+            cleaned = resp.json()["choices"][0]["message"]["content"].strip()
+            if cleaned and len(cleaned) > 50:
+                logging.info("✅ Aralash matn tozalandi")
+                return cleaned
+    except Exception as e:
+        logging.warning(f"Aralash matn tozalash xato: {e}")
+    return text
+
+
 def _get_whisper_prompt(source_lang):
     """Whisper'ga kontekst beruvchi prompt qaytaradi.
     Bu so'zlar Whisper'ga 'shu mavzularda gap bo'ladi' deb signal beradi.
@@ -1693,18 +1754,26 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
                 try:
                     with open(chunk_path, "rb") as f:
                         files = {"file": (os.path.basename(chunk_path), f, "application/octet-stream")}
+                        # === Yangi gpt-4o-transcribe modeli — whisper-1 dan 2x aniqroq ===
+                        # O'zbek + diniy matnlar uchun sezilarli yaxshilanish
                         data = {
-                            "model": "whisper-1",
-                            "response_format": "verbose_json",
-                            # === [SIFAT] Whisper PROMPT — kontekst beradi va aniqlikni 30-40% oshiradi ===
+                            "model": "gpt-4o-transcribe",
+                            "response_format": "json",  # gpt-4o-transcribe verbose_json'ni qo'llab-quvvatlamaydi
                             "prompt": _get_whisper_prompt(source_lang),
-                            "temperature": 0.0,  # eng aniq, ijodga ehtiyoj yo'q
+                            "temperature": 0.0,
                         }
-                        # === [TIL] Whisper qo'llab-quvvatlovchi tillar (uz, ky, tg yo'q) ===
-                        # OpenAI Whisper ISO 639-1 ro'yxati. Uzbek yo'q — auto-detect orqali topiladi.
                         if source_lang and source_lang != "auto" and source_lang in WHISPER_SUPPORTED_LANGS:
                             data["language"] = source_lang
                         resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
+
+                        # Agar yangi model mavjud bo'lmasa, eski whisper-1 ga qaytamiz
+                        if resp.status_code in (404, 400) and "gpt-4o-transcribe" in (resp.text or ""):
+                            logging.info("gpt-4o-transcribe yo'q, whisper-1 ga qaytamiz")
+                            data["model"] = "whisper-1"
+                            data["response_format"] = "verbose_json"
+                            with open(chunk_path, "rb") as f2:
+                                files2 = {"file": (os.path.basename(chunk_path), f2, "application/octet-stream")}
+                                resp = requests.post(url, headers=headers, files=files2, data=data, timeout=600)
 
                     if resp.status_code == 200:
                         result = resp.json()
