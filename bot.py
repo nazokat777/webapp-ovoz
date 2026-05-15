@@ -138,9 +138,9 @@ ADMIN_USERNAMES = {"nazokat_571"}
 # Tariflar (O'zbek STT uchun)
 TARIFFS = {
     "free":     {"name": "🌸 Bepul",         "minutes": 30,   "price": 0},      # 30 daq (testlik)
-    "basic":    {"name": "💎 Boshlang'ich", "minutes": 180,  "price": 38000},  # 3 soat — $3 (TAK!TEXT START darajasi)
-    "standart": {"name": "⭐ Standart",     "minutes": 600,  "price": 89000},  # 10 soat — $7
-    "premium":  {"name": "👑 Premium",      "minutes": 1500, "price": 250000}, # 25 soat — marja 30%
+    "basic":    {"name": "💎 Boshlang'ich", "minutes": 240,  "price": 38000},  # 3 soat + 60 daq bonus = 4 soat
+    "standart": {"name": "⭐ Standart",     "minutes": 750,  "price": 89000},  # 10 soat + 150 daq bonus = 12.5 soat
+    "premium":  {"name": "👑 Premium",      "minutes": 1500, "price": 300000}, # 25 soat — marja 50%
     # Eski tariflar — backward compat (eski paid userlar uchun)
     "pro":      {"name": "💎 Pro",          "minutes": 600,  "price": 500000}, # eski, mavjud paid userlar uchun
 }
