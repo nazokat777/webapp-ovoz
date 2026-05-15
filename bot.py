@@ -3433,18 +3433,48 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
         return
     t = TARIFFS[tariff_key]
 
+    async def _update_admin_message(suffix):
+        """Admin xabarini yangilash — caption yoki text, qaysi mavjud bo'lsa."""
+        try:
+            # Caption (rasm/document'da) — birinchi navbatda
+            if query.message.caption is not None:
+                await query.edit_message_caption(
+                    caption=(query.message.caption or "") + suffix,
+                    parse_mode="Markdown",
+                )
+                return True
+        except Exception as e:
+            logging.debug(f"edit_message_caption xato: {e}")
+        try:
+            # Text — agar caption yo'q bo'lsa
+            if query.message.text is not None:
+                await query.edit_message_text(
+                    text=(query.message.text or "") + suffix,
+                    parse_mode="Markdown",
+                )
+                return True
+        except Exception as e:
+            logging.debug(f"edit_message_text xato: {e}")
+        try:
+            # Tugmalarni olib tashlash (eng kam mumkin)
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return False
+
     if action == "approve":
         user_tariffs[target_id] = tariff_key
         user_uzbek_usage[target_id] = 0
         _save_user_data()
-        # Admin xabar caption'ini yangilash
-        try:
-            await query.edit_message_caption(
-                caption=(query.message.caption or "") + f"\n\n✅ *TASDIQLANDI* — tarif berildi.",
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
+        # Admin uchun aniq alert
+        await query.answer(
+            f"✅ Tarif berildi: {t['name']} ({t['minutes']} daq)",
+            show_alert=True,
+        )
+        # Xabarni yangilash (caption yoki text)
+        await _update_admin_message(
+            f"\n\n✅ *TASDIQLANDI* — {t['name']} tarif berildi ({t['minutes']} daq)"
+        )
         # Foydalanuvchiga xabar
         try:
             await context.bot.send_message(
@@ -3460,13 +3490,8 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
         except Exception as e:
             logging.warning(f"Userga ({target_id}) tasdiq xabari yuborilmadi: {e}")
     elif action == "reject":
-        try:
-            await query.edit_message_caption(
-                caption=(query.message.caption or "") + "\n\n❌ *RAD ETILDI*",
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
+        await query.answer("❌ Rad etildi", show_alert=True)
+        await _update_admin_message("\n\n❌ *RAD ETILDI*")
         try:
             await context.bot.send_message(
                 chat_id=target_id,
