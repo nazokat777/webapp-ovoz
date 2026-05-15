@@ -136,10 +136,12 @@ ADMIN_USERNAMES = {"nazokat_571"}
 
 # Tariflar (O'zbek STT uchun)
 TARIFFS = {
-    "free":     {"name": "🌸 Bepul",    "minutes": 3,   "price": 0},
-    "standart": {"name": "🌿 Standart", "minutes": 180, "price": 170000},  # 3 soat
-    "premium":  {"name": "🌺 Premium",  "minutes": 360, "price": 300000},  # 6 soat
-    "pro":      {"name": "💎 Pro",      "minutes": 600, "price": 500000},  # 10 soat
+    "free":     {"name": "🌸 Bepul",         "minutes": 30,   "price": 0},      # 30 daq (testlik)
+    "basic":    {"name": "💎 Boshlang'ich", "minutes": 180,  "price": 38000},  # 3 soat — $3 (TAK!TEXT START darajasi)
+    "standart": {"name": "⭐ Standart",     "minutes": 600,  "price": 89000},  # 10 soat — $7
+    "premium":  {"name": "👑 Premium",      "minutes": 1500, "price": 189000}, # 25 soat — $15
+    # Eski tariflar — backward compat (eski paid userlar uchun)
+    "pro":      {"name": "💎 Pro",          "minutes": 600,  "price": 500000}, # eski, mavjud paid userlar uchun
 }
 
 # Foydalanuvchi xarajatlarini saqlash {user_id: jami_soniya}
@@ -1550,16 +1552,19 @@ def _split_by_time(file_path, chunk_seconds, total_dur):
 
 def _clean_whisper_hallucination(text):
     """Whisper hallucinatsiyani aniqlash va tozalash.
-    Whisper jim/shovqinli audio'da bir xil iborani 10-50 marta qaytaradi.
+    Whisper jim/shovqinli audio'da bir xil iborani 10-500 marta qaytaradi.
 
-    Algoritm:
-      1) Matnni gaplarga ajratamiz (. ! ? bo'yicha)
-      2) Agar bir gap ketma-ket 2 martadan ko'p takrorlansa, qolganini olib tashlaymiz
-      3) Qisqa iboralar 5+ marta ketma-ket bo'lsa ham olib tashlanadi
+    Algoritm (2 darajada):
+      1) Gap darajasida: agar bir gap ketma-ket 2 martadan ko'p takrorlansa
+      2) So'z darajasida: agar bir so'z/ibora 5+ marta ketma-ket takrorlansa
     """
-    if not text or len(text) < 200:
+    if not text or len(text) < 100:
         return text
 
+    # === 1-daraja: so'z/ibora darajasida tozalash ===
+    text = _dedupe_repeated_words(text)
+
+    # === 2-daraja: gap darajasida tozalash ===
     sentences = re.split(r'(?<=[.!?])\s+', text)
     cleaned = []
     last_normalized = None
@@ -1570,7 +1575,6 @@ def _clean_whisper_hallucination(text):
         s = sent.strip()
         if not s:
             continue
-        # Solishtirish uchun normalizatsiya
         normalized = re.sub(r'[^\w\s]', '', s.lower()).strip()
         if not normalized:
             cleaned.append(s)
@@ -1578,7 +1582,6 @@ def _clean_whisper_hallucination(text):
 
         if normalized == last_normalized:
             repeat_count += 1
-            # Birinchi 2 marta qoldiramiz, qolganini tashlaymiz
             if repeat_count >= 2:
                 skipped_total += 1
                 continue
@@ -1589,13 +1592,70 @@ def _clean_whisper_hallucination(text):
         cleaned.append(s)
 
     if skipped_total > 0:
-        logging.info(f"🧹 Whisper hallucination tozalandi: {skipped_total} takror gap o'chirildi")
+        logging.info(f"🧹 Whisper gap takror: {skipped_total} ta o'chirildi")
 
     result = " ".join(cleaned)
-
-    # Qo'shimcha tekshiruv: agar matn juda qisqarib ketgan bo'lsa, lekin yakuniy ham
-    # ko'p takrorlansa, qaytdan tozalash
+    # 3-daraja: yana so'z darajasida (chunki gap birlashtirilgandan keyin yangi takrorlar paydo bo'lishi mumkin)
+    result = _dedupe_repeated_words(result)
     return result
+
+
+def _dedupe_repeated_words(text):
+    """So'z/ibora takroridan tozalash.
+    'yaqinlikka yaqinlikka yaqinlikka... yaqinlikka' → 'yaqinlikka'
+    Bir xil so'z 3+ marta ketma-ket bo'lsa, 1 ta qoldiramiz.
+    Ibora (2-5 so'z) takrori ham aniqlanadi."""
+    if not text:
+        return text
+    words = text.split()
+    if len(words) < 10:
+        return text
+
+    # 1. Bir so'z 3+ marta ketma-ket
+    cleaned = []
+    skipped = 0
+    for i, w in enumerate(words):
+        # Oxirgi 2 ta so'z bilan solishtirish
+        if (len(cleaned) >= 2 and
+            cleaned[-1].lower() == w.lower() and
+            cleaned[-2].lower() == w.lower()):
+            skipped += 1
+            continue
+        cleaned.append(w)
+
+    # 2. Ibora (2-4 so'z) takrori — masalan "Yaxshi yaxshi yaxshi yaxshi yaxshi"
+    # yoki "Va men va men va men va men"
+    for window in [4, 3, 2]:
+        result = []
+        i = 0
+        while i < len(cleaned):
+            # Keyingi window ta so'z (kandidat ibora)
+            if i + window <= len(cleaned):
+                phrase = " ".join(cleaned[i:i+window]).lower()
+                # Bu ibora keyin yana takrorlanadimi?
+                repeat_count = 0
+                j = i + window
+                while j + window <= len(cleaned):
+                    next_phrase = " ".join(cleaned[j:j+window]).lower()
+                    if phrase == next_phrase:
+                        repeat_count += 1
+                        j += window
+                    else:
+                        break
+                if repeat_count >= 2:  # 3+ marta takrorlangan (1 asl + 2 takror)
+                    # Faqat birinchi 1 marta qoldiramiz
+                    result.extend(cleaned[i:i+window])
+                    i = j  # takrorlarni o'tkazib yuboramiz
+                    skipped += repeat_count * window
+                    continue
+            result.append(cleaned[i])
+            i += 1
+        cleaned = result
+
+    if skipped > 5:
+        logging.info(f"🧹 So'z/ibora takrorlari tozalandi: {skipped} ta so'z o'chirildi")
+
+    return " ".join(cleaned)
 
 
 def _format_text_with_timestamps(segments, chunk_offset_sec=0, marker_interval=30):
@@ -3099,8 +3159,11 @@ async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _show_buy_menu(message_obj):
-    """Tarif tugmalari ko'rsatadi (chat message yoki callback edit uchun)."""
-    paid = [(k, t) for k, t in TARIFFS.items() if t["price"] > 0]
+    """Tarif tugmalari ko'rsatadi (chat message yoki callback edit uchun).
+    'pro' eski legacy tarif — buy menyusida ko'rsatilmaydi, faqat 3 ta yangi tarif."""
+    # Buy menyusida ko'rsatiladigan tariflar (legacy 'pro' yashirin)
+    visible_keys = ["basic", "standart", "premium"]
+    paid = [(k, TARIFFS[k]) for k in visible_keys if k in TARIFFS and TARIFFS[k].get("price", 0) > 0]
     buttons = []
     for key, t in paid:
         hrs = t["minutes"] // 60
