@@ -160,6 +160,19 @@ user_info = {}
 # === [TXT export] Oxirgi transkripsiya matni — TXT yuklab olish uchun ===
 # {user_id: {"text": "...", "ts": timestamp}} — RAM'da saqlanadi (qisqa muddatli)
 last_transcripts = {}
+# === [REFERRAL] Do'st taklif qilish tizimi ===
+# Sozlash:
+REFERRAL_BONUS_MIN = 15        # Har taklif uchun har ikkalasiga +15 daqiqa
+MAX_REFERRALS_PER_USER = 5     # Bitta user max 5 ta odam taklif qila oladi (anti-abuse)
+# Ma'lumotlar:
+# {user_id: extra_min} — referral va boshqa bonus daqiqalar (tarif daqiqalariga qo'shiladi)
+user_bonus_minutes = {}
+# {invited_user_id: inviter_user_id} — kim kimni taklif qilgan (bir marta)
+user_referrals = {}
+# {invited_user_id: True} — taklif qilingan user bonus'ini olgan bo'lsa (real foydalanish tasdiq)
+user_referral_claimed = {}
+# === [/REFERRAL] ============================================
+
 # Admin tomonidan /setcard va /setholder orqali sozlanadigan karta ma'lumotlari
 # Env variable yo'q bo'lsa yoki adminb buyruq bilan yangilangan bo'lsa shu ishlatiladi.
 runtime_settings = {"payment_card": "", "payment_card_holder": ""}
@@ -227,6 +240,23 @@ def _load_user_data():
                     user_info[int(k)] = v
             except (ValueError, TypeError):
                 pass
+        # === [REFERRAL] bonus daqiqalar va taklif tizimi ===
+        for k, v in (data.get("user_bonus_minutes") or {}).items():
+            try:
+                user_bonus_minutes[int(k)] = int(v)
+            except (ValueError, TypeError):
+                pass
+        for k, v in (data.get("user_referrals") or {}).items():
+            try:
+                user_referrals[int(k)] = int(v)
+            except (ValueError, TypeError):
+                pass
+        for k, v in (data.get("user_referral_claimed") or {}).items():
+            try:
+                if v:
+                    user_referral_claimed[int(k)] = True
+            except (ValueError, TypeError):
+                pass
         # Runtime settings (karta raqami va boshqalar) — admin /setcard orqali yangilaydi
         rs = data.get("runtime_settings") or {}
         if isinstance(rs, dict):
@@ -251,6 +281,10 @@ def _save_user_data():
                 "pending_translations": {str(k): v for k, v in pending_translations.items()},
                 # === [USERS] user_info ham saqlanadi (deploy'larda yo'qolmasligi uchun) ===
                 "user_info": {str(k): v for k, v in user_info.items()},
+                # === [REFERRAL] bonus daqiqalar va taklif tizimi ===
+                "user_bonus_minutes": {str(k): int(v) for k, v in user_bonus_minutes.items()},
+                "user_referrals": {str(k): int(v) for k, v in user_referrals.items()},
+                "user_referral_claimed": {str(k): True for k in user_referral_claimed},
                 "runtime_settings": dict(runtime_settings),
             }
             tmp_path = DATA_FILE + ".tmp"
@@ -314,9 +348,16 @@ def get_user_tariff(user_id):
     return user_tariffs.get(user_id, "free")
 
 
+def get_user_bonus_min(user_id):
+    """Referral va boshqa bonus daqiqalar (tarif daqiqalariga qo'shimcha)."""
+    return int(user_bonus_minutes.get(user_id, 0))
+
+
 def get_user_limit_sec(user_id):
     tariff = get_user_tariff(user_id)
-    return TARIFFS[tariff]["minutes"] * 60
+    base_min = TARIFFS[tariff]["minutes"]
+    bonus_min = get_user_bonus_min(user_id)
+    return (base_min + bonus_min) * 60
 
 
 def get_user_usage_sec(user_id):
@@ -328,9 +369,61 @@ def add_user_usage(user_id, seconds):
     if seconds and seconds > 0:
         user_uzbek_usage[user_id] = user_uzbek_usage.get(user_id, 0) + seconds
         logging.info(f"   ✅ Yangi total: {user_uzbek_usage[user_id]} sek")
+        # Referral bonus — birinchi real foydalanishdan keyin beriladi (anti-fake)
+        _try_claim_referral_bonus(user_id)
         _save_user_data()
     else:
         logging.warning(f"   ⚠️ seconds={seconds} musbat emas, daqiqa qo'shilmadi")
+
+
+def _try_claim_referral_bonus(user_id):
+    """User real foydalanish qilgach, taklif bonusi'ni faollashtirish.
+    Bonus shu yerda beriladi (har ikkalasiga +15 daqiqa).
+
+    Shartlar:
+    - user_id taklif qilingan bo'lishi kerak (user_referrals'da bor)
+    - Hali bonus berilmagan (user_referral_claimed'da yo'q)
+    - Inviter max 5 ta talab limitiga yetmagan
+    """
+    if user_id in user_referral_claimed:
+        return  # Allaqachon olingan
+    inviter_id = user_referrals.get(user_id)
+    if not inviter_id:
+        return  # Taklif qilinmagan
+
+    # Inviter referral sonini hisoblash
+    inviter_count = sum(
+        1 for invited, ref in user_referrals.items()
+        if ref == inviter_id and invited in user_referral_claimed
+    )
+    if inviter_count >= MAX_REFERRALS_PER_USER:
+        logging.info(f"🚫 Inviter {inviter_id} max referral limitiga yetdi ({MAX_REFERRALS_PER_USER})")
+        user_referral_claimed[user_id] = True  # Belgilab qo'yamiz, qayta sinab ko'rmasin
+        return
+
+    # Bonus berish — har ikkalasi uchun
+    user_bonus_minutes[user_id] = user_bonus_minutes.get(user_id, 0) + REFERRAL_BONUS_MIN
+    user_bonus_minutes[inviter_id] = user_bonus_minutes.get(inviter_id, 0) + REFERRAL_BONUS_MIN
+    user_referral_claimed[user_id] = True
+    logging.info(f"🎁 Referral bonus: +{REFERRAL_BONUS_MIN} daqiqa user_id={user_id} va inviter={inviter_id}")
+    # Userlarga xabar
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, json={
+            "chat_id": user_id,
+            "text": f"🎁 *Tabriklaymiz!* Do'stingiz tavsiyasi orqali keldingiz.\n\n"
+                    f"Sizga *+{REFERRAL_BONUS_MIN} daqiqa* bonus berildi! "
+                    f"Tarifingizdagi daqiqalar yana ko'paydi.",
+            "parse_mode": "Markdown",
+        }, timeout=15)
+        requests.post(url, json={
+            "chat_id": inviter_id,
+            "text": f"🎁 *Bonus!* Sizning tavsiyangiz orqali yangi do'st keldi.\n\n"
+                    f"Sizga *+{REFERRAL_BONUS_MIN} daqiqa* bonus berildi! Rahmat 💚",
+            "parse_mode": "Markdown",
+        }, timeout=15)
+    except Exception as e:
+        logging.warning(f"Referral bonus xabarini yuborish xato: {e}")
 
 
 def format_tariffs_text():
@@ -2798,6 +2891,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_user.id
     # Admin /start yuborgan bo'lsa ADMIN_CHAT_ID ni darrov saqlash
     is_admin(update)
+    # === [REFERRAL] /start ref_<inviter_id> bo'lsa, taklif yozib qo'yamiz ===
+    # Bonus FAQAT shu user 1-marta real audio yuborganda beriladi (anti-fake)
+    try:
+        args = context.args or []
+        if args and args[0].startswith("ref_"):
+            try:
+                inviter_id = int(args[0][4:])
+            except ValueError:
+                inviter_id = 0
+            if inviter_id and inviter_id != chat_id and chat_id not in user_referrals:
+                # Sanab bo'lmaganda taklif qabul qilamiz, lekin bonus keyinroq
+                user_referrals[chat_id] = inviter_id
+                _save_user_data()
+                logging.info(f"📨 Yangi referral: {chat_id} ← {inviter_id}")
+    except Exception as e:
+        logging.warning(f"Referral parse xato: {e}")
     # Menu button'ni har gal yangi URL bilan o'rnatish — eski cache buziladi
     try:
         await context.bot.set_chat_menu_button(
@@ -2827,6 +2936,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "(YouTube/Instagram havolasini bo'lish shart emas)\n"
         "• *Aniq, tiniq ovoz* yuboring (shovqin kam bo'lsin)\n"
         "• Bir vaqtda bitta odam gapirsa, sifat yaxshi chiqadi\n\n"
+        "🎁 *Bonus daqiqalar:* Do'st taklif qilsangiz ikkalangizgayam +15 daqiqa bepul!\n"
+        "Tavsiya havolangizni olish: /tavsiya\n\n"
         "Quyidagi tugma orqali *Web ilovani* oching 👇".format(
             update.effective_user.first_name
         ),
@@ -3036,13 +3147,17 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     limit = get_user_limit_sec(user_id)
     rem = max(0, limit - used) / 60
     tariff = TARIFFS[get_user_tariff(user_id)]
+    bonus_min = get_user_bonus_min(user_id)
+    bonus_line = f"🎁 Bonus: +{bonus_min} daqiqa (do'st taklif)\n" if bonus_min > 0 else ""
     await update.message.reply_text(
         f"📊 *Sizning hisobingiz*\n\n"
         f"🌸 Tarif: *{tariff['name']}* ({tariff['minutes']} daqiqa/oy)\n"
+        f"{bonus_line}"
         f"⏱ Ishlatilgan: {used/60:.1f} daqiqa\n"
         f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
         f"💎 Tariflarni ko'rish: /tariflar\n"
-        f"💳 Tarif sotib olish: /buy\n\n"
+        f"💳 Tarif sotib olish: /buy\n"
+        f"🎁 Do'st taklif qilish: /tavsiya\n\n"
         f"🆔 Sizning ID'ingiz: `{user_id}`",
         parse_mode="Markdown"
     )
@@ -3469,6 +3584,43 @@ async def tariflar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
         reply_markup=keyboard
     )
+
+
+async def tavsiya_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/tavsiya — do'st taklif qilish havolasi va statistika."""
+    user_id = update.effective_user.id
+    try:
+        me = await context.bot.get_me()
+        bot_username = me.username
+    except Exception:
+        bot_username = "your_bot"
+    ref_link = f"https://t.me/{bot_username}?start=ref_{user_id}"
+
+    # Statistika
+    total_invited = sum(1 for ref in user_referrals.values() if ref == user_id)
+    claimed_count = sum(
+        1 for invited, ref in user_referrals.items()
+        if ref == user_id and invited in user_referral_claimed
+    )
+    bonus_earned = claimed_count * REFERRAL_BONUS_MIN
+    bonus_current = get_user_bonus_min(user_id)
+    remaining_slots = max(0, MAX_REFERRALS_PER_USER - claimed_count)
+
+    text = (
+        "🎁 *Do'st taklif qilish — bonus daqiqalar!*\n\n"
+        f"Quyidagi havolani do'stlaringizga yuboring. "
+        f"Ular ro'yxatdan o'tib audio yuborganda — *ikkalangizgayam +{REFERRAL_BONUS_MIN} daqiqa* bonus!\n\n"
+        f"🔗 *Sizning havolangiz:*\n"
+        f"`{ref_link}`\n\n"
+        f"📊 *Statistika:*\n"
+        f"• Taklif qilingan do'stlar: {total_invited}\n"
+        f"• Bonus olganlar: {claimed_count}/{MAX_REFERRALS_PER_USER}\n"
+        f"• Siz olgan bonus: +{bonus_earned} daqiqa\n"
+        f"• Joriy bonus balansingiz: +{bonus_current} daqiqa\n"
+        f"• Qolgan o'rin: {remaining_slots} ta\n\n"
+        f"💡 *Eslatma:* Bonus do'st haqiqiy audio yuborgandan keyin beriladi (soxta hisoblardan himoya)."
+    )
+    await update.message.reply_text(text, parse_mode="Markdown", disable_web_page_preview=True)
 
 
 async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5982,6 +6134,7 @@ def main():
                 BotCommand("balance",  "Mening balansim"),
                 BotCommand("tariflar", "Tariflar ro'yxati"),
                 BotCommand("buy",      "Tarif sotib olish"),
+                BotCommand("tavsiya",  "🎁 Do'st taklif — bonus daqiqalar"),
                 BotCommand("tarjima",  "🌐 Xorijiy tildan tarjima"),
                 BotCommand("lang",     "Til tanlash: uz / ru / en"),
                 BotCommand("feedback", "Murojaat / shikoyat"),
@@ -6019,6 +6172,7 @@ def main():
     app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CommandHandler("tariflar", tariflar_cmd))
     app.add_handler(CommandHandler("buy", buy_cmd))
+    app.add_handler(CommandHandler("tavsiya", tavsiya_cmd))
     app.add_handler(CommandHandler("test", test_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
