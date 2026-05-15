@@ -1414,6 +1414,18 @@ def transcribe_unified(file_path, progress_cb=None, language="uz"):
 # Claude: max 8192 output tokens. 30K+ so'zlar uchun bo'laklash kerak.
 
 WHISPER_CHUNK_SECONDS = 600    # 10 daqiqa per chunk (xavfsiz, kichik fayllar)
+
+# OpenAI Whisper API qo'llab-quvvatlovchi tillar (ISO 639-1).
+# Uzbek (uz), Kyrgyz (ky), Tajik (tg), Mongolian (mn) — qo'llab-quvvatlanmaydi.
+# Bu tillarda audio yuborilsa, language parametri o'tkazib yuboriladi va Whisper
+# auto-detect orqali tilni aniqlaydi (90% holatda to'g'ri).
+WHISPER_SUPPORTED_LANGS = {
+    "af", "ar", "hy", "az", "be", "bs", "bg", "ca", "zh", "hr", "cs", "da",
+    "nl", "en", "et", "fi", "fr", "gl", "de", "el", "he", "hi", "hu", "is",
+    "id", "it", "ja", "kn", "kk", "ko", "lv", "lt", "mk", "ms", "mr", "mi",
+    "ne", "no", "fa", "pl", "pt", "ro", "ru", "sr", "sk", "sl", "es", "sw",
+    "sv", "tl", "ta", "th", "tr", "uk", "ur", "vi", "cy",
+}
 WHISPER_MAX_FILE_MB = 22        # 22 MB dan oshganda bo'laklash (25 MB Whisper chegarasi - 3 MB margin)
 WHISPER_CHUNK_BITRATE = "64k"   # 64 kbps mono — 10 daqiqa ≈ 4.8 MB
 CLAUDE_CHUNK_WORDS = 3000       # GPT-4o uchun 3000 so'z (16k token output limitida xavfsiz)
@@ -1689,7 +1701,9 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
                             "prompt": _get_whisper_prompt(source_lang),
                             "temperature": 0.0,  # eng aniq, ijodga ehtiyoj yo'q
                         }
-                        if source_lang and source_lang != "auto":
+                        # === [TIL] Whisper qo'llab-quvvatlovchi tillar (uz, ky, tg yo'q) ===
+                        # OpenAI Whisper ISO 639-1 ro'yxati. Uzbek yo'q — auto-detect orqali topiladi.
+                        if source_lang and source_lang != "auto" and source_lang in WHISPER_SUPPORTED_LANGS:
                             data["language"] = source_lang
                         resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
 
