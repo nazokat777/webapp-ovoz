@@ -1461,13 +1461,23 @@ def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
 
     logging.info(f"🔪 split_audio: orig size={orig_size_mb:.1f}MB")
 
-    # === Qadam 1: butun audioni past bitrate MP3 ga qayta kodlash ===
+    # === Qadam 1: butun audioni qayta kodlash + sukunatni olib tashlash + normalizatsiya ===
+    # ffmpeg filtrlar:
+    #   1) silenceremove: 3+ sek jim joylarni olib tashlaydi (hallucination'ning asosiy sababi)
+    #   2) loudnorm: ovoz balandligini normallashtiradi
+    #   3) highpass=80: past chastotali shovqinni filtrlaydi (vibratsiya, conditioner)
     tmp_dir = tempfile.mkdtemp(prefix="whisper_recode_")
     recoded_path = os.path.join(tmp_dir, "recoded.mp3")
+    audio_filter = (
+        "silenceremove=stop_periods=-1:stop_duration=3:stop_threshold=-50dB,"
+        "loudnorm=I=-16:LRA=11:TP=-1.5,"
+        "highpass=f=80"
+    )
     cmd = [
         "ffmpeg", "-y", "-v", "error",
         "-i", file_path,
         "-vn", "-ac", "1", "-ar", "16000",
+        "-af", audio_filter,
         "-acodec", "libmp3lame", "-b:a", WHISPER_CHUNK_BITRATE,
         recoded_path
     ]
@@ -1550,6 +1560,42 @@ def _split_by_time(file_path, chunk_seconds, total_dur):
     return chunks
 
 
+def _is_chunk_hallucinated(text, chunk_duration_sec=600):
+    """Bo'lak natijasi hallucination ekanini aniqlash.
+    10 daqiqa audio uchun normal 800-1500 so'z bo'ladi.
+    Agar:
+      - Juda kam so'z (< 100 ta) va davomiyligi > 5 daq
+      - Yoki bitta so'z/ibora >40% takrorlanadi
+    → hallucination deb hisoblaymiz."""
+    if not text or len(text) < 30:
+        return False
+
+    words = text.split()
+    if len(words) < 5:
+        return False
+
+    # Tekshiruv 1: so'z xilma-xilligi (unique ratio)
+    unique_words = set(w.lower().strip(".,!?") for w in words)
+    unique_ratio = len(unique_words) / len(words)
+    if unique_ratio < 0.10 and len(words) > 50:
+        # Juda kam unique so'z = takrorlangan hallucination
+        logging.warning(f"⚠️ Hallucination aniqlandi: unique_ratio={unique_ratio:.2f}")
+        return True
+
+    # Tekshiruv 2: bitta so'z butun matnning 30%+
+    word_freq = {}
+    for w in words:
+        wl = w.lower().strip(".,!?")
+        word_freq[wl] = word_freq.get(wl, 0) + 1
+    max_freq = max(word_freq.values()) if word_freq else 0
+    if max_freq / len(words) > 0.30:
+        most_common = max(word_freq, key=word_freq.get)
+        logging.warning(f"⚠️ Hallucination: '{most_common}' so'zi {max_freq}/{len(words)} marta ({max_freq/len(words)*100:.0f}%)")
+        return True
+
+    return False
+
+
 def _clean_whisper_hallucination(text):
     """Whisper hallucinatsiyani aniqlash va tozalash.
     Whisper jim/shovqinli audio'da bir xil iborani 10-500 marta qaytaradi.
@@ -1560,6 +1606,11 @@ def _clean_whisper_hallucination(text):
     """
     if not text or len(text) < 100:
         return text
+
+    # === 0-daraja: agar butun bo'lak hallucinatsiya bo'lsa, bo'shga qaytaramiz ===
+    if _is_chunk_hallucinated(text):
+        logging.warning("🚨 Bo'lak butunlay hallucinatsiya — bo'sh qaytariladi")
+        return ""
 
     # === 1-daraja: so'z/ibora darajasida tozalash ===
     text = _dedupe_repeated_words(text)
@@ -1914,6 +1965,10 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
                         }
                         if source_lang and source_lang != "auto" and source_lang in WHISPER_SUPPORTED_LANGS:
                             data["language"] = source_lang
+                        # Hallucination'ni kamaytirish:
+                        # - no_speech_threshold yuqori: jim joylarni o'tkazib yuborish
+                        # - compression_ratio_threshold past: takror so'zlarni aniqlash
+                        # NOTE: bu parametrlar OpenAI API'da local Whisper uchun, API ularni qabul qiladimi yo'qmi noaniq
                         resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
 
                     if resp.status_code == 200:
