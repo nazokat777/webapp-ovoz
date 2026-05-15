@@ -552,7 +552,16 @@ def _run_yt_dlp(url, output_template, use_cookies=True, player_client=None):
     if player_client:
         cmd.extend(["--extractor-args", f"youtube:player_client={player_client}"])
     cmd.extend(["-o", output_template, url])
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    # Timeout 10 daqiqa — uzun videolar uchun yetarli, lekin cheksiz osilib qolmasin
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        # Soxta result obyekt — keyingi urinish uchun
+        class _T:
+            returncode = -1
+            stderr = "yt-dlp timeout (10 daq) — server javob bermadi"
+            stdout = ""
+        return _T()
     return result
 
 
@@ -5757,7 +5766,11 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
     audio_path = None
     success = False
     actual_duration = 0
-    progress = ProgressIndicator(user_id, action="typing")
+    progress = ProgressIndicator(
+        user_id,
+        base_text="Biroz kuting, tarjima qilinmoqda...",
+        action="typing",
+    )
     progress.start()
     try:
         if source_lang not in TRANSLATION_LANGS:
@@ -5767,7 +5780,7 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
         if not check_limit_by_user_id(user_id, 0):
             return
         telegram_send_message(user_id, f"📌 Qabul qilindi:\n🔗 {url}")
-        telegram_send_message(user_id, "⏳ Biroz kuting, tarjima qilinmoqda...")
+        progress.set_text("Video yuklab olinmoqda... (uzun video 3-5 daqiqa olishi mumkin)")
         # 1) Video yuklab olish
         try:
             audio_path = download_audio_from_url(url)
