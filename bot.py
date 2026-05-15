@@ -1535,7 +1535,7 @@ def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges
 # Whisper: max 25 MB per request. 4 soatlik audio uchun bo'laklash kerak.
 # Claude: max 8192 output tokens. 30K+ so'zlar uchun bo'laklash kerak.
 
-WHISPER_CHUNK_SECONDS = 600    # 10 daqiqa per chunk (xavfsiz, kichik fayllar)
+WHISPER_CHUNK_SECONDS = 300    # 5 daqiqa per chunk (kichikroq = hallucination kam, oxiri yo'qolmaydi)
 
 # OpenAI Whisper API qo'llab-quvvatlovchi tillar (ISO 639-1).
 # Uzbek (uz), Kyrgyz (ky), Tajik (tg), Mongolian (mn) — qo'llab-quvvatlanmaydi.
@@ -2179,10 +2179,14 @@ def _get_whisper_prompt(source_lang):
     return prompts.get(source_lang, uz_prompt)
 
 
-def _try_transcribe(chunk_path, model, source_lang, url, headers):
+def _try_transcribe(chunk_path, model, source_lang, url, headers, chunk_offset_sec=0):
     """Bitta bo'lakni belgilangan model bilan transkripsiya qilish.
     3 marta retry (HTTP 429/500/502/503). Bo'sh natija ham xato.
+    whisper-1 uchun verbose_json + segments (timestamps) ishlatamiz.
+    gpt-4o-transcribe uchun oddiy json (segments yo'q).
     Returnlar: (chunk_text yoki None, error_str yoki None)."""
+    is_whisper1 = (model == "whisper-1")
+    response_format = "verbose_json" if is_whisper1 else "json"
     last_error = None
     for attempt in range(3):
         try:
@@ -2190,17 +2194,26 @@ def _try_transcribe(chunk_path, model, source_lang, url, headers):
                 files = {"file": (os.path.basename(chunk_path), f, "application/octet-stream")}
                 data = {
                     "model": model,
-                    "response_format": "json",
+                    "response_format": response_format,
                     "prompt": _get_whisper_prompt(source_lang),
                     "temperature": 0.0,
                 }
+                if is_whisper1:
+                    data["timestamp_granularities[]"] = "segment"
                 if source_lang and source_lang != "auto" and source_lang in WHISPER_SUPPORTED_LANGS:
                     data["language"] = source_lang
                 resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
 
             if resp.status_code == 200:
                 result = resp.json()
-                text = (result.get("text") or "").strip()
+                if is_whisper1:
+                    segments = result.get("segments") or []
+                    if segments:
+                        text = _format_text_with_timestamps(segments, chunk_offset_sec)
+                    else:
+                        text = (result.get("text") or "").strip()
+                else:
+                    text = (result.get("text") or "").strip()
                 if text:
                     return _clean_whisper_hallucination(text), None
                 # Bo'sh natija — qayta urinish foydasiz (audio jim)
@@ -2327,19 +2340,19 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
                 logging.warning(f"Bo'lak {idx} juda kichik ({chunk_size_kb:.1f}KB), o'tkazib yuborildi")
                 continue
 
-            # Avval gpt-4o-transcribe (yangi, sifati yaxshi), yiqilsa whisper-1 (eski, ishonchli)
+            # Avval whisper-1 (ishonchli, so'zma-so'z), yiqilsa gpt-4o-transcribe fallback
+            chunk_offset_sec = (idx - 1) * WHISPER_CHUNK_SECONDS
             chunk_text, err1 = _try_transcribe(
-                chunk_path, "gpt-4o-transcribe", source_lang, url, headers
+                chunk_path, "whisper-1", source_lang, url, headers, chunk_offset_sec=chunk_offset_sec
             )
             if not chunk_text:
-                logging.warning(f"Bo'lak {idx}/{total} gpt-4o-transcribe yiqildi: {err1}. whisper-1'ga o'tamiz...")
+                logging.warning(f"Bo'lak {idx}/{total} whisper-1 yiqildi: {err1}. gpt-4o-transcribe'ga o'tamiz...")
                 chunk_text, err2 = _try_transcribe(
-                    chunk_path, "whisper-1", source_lang, url, headers
+                    chunk_path, "gpt-4o-transcribe", source_lang, url, headers
                 )
                 if not chunk_text:
-                    failed_chunks.append((idx, f"gpt-4o: {err1} | whisper-1: {err2}"))
+                    failed_chunks.append((idx, f"whisper-1: {err1} | gpt-4o: {err2}"))
                     logging.error(f"Bo'lak {idx}/{total} IKKALA model yiqildi")
-                    # User uchun vaqt oralig'ini yozib qo'yamiz
                     if failed_ranges_out is not None:
                         start_sec = (idx - 1) * WHISPER_CHUNK_SECONDS
                         end_sec = idx * WHISPER_CHUNK_SECONDS
