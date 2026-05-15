@@ -2021,6 +2021,74 @@ def _get_whisper_prompt(source_lang):
     return prompts.get(source_lang, uz_prompt)
 
 
+def _try_transcribe_audio_chat(chunk_path, source_lang, headers):
+    """gpt-4o-audio-preview orqali transkripsiya — Whisper'dan yaxshiroq sifat,
+    lekin ~5x qimmatroq (~$1.80/soat o'rniga Whisper'ning $0.36/soat).
+    Returns: (text yoki None, error yoki None)."""
+    try:
+        with open(chunk_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode()
+    except Exception as e:
+        return None, f"Audio fayl o'qib bo'lmadi: {str(e)[:100]}"
+
+    # Format aniqlash (gpt-4o-audio-preview: wav, mp3, flac, m4a, webm, opus)
+    ext = os.path.splitext(chunk_path)[1].lower().lstrip(".")
+    fmt = ext if ext in ("wav", "mp3", "flac", "m4a", "webm", "opus") else "mp3"
+
+    system_msg = (
+        "You are an expert Uzbek language transcriber. Transcribe the audio "
+        "EXACTLY as spoken into clean Uzbek Latin text. "
+        "Do NOT translate, do NOT summarize, do NOT add commentary. "
+        "Output ONLY the spoken words in proper Uzbek Latin alphabet "
+        "(use o', g', sh, ch). For Quran verses or hadiths in Arabic, "
+        "transliterate to Latin Uzbek (e.g., 'Bismillahir Rohmanir Rohim'). "
+        "Religious terms: payg'ambar, sallallohu alayhi va sallam (s.a.v.), "
+        "alhamdulillah, inshalloh, Allohga shukur, ulamolar, sahobalar."
+    )
+    user_text = "Audio'ni o'zbek lotin alifbosida matn qiling. Faqat matn, izoh yo'q."
+
+    payload = {
+        "model": "gpt-4o-audio-preview",
+        "modalities": ["text"],
+        "messages": [
+            {"role": "system", "content": system_msg},
+            {"role": "user", "content": [
+                {"type": "text", "text": user_text},
+                {"type": "input_audio", "input_audio": {"data": audio_b64, "format": fmt}},
+            ]},
+        ],
+        "max_tokens": 16000,
+        "temperature": 0.0,
+    }
+
+    url_api = "https://api.openai.com/v1/chat/completions"
+    last_error = None
+    for attempt in range(2):  # 2 urinish (qimmat — ko'p urinmaymiz)
+        try:
+            resp = requests.post(url_api, headers=headers, json=payload, timeout=600)
+            if resp.status_code == 200:
+                result = resp.json()
+                text = (result["choices"][0]["message"].get("content") or "").strip()
+                if text:
+                    return _clean_whisper_hallucination(text), None
+                return None, "Bo'sh natija"
+            elif resp.status_code == 400:
+                # 400 — fayl format yoki yaxshi audio emas, qayta urinish foydasiz
+                return None, f"HTTP 400: {resp.text[:200]}"
+            elif resp.status_code in (429, 500, 502, 503):
+                last_error = f"HTTP {resp.status_code}"
+                time.sleep(2 ** attempt)
+            else:
+                return None, f"HTTP {resp.status_code}: {resp.text[:200]}"
+        except requests.exceptions.Timeout:
+            last_error = "Timeout"
+        except Exception as e:
+            last_error = str(e)[:200]
+            if attempt < 1:
+                time.sleep(2)
+    return None, last_error or "Noma'lum xato"
+
+
 def _try_transcribe(chunk_path, model, source_lang, url, headers, chunk_offset_sec=0):
     """Bitta bo'lakni belgilangan model bilan transkripsiya qilish.
     3 marta retry (HTTP 429/500/502/503). Bo'sh natija ham xato.
@@ -2258,19 +2326,30 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
             return idx, None, None
 
         chunk_offset_sec = (idx - 1) * WHISPER_CHUNK_SECONDS
-        # whisper-1 primary
-        chunk_text, err1 = _try_transcribe(
+
+        # 1) gpt-4o-audio-preview (eng yaxshi sifat, qimmat ~$1.80/soat)
+        chunk_text, err1 = _try_transcribe_audio_chat(chunk_path, source_lang, headers)
+        if chunk_text:
+            return idx, chunk_text, None
+
+        # 2) whisper-1 fallback (so'zma-so'z, arzon)
+        logging.warning(f"Bo'lak {idx}/{total} audio-preview yiqildi: {err1}. whisper-1 fallback...")
+        chunk_text, err2 = _try_transcribe(
             chunk_path, "whisper-1", source_lang, url, headers, chunk_offset_sec=chunk_offset_sec
         )
-        if not chunk_text:
-            logging.warning(f"Bo'lak {idx}/{total} whisper-1 yiqildi: {err1}. gpt-4o-transcribe fallback...")
-            chunk_text, err2 = _try_transcribe(
-                chunk_path, "gpt-4o-transcribe", source_lang, url, headers
-            )
-            if not chunk_text:
-                logging.error(f"Bo'lak {idx}/{total} IKKALA model yiqildi: {err1} | {err2}")
-                return idx, None, f"whisper-1: {err1} | gpt-4o: {err2}"
-        return idx, chunk_text, None
+        if chunk_text:
+            return idx, chunk_text, None
+
+        # 3) gpt-4o-transcribe fallback (oxirgi chora)
+        logging.warning(f"Bo'lak {idx}/{total} whisper-1 yiqildi: {err2}. gpt-4o-transcribe fallback...")
+        chunk_text, err3 = _try_transcribe(
+            chunk_path, "gpt-4o-transcribe", source_lang, url, headers
+        )
+        if chunk_text:
+            return idx, chunk_text, None
+
+        logging.error(f"Bo'lak {idx}/{total} 3 MODEL HAM yiqildi: {err1} | {err2} | {err3}")
+        return idx, None, f"audio-preview: {err1} | whisper-1: {err2} | gpt-4o: {err3}"
 
     # Bo'laklarga ajratish tugadi — userga xabar (0/N) ko'rsataylik
     if progress_cb:
