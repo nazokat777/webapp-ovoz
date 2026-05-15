@@ -140,7 +140,7 @@ TARIFFS = {
     "free":     {"name": "🌸 Bepul",         "minutes": 30,   "price": 0},      # 30 daq (testlik)
     "basic":    {"name": "💎 Boshlang'ich", "minutes": 180,  "price": 38000},  # 3 soat — $3 (TAK!TEXT START darajasi)
     "standart": {"name": "⭐ Standart",     "minutes": 600,  "price": 89000},  # 10 soat — $7
-    "premium":  {"name": "👑 Premium",      "minutes": 1500, "price": 189000}, # 25 soat — $15
+    "premium":  {"name": "👑 Premium",      "minutes": 1500, "price": 250000}, # 25 soat — marja 30%
     # Eski tariflar — backward compat (eski paid userlar uchun)
     "pro":      {"name": "💎 Pro",          "minutes": 600,  "price": 500000}, # eski, mavjud paid userlar uchun
 }
@@ -1401,21 +1401,18 @@ def _uzbek_transcription_quality(text):
     return max(0.0, score)
 
 
-def transcribe_unified(file_path, progress_cb=None, language="uz"):
+def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges_out=None):
     """Audio/video'ni matnga aylantirish — FAQAT Whisper/gpt-4o-transcribe (OpenAI) orqali.
 
-    User talabi: Muxlisa AI faqat PDF→audio uchun va faqat OpenAI yiqilganda.
-    STT (audio→matn) — har doim OpenAI.
-
-    O'zbek + diniy aralash matnlar uchun: natijada arab alifbosi topilsa,
-    GPT-4o bilan transliteratsiya qilinib, sof o'zbek lotin matn qaytariladi.
+    failed_ranges_out: list pass qilsangiz, yiqilgan bo'lak vaqt oraliqlari to'ldiriladi:
+        [(start_sec, end_sec, error), ...]
     """
     if not OPENAI_API_KEY:
         logging.warning("OPENAI_API_KEY yo'q — Muxlisa fallback ishlatiladi")
         return transcribe(file_path, progress_cb, language)
 
     # 1) STT
-    text = transcribe_whisper(file_path, language, None) or ""
+    text = transcribe_whisper(file_path, language, None, failed_ranges_out) or ""
 
     # 2) O'zbek matn — HAR DOIM GPT-4o bilan tozalash (TAK! TEXT darajasidagi sifat)
     if language == "uz" and text:
@@ -2125,7 +2122,67 @@ def _try_transcribe(chunk_path, model, source_lang, url, headers):
     return None, last_error or "Noma'lum xato"
 
 
-def transcribe_whisper(file_path, source_lang, progress_cb=None):
+def _format_time_range(start_sec, end_sec):
+    """Vaqt oraliqini chiroyli formatlash: 'MM:SS — MM:SS' yoki 'H:MM:SS' agar 1 soatdan ko'p."""
+    def fmt(s):
+        s = int(s)
+        h, rem = divmod(s, 3600)
+        m, ss = divmod(rem, 60)
+        if h > 0:
+            return f"{h}:{m:02d}:{ss:02d}"
+        return f"{m:02d}:{ss:02d}"
+    return f"{fmt(start_sec)} — {fmt(end_sec)}"
+
+
+def _merge_failed_ranges(failed_ranges):
+    """Ketma-ket yiqilgan bo'laklarni bitta oraliqqa birlashtirish.
+    Input: [(start, end, err), ...]  sorted by start
+    Output: [(start, end), ...]  merged
+    """
+    if not failed_ranges:
+        return []
+    sorted_ranges = sorted(failed_ranges, key=lambda r: r[0])
+    merged = [(sorted_ranges[0][0], sorted_ranges[0][1])]
+    for s, e, _ in sorted_ranges[1:]:
+        last_s, last_e = merged[-1]
+        if s <= last_e:
+            merged[-1] = (last_s, max(last_e, e))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def _format_failed_ranges_text(failed_ranges):
+    """Yiqilgan vaqt oraliqlarini user uchun chiroyli matn (HTML formatda) qiladi.
+    Bo'sh ro'yxat bo'lsa "" qaytaradi.
+    """
+    if not failed_ranges:
+        return ""
+    merged = _merge_failed_ranges(failed_ranges)
+    if not merged:
+        return ""
+    lines = ["⚠️ <b>Eslatma:</b> quyidagi vaqt oraliqlari transkripsiya qilinmadi (server xato):"]
+    for s, e in merged:
+        lines.append(f"• <code>{_format_time_range(s, e)}</code>")
+    lines.append("\n💡 Bu qismlarni qayta olish uchun: audio'ni o'sha vaqtdan kesib qayta yuboring.")
+    return "\n".join(lines)
+
+
+def _send_failed_ranges_notice(user_id, failed_ranges):
+    """Sync HTTP context — yiqilgan oraliqlar haqida userga xabar."""
+    msg = _format_failed_ranges_text(failed_ranges)
+    if not msg:
+        return
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, json={
+            "chat_id": user_id, "text": msg, "parse_mode": "HTML",
+        }, timeout=30)
+    except Exception as e:
+        logging.warning(f"Failed ranges xabar yuborish xato: {e}")
+
+
+def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_out=None):
     """OpenAI Whisper API orqali audio'ni matnga aylantirish.
     HAR DOIM avval optimallashtirish (64kbps mono MP3) qilinadi — bu Whisper
     25 MB limitiga moslashish va arzonroq tarmoq trafigi uchun.
@@ -2180,6 +2237,11 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
                 if not chunk_text:
                     failed_chunks.append((idx, f"gpt-4o: {err1} | whisper-1: {err2}"))
                     logging.error(f"Bo'lak {idx}/{total} IKKALA model yiqildi")
+                    # User uchun vaqt oralig'ini yozib qo'yamiz
+                    if failed_ranges_out is not None:
+                        start_sec = (idx - 1) * WHISPER_CHUNK_SECONDS
+                        end_sec = idx * WHISPER_CHUNK_SECONDS
+                        failed_ranges_out.append((start_sec, end_sec, f"{err1} / {err2}"))
 
             if chunk_text:
                 results.append(chunk_text)
@@ -2535,7 +2597,10 @@ async def process_local_audio(update, context, file_path, duration=0, language="
 
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
-        text = await asyncio.to_thread(transcribe_unified, file_path, cb, language)
+        failed_ranges = []
+        text = await asyncio.to_thread(transcribe_unified, file_path, cb, language, failed_ranges)
+        if failed_ranges:
+            await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
         await send_result(update, msg, text)
         if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
@@ -2602,7 +2667,10 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
 
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
-        text = await asyncio.to_thread(transcribe_unified, tmp_path, cb, language)
+        failed_ranges = []
+        text = await asyncio.to_thread(transcribe_unified, tmp_path, cb, language, failed_ranges)
+        if failed_ranges:
+            await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
         await send_result(update, msg, text)
         if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
@@ -2683,7 +2751,10 @@ async def process_url(update, context, url, language="uz"):
 
         loop = asyncio.get_running_loop()
         cb = make_progress_cb(loop, msg)
-        text = await asyncio.to_thread(transcribe_unified, audio_path, cb, language)
+        failed_ranges = []
+        text = await asyncio.to_thread(transcribe_unified, audio_path, cb, language, failed_ranges)
+        if failed_ranges:
+            await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
         await send_result(update, msg, text)
         if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
@@ -4141,7 +4212,10 @@ async def process_translation(update, context, file_path, duration_sec, source_l
                 actual_duration = 60
 
         # 2) Whisper STT
-        original_text = await asyncio.to_thread(transcribe_whisper, file_path, source_lang, None)
+        failed_ranges = []
+        original_text = await asyncio.to_thread(transcribe_whisper, file_path, source_lang, None, failed_ranges)
+        if failed_ranges:
+            await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
         if not original_text or not original_text.strip():
             await msg.edit_text("❌ Audiodan matn topilmadi.")
             return
@@ -5144,7 +5218,10 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
                 return
 
         telegram_send_message(user_id, "🎙 Web ilova yuborgan fayl tanilmoqda...")
-        text = transcribe_unified(file_path, language=language)
+        failed_ranges = []
+        text = transcribe_unified(file_path, language=language, failed_ranges_out=failed_ranges)
+        if failed_ranges:
+            _send_failed_ranges_notice(user_id, failed_ranges)
         if text and text.strip() and text.strip() != "Matn aniqlanmadi.":
             # === SIFAT TEKSHIRUVI — YUBORISHDAN OLDIN ===
             if not _is_output_quality_acceptable(text, actual_duration):
@@ -5218,8 +5295,9 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
                 return
         progress.set_text("Audio matnga aylanmoqda...")
         # 1) Whisper STT
+        failed_ranges = []
         try:
-            original_text = transcribe_whisper(file_path, source_lang, None)
+            original_text = transcribe_whisper(file_path, source_lang, None, failed_ranges)
         except Exception as e:
             logging.error(f"Whisper STT xato: {e}")
             telegram_send_message(
@@ -5234,6 +5312,9 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
                 "❌ Audiodan matn topilmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
             )
             return
+        # Failed ranges xabari (agar bor bo'lsa)
+        if failed_ranges:
+            _send_failed_ranges_notice(user_id, failed_ranges)
         # 2) GPT tarjima (target_lang ga) — Avto bo'lsa tarjima qilmaymiz
         if target_lang == "auto":
             translated = original_text
@@ -5555,8 +5636,9 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
             if not check_limit_by_user_id(user_id, cost):
                 return
         # 3) Whisper STT
+        failed_ranges = []
         try:
-            original_text = transcribe_whisper(audio_path, source_lang, None)
+            original_text = transcribe_whisper(audio_path, source_lang, None, failed_ranges)
         except Exception as e:
             logging.error(f"URL Whisper STT xato: {e}")
             telegram_send_message(
@@ -5570,6 +5652,9 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
                 "❌ Audiodan matn topilmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
             )
             return
+        # Failed ranges xabari (agar bor bo'lsa)
+        if failed_ranges:
+            _send_failed_ranges_notice(user_id, failed_ranges)
         # 4) GPT tarjima (target_lang ga) — Avto bo'lsa tarjima qilmaymiz
         if target_lang == "auto":
             translated = original_text
@@ -5640,7 +5725,10 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
                 return
 
         telegram_send_message(user_id, "✅ Yuklanidi! 🎙 Matn tanilmoqda...")
-        text = transcribe_unified(audio_path, language=language)
+        failed_ranges = []
+        text = transcribe_unified(audio_path, language=language, failed_ranges_out=failed_ranges)
+        if failed_ranges:
+            _send_failed_ranges_notice(user_id, failed_ranges)
         if text and text.strip() != "Matn aniqlanmadi.":
             # === [ALIFBO] Kirill so'ralsa o'tkazamiz ===
             if output_alphabet == "cyrillic":
