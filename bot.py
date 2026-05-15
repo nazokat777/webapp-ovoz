@@ -1516,9 +1516,21 @@ def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
         return [recoded_path]
 
     # === Qadam 3: Hali ham katta — vaqt bo'yicha bo'laklash ===
-    # Yangi faylning davomiyligi: 64kbps = 8 KB/sec
-    duration_sec = int(new_size_mb * 1024 / 8)  # ≈ MB * 128 sec
-    logging.info(f"   → katta fayl, vaqt bo'yicha bo'laklash (dur≈{duration_sec}s)")
+    # ffprobe orqali aniq davomiylik (taxminiy hisoblash o'rniga — oxirgi bo'lak yo'qolmasligi uchun)
+    duration_sec = 0
+    try:
+        p = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", recoded_path],
+            capture_output=True, text=True, timeout=15
+        )
+        duration_sec = int(float(p.stdout.strip())) if p.stdout.strip() else 0
+    except Exception as e:
+        logging.warning(f"ffprobe davomiylik aniqlash xato: {e}")
+    if duration_sec <= 0:
+        # Fallback: taxminiy (64kbps = 8 KB/sec)
+        duration_sec = int(new_size_mb * 1024 / 8)
+    logging.info(f"   → katta fayl, vaqt bo'yicha bo'laklash (dur={duration_sec}s)")
     return _split_by_time(recoded_path, chunk_seconds, duration_sec)
 
 
@@ -1526,7 +1538,7 @@ def _split_by_time(file_path, chunk_seconds, total_dur):
     """Audio'ni vaqt bo'yicha bo'laklarga ajratish (past bitrate bilan).
     Eslatma: file_path AVVAL qayta kodlangan bo'lishi kerak (64kbps mono)."""
     n_chunks = int(total_dur // chunk_seconds) + (1 if total_dur % chunk_seconds > 0 else 0)
-    n_chunks = max(1, min(n_chunks, 50))  # max 50 ta bo'lak (xavfsizlik)
+    n_chunks = max(1, min(n_chunks, 100))  # max 100 ta bo'lak (~16 soat)
     chunks = []
     tmp_dir = tempfile.mkdtemp(prefix="whisper_chunks_")
     logging.info(f"🔪 vaqt bo'yicha bo'laklash: {n_chunks} ta bo'lak")
@@ -2068,6 +2080,51 @@ def _get_whisper_prompt(source_lang):
     return prompts.get(source_lang, uz_prompt)
 
 
+def _try_transcribe(chunk_path, model, source_lang, url, headers):
+    """Bitta bo'lakni belgilangan model bilan transkripsiya qilish.
+    3 marta retry (HTTP 429/500/502/503). Bo'sh natija ham xato.
+    Returnlar: (chunk_text yoki None, error_str yoki None)."""
+    last_error = None
+    for attempt in range(3):
+        try:
+            with open(chunk_path, "rb") as f:
+                files = {"file": (os.path.basename(chunk_path), f, "application/octet-stream")}
+                data = {
+                    "model": model,
+                    "response_format": "json",
+                    "prompt": _get_whisper_prompt(source_lang),
+                    "temperature": 0.0,
+                }
+                if source_lang and source_lang != "auto" and source_lang in WHISPER_SUPPORTED_LANGS:
+                    data["language"] = source_lang
+                resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
+
+            if resp.status_code == 200:
+                result = resp.json()
+                text = (result.get("text") or "").strip()
+                if text:
+                    return _clean_whisper_hallucination(text), None
+                # Bo'sh natija — qayta urinish foydasiz (audio jim)
+                return None, "Bo'sh natija"
+            elif resp.status_code == 400:
+                err_text = resp.text[:200] if resp.text else "Unknown"
+                return None, f"HTTP 400: {err_text}"
+            elif resp.status_code in (429, 500, 502, 503):
+                last_error = f"HTTP {resp.status_code}"
+                time.sleep(2 ** attempt)
+            else:
+                return None, f"HTTP {resp.status_code}"
+        except requests.exceptions.Timeout:
+            last_error = "Timeout"
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+        except Exception as e:
+            last_error = str(e)[:200]
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+    return None, last_error or "Noma'lum xato"
+
+
 def transcribe_whisper(file_path, source_lang, progress_cb=None):
     """OpenAI Whisper API orqali audio'ni matnga aylantirish.
     HAR DOIM avval optimallashtirish (64kbps mono MP3) qilinadi — bu Whisper
@@ -2111,63 +2168,21 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
                 logging.warning(f"Bo'lak {idx} juda kichik ({chunk_size_kb:.1f}KB), o'tkazib yuborildi")
                 continue
 
-            # 3 marta urinish (retry) — HTTP 400/429/500 uchun
-            last_error = None
-            chunk_text = None
-            chunk_offset_sec = (idx - 1) * WHISPER_CHUNK_SECONDS  # bu bo'lakning audioda boshlanish vaqti
-            for attempt in range(3):
-                try:
-                    with open(chunk_path, "rb") as f:
-                        files = {"file": (os.path.basename(chunk_path), f, "application/octet-stream")}
-                        # gpt-4o-transcribe — Whisper'dan yaxshiroq sifat, hallucination kam
-                        # ⚠️ Timestamp segments yo'q (faqat matn) — verbose_json'siz
-                        data = {
-                            "model": "gpt-4o-transcribe",
-                            "response_format": "json",
-                            "prompt": _get_whisper_prompt(source_lang),
-                            "temperature": 0.0,
-                        }
-                        if source_lang and source_lang != "auto" and source_lang in WHISPER_SUPPORTED_LANGS:
-                            data["language"] = source_lang
-                        resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
-
-                    if resp.status_code == 200:
-                        result = resp.json()
-                        chunk_text = (result.get("text") or "").strip()
-                        if chunk_text:
-                            chunk_text = _clean_whisper_hallucination(chunk_text)
-                        else:
-                            logging.info(f"Bo'lak {idx} bo'sh natija (audio jim?)")
-                        break  # muvaffaqiyat
-                    elif resp.status_code == 400:
-                        # 400 — audio buzuq yoki noto'g'ri format. Qayta urinish foydasiz.
-                        err_text = resp.text[:200] if resp.text else "Unknown"
-                        last_error = f"HTTP 400 (audio rad etildi): {err_text}"
-                        logging.warning(f"Bo'lak {idx} HTTP 400: {err_text}")
-                        break  # 400 da retry yo'q
-                    elif resp.status_code in (429, 500, 502, 503):
-                        # Rate limit yoki vaqtinchalik xato — retry
-                        last_error = f"HTTP {resp.status_code}"
-                        wait = 2 ** attempt  # 1, 2, 4 sek
-                        logging.warning(f"Bo'lak {idx} HTTP {resp.status_code}, {wait}s pauza...")
-                        time.sleep(wait)
-                    else:
-                        last_error = f"HTTP {resp.status_code}"
-                        break
-                except requests.exceptions.Timeout:
-                    last_error = "Timeout (10 daq)"
-                    if attempt < 2:
-                        time.sleep(2 ** attempt)
-                except Exception as e:
-                    last_error = str(e)[:200]
-                    if attempt < 2:
-                        time.sleep(2 ** attempt)
+            # Avval gpt-4o-transcribe (yangi, sifati yaxshi), yiqilsa whisper-1 (eski, ishonchli)
+            chunk_text, err1 = _try_transcribe(
+                chunk_path, "gpt-4o-transcribe", source_lang, url, headers
+            )
+            if not chunk_text:
+                logging.warning(f"Bo'lak {idx}/{total} gpt-4o-transcribe yiqildi: {err1}. whisper-1'ga o'tamiz...")
+                chunk_text, err2 = _try_transcribe(
+                    chunk_path, "whisper-1", source_lang, url, headers
+                )
+                if not chunk_text:
+                    failed_chunks.append((idx, f"gpt-4o: {err1} | whisper-1: {err2}"))
+                    logging.error(f"Bo'lak {idx}/{total} IKKALA model yiqildi")
 
             if chunk_text:
                 results.append(chunk_text)
-            elif last_error:
-                failed_chunks.append((idx, last_error))
-                logging.error(f"Bo'lak {idx}/{total} 3 urinishdan keyin yiqildi: {last_error}")
     finally:
         if chunk_dir_to_cleanup:
             try: shutil.rmtree(chunk_dir_to_cleanup, ignore_errors=True)
