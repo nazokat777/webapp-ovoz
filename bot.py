@@ -63,7 +63,7 @@ GOOGLE_LANG = {
 _sr_recognizer = sr.Recognizer()
 
 BOT_TOKEN   = os.getenv("BOT_TOKEN", "8502384684:AAETKbx4YBtiQ9W7PRTWUeVumwwnG-lH9R8")
-MUXLISA_KEY = os.getenv("MUXLISA_KEY", "UYaezERZPBO7pkJj4wzttq5eV90cGdFrI8XxGyCl")
+# MUXLISA_KEY olib tashlandi — Muxlisa AI ishlatilmaydi (cho'ntak xavfsizligi)
 
 # To'lov ma'lumotlari (Railway env variable orqali kiritiladi — kodga qo'yilmaydi!)
 PAYMENT_CARD = os.getenv("PAYMENT_CARD", "")
@@ -117,10 +117,8 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "https://botch-engaging-mustang.ngrok-free.
 # Railway/Heroku PORT env, lokal sinov uchun HTTP_PORT yoki default 8000
 HTTP_PORT  = int(os.getenv("HTTP_PORT") or os.getenv("PORT") or 8000)
 
-MUXLISA_URL   = "https://service.muxlisa.uz/api/v2/stt"
-# Muxlisa cheklovi: 60 sek. CHUNK_SECONDS = 50 sek (xavfsizlik bufer).
-# OVERLAP_SECONDS = 2 sek — bo'lak chegarasidagi so'zlar kesilmasligi uchun
-# har bir bo'lak oldingisining oxirgi 2 sek bilan ustma-ust tushadi.
+# MUXLISA_URL olib tashlandi — Muxlisa STT ishlatilmaydi.
+# Eski legacy konstantalar (boshqa joylar uchun zarur bo'lishi mumkin)
 CHUNK_SECONDS = 50
 OVERLAP_SECONDS = 2
 
@@ -176,10 +174,8 @@ user_referral_claimed = {}
 # Admin tomonidan /setcard va /setholder orqali sozlanadigan karta ma'lumotlari
 # Env variable yo'q bo'lsa yoki adminb buyruq bilan yangilangan bo'lsa shu ishlatiladi.
 runtime_settings = {"payment_card": "", "payment_card_holder": ""}
-# Admin /test buyrug'i bilan yoqadigan rejim — Muxlisa chaqirilmaydi
+# Admin /test buyrug'i bilan yoqadigan rejim — Whisper API chaqirilmaydi
 TEST_MODE = {"on": False}
-# Muxlisa tarifi (so'm/daqiqa) — statistika uchun
-MUXLISA_PRICE_PER_MIN = 500
 # Admin chat_id (avtomatik saqlanadi admin botga xabar yuborganda) — to'lov xabarnomasi uchun
 ADMIN_CHAT_ID = {"id": None}
 
@@ -808,78 +804,10 @@ def split_audio(wav_path):
     return chunks
 
 
-def _do_muxlisa_request(path, timeout, language="uz"):
-    with open(path, "rb") as f:
-        return requests.post(
-            MUXLISA_URL,
-            headers={"x-api-key": MUXLISA_KEY},
-            files=[("audio", ("audio.wav", f, "audio/wav"))],
-            data={"language": language} if language else {},
-            timeout=timeout,
-        )
-
-
-def google_speech_chunk(path, lang_code="ru-RU"):
-    """Google Speech API (bepul) orqali transcribe."""
-    with sr.AudioFile(path) as source:
-        audio = _sr_recognizer.record(source)
-    try:
-        return (_sr_recognizer.recognize_google(audio, language=lang_code) or "").strip()
-    except sr.UnknownValueError:
-        return ""  # bo'lakda nutq yo'q yoki tan olinmadi
-
-
-def _transcribe_chunk_google(path, max_retries=3, lang_code="ru-RU"):
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            return google_speech_chunk(path, lang_code=lang_code)
-        except sr.RequestError as e:
-            last_error = Exception(f"Google Speech tarmoq xatosi: {e}")
-        except Exception as e:
-            last_error = e
-        if attempt < max_retries - 1:
-            time.sleep(1 + attempt)
-    raise last_error or Exception("Google Speech noma'lum xato")
-
-
-def transcribe_chunk(path, max_retries=3, language="uz"):
-    """Bo'lakni transcribe qiladi. uz -> Muxlisa, ru/en -> Google Speech."""
-    if language in ("ru", "en"):
-        lang_code = GOOGLE_LANG.get(language, "ru-RU")
-        return _transcribe_chunk_google(path, max_retries=max_retries, lang_code=lang_code)
-    # default: uz -> Muxlisa
-    last_error = None
-    timeouts = [60, 90, 120]
-    for attempt in range(max_retries):
-        timeout = timeouts[min(attempt, len(timeouts) - 1)]
-        try:
-            response = _do_muxlisa_request(path, timeout, language=language)
-            if response.status_code == 200:
-                return response.json().get("text", "").strip()
-            # Fatal xatolar (auth/balance) — retry yo'q
-            err_text = response.text or ""
-            err_lower = err_text.lower()
-            if response.status_code in (401, 402, 403) or any(
-                k in err_lower for k in ("balance", "insufficient", "credit", "quota", "unauthorized", "forbidden")
-            ):
-                raise Exception(f"AI xatosi: {response.status_code} - {err_text[:200]}")
-            # Boshqa xato (4xx/5xx) — retry qilamiz
-            last_error = Exception(f"AI xatosi: {response.status_code} - {err_text[:200]}")
-        except requests.exceptions.Timeout:
-            last_error = Exception(f"AI javob bermadi ({timeout} sek)")
-        except requests.exceptions.ConnectionError as e:
-            last_error = Exception(f"Tarmoq xatosi: {str(e)[:80]}")
-        except Exception as e:
-            # Fatal bo'lsa darhol — retry qilmasdan
-            if _is_fatal_error(str(e)):
-                raise
-            last_error = e
-        # Keyingi urinishgacha kutish (1, 2 sek)
-        if attempt < max_retries - 1:
-            time.sleep(1 + attempt)
-            logging.info(f"Bo'lak retry #{attempt + 2} ({path})")
-    raise last_error or Exception("AI noma'lum xato")
+"""
+Eski Muxlisa/Google STT chain olib tashlandi (user talabi: cho'ntak xavfsizligi).
+Endi STT faqat OpenAI Whisper orqali (transcribe_whisper / transcribe_unified).
+"""
 
 
 FATAL_KEYWORDS = ("balance", "insufficient", "credit", "payment", "quota",
@@ -891,91 +819,7 @@ def _is_fatal_error(err_str):
     return any(k in s for k in FATAL_KEYWORDS)
 
 
-def transcribe(file_path, progress_cb=None, language="uz"):
-    """progress_cb(stage, current, total) — sync callback. stage: 'convert','split','chunk'."""
-    if progress_cb:
-        try: progress_cb('convert', 0, 0)
-        except Exception: pass
-    wav_path = convert_to_wav(file_path)
-
-    if progress_cb:
-        try: progress_cb('split', 0, 0)
-        except Exception: pass
-    chunks = split_audio(wav_path)  # list of (chunk_path, start_sec, end_sec)
-    total = len(chunks)
-    results = []
-    failed_segments = []   # (segment_no, start_sec, end_sec)
-    consecutive_errors = 0
-    fatal_msg = None
-    last_processed = 0
-    last_ok_end = 0.0
-    try:
-        for i, (chunk_path, start_sec, end_sec) in enumerate(chunks):
-            last_processed = i
-            if progress_cb:
-                try: progress_cb('chunk', i + 1, total)
-                except Exception: pass
-            try:
-                text = transcribe_chunk(chunk_path, language=language)
-                if text:
-                    results.append(text)
-                last_ok_end = end_sec
-                consecutive_errors = 0
-            except Exception as e:
-                logging.error(f"Bo'lak {i+1} ({fmt_time(start_sec)}-{fmt_time(end_sec)}) xatosi: {e}")
-                failed_segments.append((i + 1, start_sec, end_sec))
-                consecutive_errors += 1
-                err_str = str(e)
-                if _is_fatal_error(err_str):
-                    fatal_msg = (
-                        "AI servisidagi balans tugagan yoki API kalit muammoli. "
-                        "Iltimos hisobingizni to'ldirib qayta urinib ko'ring."
-                    )
-                    break
-                if consecutive_errors >= 3:
-                    fatal_msg = "Ketma-ket 3 ta bo'lak xato qaytardi — to'xtatildi."
-                    break
-            finally:
-                if chunk_path != wav_path and os.path.exists(chunk_path):
-                    try: os.remove(chunk_path)
-                    except Exception: pass
-        # Erta to'xtagan bo'lsak — qolgan vaqtinchalik bo'laklarni tozalash
-        if fatal_msg:
-            for j in range(last_processed + 1, total):
-                rest = chunks[j][0]
-                if rest != wav_path and os.path.exists(rest):
-                    try: os.remove(rest)
-                    except Exception: pass
-    finally:
-        if wav_path != file_path and os.path.exists(wav_path):
-            try: os.remove(wav_path)
-            except Exception: pass
-
-    text_part = " ".join(results).strip() if results else ""
-
-    # Diagnostika tuzish — qaysi vaqt oraliqlari yo'qoldi
-    diag_lines = []
-    if failed_segments:
-        diag_lines.append(f"\n\n⚠️ {len(failed_segments)} ta bo'lak qayta ishlanmadi:")
-        for seg in failed_segments[:15]:
-            s, e = seg[1], seg[2]
-            diag_lines.append(f"• {fmt_time(s)} - {fmt_time(e)}")
-        if len(failed_segments) > 15:
-            diag_lines.append(f"...va yana {len(failed_segments) - 15} ta")
-        diag_lines.append("Bu vaqtlarni audiodan qayta tinglab matnni qo'l bilan to'ldirishingiz mumkin.")
-
-    if fatal_msg:
-        diag_lines.append(f"\n⛔ {fatal_msg}")
-        if results:
-            diag_lines.append(f"📍 Matn 0:00 dan {fmt_time(last_ok_end)} gacha olindi.")
-
-    diag = "\n".join(diag_lines)
-
-    if not text_part and not diag:
-        return "Matn aniqlanmadi."
-    if not text_part:
-        return diag.lstrip()
-    return text_part + diag
+# Eski transcribe() funksiyasi olib tashlandi — endi faqat OpenAI Whisper ishlatamiz.
 
 
 FONT_CANDIDATES = [
@@ -1211,50 +1055,6 @@ def _clean_pdf_text(text):
     return "\n".join(cleaned).strip()
 
 
-def make_tts_muxlisa(text, lang="uz"):
-    """Matnni Muxlisa AI TTS bilan MP3 ga aylantiradi (faqat O'zbek tili).
-    User talabi: PDF→audio uchun OpenAI/Edge yiqilganda fallback sifatida ishlatiladi.
-    Returns: MP3 fayl yo'li yoki None (xato bo'lsa)."""
-    if not text or not text.strip():
-        return None
-    if lang != "uz":
-        # Muxlisa faqat O'zbek tilini qo'llab-quvvatlaydi
-        return None
-    if not MUXLISA_KEY:
-        logging.warning("MUXLISA_KEY yo'q — Muxlisa TTS ishlamaydi")
-        return None
-
-    # Muxlisa TTS endpoint (taxminiy — Muxlisa hujjatiga qarab to'g'irlanishi mumkin)
-    url = "https://service.muxlisa.uz/api/v2/tts"
-    out_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
-    try:
-        resp = requests.post(
-            url,
-            headers={"x-api-key": MUXLISA_KEY},
-            json={"text": text.strip()[:5000], "format": "mp3"},  # 5000 belgi limit (xavfsizlik)
-            timeout=180,
-        )
-        if resp.status_code != 200:
-            logging.warning(f"Muxlisa TTS xato: HTTP {resp.status_code} — {resp.text[:200]}")
-            try: os.remove(out_path)
-            except Exception: pass
-            return None
-        # Audio bytes saqlash
-        with open(out_path, "wb") as f:
-            f.write(resp.content)
-        if os.path.getsize(out_path) < 100:
-            try: os.remove(out_path)
-            except Exception: pass
-            return None
-        logging.info("✅ Muxlisa TTS muvaffaqiyatli ishladi")
-        return out_path
-    except Exception as e:
-        logging.warning(f"Muxlisa TTS so'rov xato: {e}")
-        try: os.remove(out_path)
-        except Exception: pass
-        return None
-
-
 def make_tts_edge(text, lang=None):
     """Matnni Edge TTS (Microsoft, bepul) bilan MP3 ga aylantiradi.
     Uzun matn 3000 belgili bo'laklarga ajratiladi va PARALLEL ishlanadi
@@ -1427,11 +1227,10 @@ def make_tts_openai(text, lang=None):
 def make_tts(text, lang=None, force_engine=None):
     """Matnni ovozli MP3 ga aylantiradi.
     Strategiya:
-      • O'zbek (uz): OpenAI TTS → Edge TTS fallback → Muxlisa fallback
+      • O'zbek (uz): Edge TTS (bepul, sifatli, Madina ovozi)
       • Boshqa tillar (ru/en/ar): OpenAI TTS → Edge fallback
-      • Muxlisa AI faqat oxirgi chora (User talabi: 'open ai ishlolmasaginadan keyin')
 
-    force_engine: 'edge', 'openai', yoki 'muxlisa' — ixtiyoriy, sinov uchun.
+    force_engine: 'edge' yoki 'openai' — ixtiyoriy, sinov uchun.
     """
     if not text or not text.strip():
         return None
@@ -1443,8 +1242,6 @@ def make_tts(text, lang=None, force_engine=None):
         return make_tts_edge(text, lang)
     if force_engine == "openai":
         return make_tts_openai(text, lang) or make_tts_edge(text, lang)
-    if force_engine == "muxlisa":
-        return make_tts_muxlisa(text, lang) or make_tts_edge(text, lang)
 
     # === Boshqa tillar (ru/en/ar): OpenAI TTS premium → Edge fallback ===
     if lang in ("ru", "en", "ar") and OPENAI_API_KEY:
@@ -1457,19 +1254,12 @@ def make_tts(text, lang=None, force_engine=None):
             logging.warning(f"OpenAI TTS yiqildi ({lang}), Edge fallback: {e}")
         return make_tts_edge(text, lang)
 
-    # === O'zbek (uz): Edge TTS (bepul, sifatli) → Muxlisa fallback ===
-    # Edge TTS Uzbek native voice bor, sifati yaxshi
+    # === O'zbek (uz): Edge TTS (bepul, sifatli) ===
     try:
-        path = make_tts_edge(text, lang)
-        if path:
-            return path
-        logging.warning("Edge TTS bo'sh natija qaytardi (uz)")
+        return make_tts_edge(text, lang)
     except Exception as e:
         logging.warning(f"Edge TTS yiqildi (uz): {e}")
-
-    # Edge yiqilgan — Muxlisa fallback (faqat O'zbek uchun)
-    logging.info("Edge TTS yiqildi, Muxlisa TTS fallback (uz)...")
-    return make_tts_muxlisa(text, lang)
+        return None
 
 
 def save_base64_audio(data, suffix='.webm'):
@@ -1529,8 +1319,7 @@ def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges
         [(start_sec, end_sec, error), ...]
     """
     if not OPENAI_API_KEY:
-        logging.warning("OPENAI_API_KEY yo'q — Muxlisa fallback ishlatiladi")
-        return transcribe(file_path, progress_cb, language)
+        raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing — bot OpenAI'siz ishlamaydi.")
 
     # 1) STT — progress_cb ni transcribe_whisper'ga uzatamiz
     text = transcribe_whisper(file_path, language, progress_cb, failed_ranges_out) or ""
@@ -2813,11 +2602,11 @@ async def process_local_audio(update, context, file_path, duration=0, language="
     # Admin test rejimi — Muxlisa chaqirilmaydi
     if language == "uz" and is_admin(update) and TEST_MODE["on"]:
         await update.message.reply_text(
-            f"🧪 *TEST REJIMI* — Muxlisa chaqirilmadi (pul ketmadi)\n⏱ {est}",
+            f"🧪 *TEST REJIMI* — OpenAI chaqirilmadi (pul ketmadi)\n⏱ {est}",
             parse_mode="Markdown"
         )
         msg = await update.message.reply_text("Test natijasi tayyorlanyapti...")
-        await send_result(update, msg, "[TEST REJIMI] Bu sahta natija. Muxlisa balansidan pul yechilmadi. /test buyrug'i bilan o'chirib qo'ying.")
+        await send_result(update, msg, "[TEST REJIMI] Bu sahta natija. OpenAI hisobidan pul yechilmadi. /test buyrug'i bilan o'chirib qo'ying.")
         return
 
     msg = await update.message.reply_text(
@@ -2876,11 +2665,11 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
     # Admin test rejimi — Muxlisa chaqirilmaydi
     if language == "uz" and is_admin(update) and TEST_MODE["on"]:
         await update.message.reply_text(
-            f"🧪 *TEST REJIMI* — Muxlisa chaqirilmadi (pul ketmadi)\n⏱ {est}",
+            f"🧪 *TEST REJIMI* — OpenAI chaqirilmadi (pul ketmadi)\n⏱ {est}",
             parse_mode="Markdown"
         )
         msg = await update.message.reply_text("Test natijasi tayyorlanyapti...")
-        await send_result(update, msg, "[TEST REJIMI] Bu sahta natija. Muxlisa balansidan pul yechilmadi. /test buyrug'i bilan o'chirib qo'ying.")
+        await send_result(update, msg, "[TEST REJIMI] Bu sahta natija. OpenAI hisobidan pul yechilmadi. /test buyrug'i bilan o'chirib qo'ying.")
         return
 
     msg = await update.message.reply_text(
@@ -2948,11 +2737,11 @@ async def process_url(update, context, url, language="uz"):
     # Admin test rejimi — yuklash ham, transcribe ham yo'q
     if language == "uz" and is_admin(update) and TEST_MODE["on"]:
         await update.message.reply_text(
-            f"🧪 *TEST REJIMI* — Video yuklanmadi, Muxlisa chaqirilmadi (pul ketmadi)",
+            f"🧪 *TEST REJIMI* — Video yuklanmadi, OpenAI chaqirilmadi (pul ketmadi)",
             parse_mode="Markdown"
         )
         msg = await update.message.reply_text("Test natijasi tayyorlanyapti...")
-        await send_result(update, msg, "[TEST REJIMI] Bu sahta natija. URL yuklanmadi, Muxlisa chaqirilmadi.")
+        await send_result(update, msg, "[TEST REJIMI] Bu sahta natija. URL yuklanmadi, OpenAI chaqirilmadi.")
         return
 
     # Doimiy xabar — URL chatda turaveradi, edit bo'lmaydi
@@ -3266,7 +3055,8 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if is_admin(update):
         total_users = len(user_uzbek_usage)
         total_sec = sum(user_uzbek_usage.values())
-        total_cost = int(total_sec / 60 * MUXLISA_PRICE_PER_MIN)
+        # OpenAI Whisper narxi: $0.006/daq ≈ 75 so'm/daq (USD=12500 so'm bilan)
+        total_cost = int(total_sec / 60 * 75)
         test_status = "✅ YONIQ" if TEST_MODE["on"] else "❌ O'CHIQ"
         # Tariflar bo'yicha foydalanuvchilar soni
         tariff_counts = {}
@@ -3333,7 +3123,7 @@ async def test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if TEST_MODE["on"]:
         await update.message.reply_text(
             "🧪 *Test rejimi YONIQ ✅*\n\n"
-            "Endi O'zbek audiolar Muxlisa ga yuborilmaydi — pul ketmaydi.\n"
+            "Endi Audio Whisper API ga yuborilmaydi — pul ketmaydi.\n"
             "Bot sahta natija qaytaradi.\n\n"
             "O'chirish uchun: /test",
             parse_mode="Markdown"
@@ -3341,7 +3131,7 @@ async def test_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(
             "🧪 *Test rejimi O'CHIQ ❌*\n\n"
-            "Endi haqiqiy Muxlisa STT ishlaydi (balansdan pul yechiladi).",
+            "Endi haqiqiy OpenAI STT ishlaydi (balansdan pul yechiladi).",
             parse_mode="Markdown"
         )
 
