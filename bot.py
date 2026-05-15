@@ -2119,31 +2119,21 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
                 try:
                     with open(chunk_path, "rb") as f:
                         files = {"file": (os.path.basename(chunk_path), f, "application/octet-stream")}
-                        # whisper-1 + verbose_json — segmentlar (timestamps) uchun
+                        # gpt-4o-transcribe — Whisper'dan yaxshiroq sifat, hallucination kam
+                        # ⚠️ Timestamp segments yo'q (faqat matn) — verbose_json'siz
                         data = {
-                            "model": "whisper-1",
-                            "response_format": "verbose_json",
+                            "model": "gpt-4o-transcribe",
+                            "response_format": "json",
                             "prompt": _get_whisper_prompt(source_lang),
                             "temperature": 0.0,
-                            "timestamp_granularities[]": "segment",
                         }
                         if source_lang and source_lang != "auto" and source_lang in WHISPER_SUPPORTED_LANGS:
                             data["language"] = source_lang
-                        # Hallucination'ni kamaytirish:
-                        # - no_speech_threshold yuqori: jim joylarni o'tkazib yuborish
-                        # - compression_ratio_threshold past: takror so'zlarni aniqlash
-                        # NOTE: bu parametrlar OpenAI API'da local Whisper uchun, API ularni qabul qiladimi yo'qmi noaniq
                         resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
 
                     if resp.status_code == 200:
                         result = resp.json()
-                        # Segments bilan ishlash — har 30 sek belgi qo'yamiz
-                        segments = result.get("segments") or []
-                        if segments:
-                            chunk_text = _format_text_with_timestamps(segments, chunk_offset_sec)
-                        else:
-                            # Fallback: oddiy matn
-                            chunk_text = (result.get("text") or "").strip()
+                        chunk_text = (result.get("text") or "").strip()
                         if chunk_text:
                             chunk_text = _clean_whisper_hallucination(chunk_text)
                         else:
