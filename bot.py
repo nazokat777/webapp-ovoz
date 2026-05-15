@@ -2984,6 +2984,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "(YouTube/Instagram havolasini bo'lish shart emas)\n"
         "• *Aniq, tiniq ovoz* yuboring (shovqin kam bo'lsin)\n"
         "• Bir vaqtda bitta odam gapirsa, sifat yaxshi chiqadi\n\n"
+        "⚠️ *Muhim eslatma:* Men botman — odam xato qilgani kabi men ham "
+        "xato qilishim mumkin. Sifat eng yuqori bo'lishi uchun *audio/video'larni "
+        "qisqa bo'laklarga bo'lib yuboring* (10-20 daqiqali). Uzun video bir butun "
+        "yuborilsa, ba'zi joylar noto'g'ri tushunilishi mumkin.\n\n"
         "🎁 *Bonus daqiqalar:* Do'st taklif qilsangiz ikkalangizgayam +5 daqiqa bepul!\n"
         "Tavsiya havolangizni olish: /tavsiya\n\n"
         "Quyidagi tugma orqali *Web ilovani* oching 👇".format(
