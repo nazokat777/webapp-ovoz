@@ -1083,6 +1083,50 @@ def _clean_pdf_text(text):
     return "\n".join(cleaned).strip()
 
 
+def make_tts_muxlisa(text, lang="uz"):
+    """Matnni Muxlisa AI TTS bilan MP3 ga aylantiradi (faqat O'zbek tili).
+    User talabi: PDF→audio uchun OpenAI/Edge yiqilganda fallback sifatida ishlatiladi.
+    Returns: MP3 fayl yo'li yoki None (xato bo'lsa)."""
+    if not text or not text.strip():
+        return None
+    if lang != "uz":
+        # Muxlisa faqat O'zbek tilini qo'llab-quvvatlaydi
+        return None
+    if not MUXLISA_KEY:
+        logging.warning("MUXLISA_KEY yo'q — Muxlisa TTS ishlamaydi")
+        return None
+
+    # Muxlisa TTS endpoint (taxminiy — Muxlisa hujjatiga qarab to'g'irlanishi mumkin)
+    url = "https://service.muxlisa.uz/api/v2/tts"
+    out_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
+    try:
+        resp = requests.post(
+            url,
+            headers={"x-api-key": MUXLISA_KEY},
+            json={"text": text.strip()[:5000], "format": "mp3"},  # 5000 belgi limit (xavfsizlik)
+            timeout=180,
+        )
+        if resp.status_code != 200:
+            logging.warning(f"Muxlisa TTS xato: HTTP {resp.status_code} — {resp.text[:200]}")
+            try: os.remove(out_path)
+            except Exception: pass
+            return None
+        # Audio bytes saqlash
+        with open(out_path, "wb") as f:
+            f.write(resp.content)
+        if os.path.getsize(out_path) < 100:
+            try: os.remove(out_path)
+            except Exception: pass
+            return None
+        logging.info("✅ Muxlisa TTS muvaffaqiyatli ishladi")
+        return out_path
+    except Exception as e:
+        logging.warning(f"Muxlisa TTS so'rov xato: {e}")
+        try: os.remove(out_path)
+        except Exception: pass
+        return None
+
+
 def make_tts_edge(text, lang=None):
     """Matnni Edge TTS (Microsoft, bepul) bilan MP3 ga aylantiradi.
     Uzun matn 3000 belgili bo'laklarga ajratiladi va PARALLEL ishlanadi
@@ -1254,12 +1298,12 @@ def make_tts_openai(text, lang=None):
 
 def make_tts(text, lang=None, force_engine=None):
     """Matnni ovozli MP3 ga aylantiradi.
-    Strategiya (premium sifat):
-      • O'zbek (uz) → Edge TTS (Microsoft) — bepul, sifati yaxshi
-      • Boshqa tillar (ru/en/ar) → OpenAI TTS (premium, tabiiy ovoz)
-      • OpenAI yiqilsa yoki API_KEY yo'q → Edge TTS fallback
+    Strategiya:
+      • O'zbek (uz): OpenAI TTS → Edge TTS fallback → Muxlisa fallback
+      • Boshqa tillar (ru/en/ar): OpenAI TTS → Edge fallback
+      • Muxlisa AI faqat oxirgi chora (User talabi: 'open ai ishlolmasaginadan keyin')
 
-    force_engine: 'edge' yoki 'openai' — ixtiyoriy, sinov uchun.
+    force_engine: 'edge', 'openai', yoki 'muxlisa' — ixtiyoriy, sinov uchun.
     """
     if not text or not text.strip():
         return None
@@ -1271,8 +1315,10 @@ def make_tts(text, lang=None, force_engine=None):
         return make_tts_edge(text, lang)
     if force_engine == "openai":
         return make_tts_openai(text, lang) or make_tts_edge(text, lang)
+    if force_engine == "muxlisa":
+        return make_tts_muxlisa(text, lang) or make_tts_edge(text, lang)
 
-    # Default strategiya: chet tilda OpenAI, o'zbekda Edge
+    # === Boshqa tillar (ru/en/ar): OpenAI TTS premium → Edge fallback ===
     if lang in ("ru", "en", "ar") and OPENAI_API_KEY:
         try:
             path = make_tts_openai(text, lang)
@@ -1281,8 +1327,21 @@ def make_tts(text, lang=None, force_engine=None):
                 return path
         except Exception as e:
             logging.warning(f"OpenAI TTS yiqildi ({lang}), Edge fallback: {e}")
-    # O'zbek yoki OpenAI yiqilgan holatda — Edge TTS
-    return make_tts_edge(text, lang)
+        return make_tts_edge(text, lang)
+
+    # === O'zbek (uz): Edge TTS (bepul, sifatli) → Muxlisa fallback ===
+    # Edge TTS Uzbek native voice bor, sifati yaxshi
+    try:
+        path = make_tts_edge(text, lang)
+        if path:
+            return path
+        logging.warning("Edge TTS bo'sh natija qaytardi (uz)")
+    except Exception as e:
+        logging.warning(f"Edge TTS yiqildi (uz): {e}")
+
+    # Edge yiqilgan — Muxlisa fallback (faqat O'zbek uchun)
+    logging.info("Edge TTS yiqildi, Muxlisa TTS fallback (uz)...")
+    return make_tts_muxlisa(text, lang)
 
 
 def save_base64_audio(data, suffix='.webm'):
