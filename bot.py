@@ -2325,45 +2325,70 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
     results = []
     total = len(chunks_to_process)
     failed_chunks = []
-    try:
-        for idx, chunk_path in enumerate(chunks_to_process, 1):
-            if progress_cb:
-                try: progress_cb(idx, total)
-                except Exception: pass
+    # === [PARALLEL] 4 ta bo'lak bir vaqtda Whisper'ga yuboriladi (tezlik 4x) ===
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    chunk_results = {}   # {idx: chunk_text}
+    completed = {"count": 0}
+    completed_lock = threading.Lock()
 
-            # Bo'lak hajmini tekshirish (juda kichik bo'lsa Whisper rad qiladi)
-            try:
-                chunk_size_kb = os.path.getsize(chunk_path) / 1024
-            except Exception:
-                chunk_size_kb = 0
-            if chunk_size_kb < 5:  # 5 KB dan kichik bo'lsa skip
-                logging.warning(f"Bo'lak {idx} juda kichik ({chunk_size_kb:.1f}KB), o'tkazib yuborildi")
-                continue
+    def _process_one_chunk(idx_and_path):
+        idx, chunk_path = idx_and_path
+        try:
+            chunk_size_kb = os.path.getsize(chunk_path) / 1024
+        except Exception:
+            chunk_size_kb = 0
+        if chunk_size_kb < 5:
+            logging.warning(f"Bo'lak {idx} juda kichik ({chunk_size_kb:.1f}KB), o'tkazib yuborildi")
+            return idx, None, None
 
-            # Avval whisper-1 (ishonchli, so'zma-so'z), yiqilsa gpt-4o-transcribe fallback
-            chunk_offset_sec = (idx - 1) * WHISPER_CHUNK_SECONDS
-            chunk_text, err1 = _try_transcribe(
-                chunk_path, "whisper-1", source_lang, url, headers, chunk_offset_sec=chunk_offset_sec
+        chunk_offset_sec = (idx - 1) * WHISPER_CHUNK_SECONDS
+        # whisper-1 primary
+        chunk_text, err1 = _try_transcribe(
+            chunk_path, "whisper-1", source_lang, url, headers, chunk_offset_sec=chunk_offset_sec
+        )
+        if not chunk_text:
+            logging.warning(f"Bo'lak {idx}/{total} whisper-1 yiqildi: {err1}. gpt-4o-transcribe fallback...")
+            chunk_text, err2 = _try_transcribe(
+                chunk_path, "gpt-4o-transcribe", source_lang, url, headers
             )
             if not chunk_text:
-                logging.warning(f"Bo'lak {idx}/{total} whisper-1 yiqildi: {err1}. gpt-4o-transcribe'ga o'tamiz...")
-                chunk_text, err2 = _try_transcribe(
-                    chunk_path, "gpt-4o-transcribe", source_lang, url, headers
-                )
-                if not chunk_text:
-                    failed_chunks.append((idx, f"whisper-1: {err1} | gpt-4o: {err2}"))
-                    logging.error(f"Bo'lak {idx}/{total} IKKALA model yiqildi")
+                logging.error(f"Bo'lak {idx}/{total} IKKALA model yiqildi: {err1} | {err2}")
+                return idx, None, f"whisper-1: {err1} | gpt-4o: {err2}"
+        return idx, chunk_text, None
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {executor.submit(_process_one_chunk, (idx, chunk_path)): idx
+                       for idx, chunk_path in enumerate(chunks_to_process, 1)}
+            for future in as_completed(futures):
+                try:
+                    idx, chunk_text, err = future.result()
+                except Exception as e:
+                    idx = futures[future]
+                    chunk_text, err = None, str(e)[:200]
+
+                with completed_lock:
+                    completed["count"] += 1
+                    cur = completed["count"]
+                if progress_cb:
+                    try: progress_cb(cur, total)
+                    except Exception: pass
+
+                if chunk_text:
+                    chunk_results[idx] = chunk_text
+                elif err:
+                    failed_chunks.append((idx, err))
                     if failed_ranges_out is not None:
                         start_sec = (idx - 1) * WHISPER_CHUNK_SECONDS
                         end_sec = idx * WHISPER_CHUNK_SECONDS
-                        failed_ranges_out.append((start_sec, end_sec, f"{err1} / {err2}"))
-
-            if chunk_text:
-                results.append(chunk_text)
+                        failed_ranges_out.append((start_sec, end_sec, err))
     finally:
         if chunk_dir_to_cleanup:
             try: shutil.rmtree(chunk_dir_to_cleanup, ignore_errors=True)
             except Exception: pass
+
+    # Natijalarni TARTIBDA yig'amiz (idx bo'yicha)
+    results = [chunk_results[k] for k in sorted(chunk_results.keys())]
 
     # Agar BARCHA bo'laklar yiqilgan bo'lsa — xato qaytaramiz
     if not results and failed_chunks:
