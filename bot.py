@@ -2286,18 +2286,24 @@ def _format_failed_ranges_text(failed_ranges):
 
 def _make_http_progress_cb(user_id, message_id, base_label="🎙 Matn tayyorlanmoqda"):
     """HTTP/WebApp flow uchun progress callback — Telegram xabarini edit qilib turadi.
-    Misol: 'Matn tayyorlanmoqda 5/7 bo'lak...'
-    Rate-limited (2 sek), Telegram API'ni ko'p chaqirmaslik uchun."""
-    state = {"last": 0.0}
+    Bosqichlar:
+      cb(0, 0)  → "🎵 Audio tayyorlanmoqda..." (chunking bosqichi)
+      cb(c, N)  → "🎙 Matn tayyorlanmoqda c/N bo'lak..."
+    Rate-limited (1.5 sek)."""
+    state = {"last": 0.0, "last_text": ""}
     def cb(current, total):
-        now = time.time()
-        if now - state["last"] < 2:
-            return  # rate-limit
-        state["last"] = now
-        if total and total > 1:
+        if total and total > 0:
             text = f"{base_label} {current}/{total} bo'lak..."
         else:
-            text = f"{base_label}..."
+            text = "🎵 Audio fayl tayyorlanmoqda... (30-60 sek)"
+        # Bir xil matnni qayta yubormaymiz
+        if text == state["last_text"]:
+            return
+        now = time.time()
+        if now - state["last"] < 1.5 and current > 0:
+            return  # rate-limit (faqat oraliq chunks uchun)
+        state["last"] = now
+        state["last_text"] = text
         try:
             telegram_edit_message(user_id, message_id, text)
         except Exception as e:
@@ -2333,6 +2339,11 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
         orig_size_mb = 0
 
     logging.info(f"🎙 Whisper transkripsiya: {file_path} ({orig_size_mb:.1f}MB)")
+
+    # Audio tayyorlash bosqichi haqida user'ga xabar (chunking ham vaqt oladi)
+    if progress_cb:
+        try: progress_cb(0, 0)  # 0/0 = "audio tayyorlanmoqda" signali
+        except Exception: pass
 
     # Har doim split_audio_for_whisper chaqiramiz — u qayta kodlash va bo'laklashni hal qiladi
     chunks_to_process = split_audio_for_whisper(file_path, WHISPER_CHUNK_SECONDS)
@@ -2377,6 +2388,11 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
                 logging.error(f"Bo'lak {idx}/{total} IKKALA model yiqildi: {err1} | {err2}")
                 return idx, None, f"whisper-1: {err1} | gpt-4o: {err2}"
         return idx, chunk_text, None
+
+    # Bo'laklarga ajratish tugadi — userga xabar (0/N) ko'rsataylik
+    if progress_cb:
+        try: progress_cb(0, total)
+        except Exception: pass
 
     try:
         with ThreadPoolExecutor(max_workers=4) as executor:
