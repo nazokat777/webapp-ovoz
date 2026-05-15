@@ -163,7 +163,7 @@ last_transcripts = {}
 # === [REFERRAL] Do'st taklif qilish tizimi ===
 # Sozlash:
 REFERRAL_BONUS_MIN = 15        # Har taklif uchun har ikkalasiga +15 daqiqa
-MAX_REFERRALS_PER_USER = 5     # Bitta user max 5 ta odam taklif qila oladi (anti-abuse)
+MAX_REFERRALS_PER_USER = 3     # Bitta user max 3 ta odam taklif qila oladi (anti-abuse)
 # Ma'lumotlar:
 # {user_id: extra_min} — referral va boshqa bonus daqiqalar (tarif daqiqalariga qo'shiladi)
 user_bonus_minutes = {}
