@@ -1595,18 +1595,17 @@ def _get_whisper_prompt(source_lang):
     Bu so'zlar Whisper'ga 'shu mavzularda gap bo'ladi' deb signal beradi.
     Sifatni 30-40% oshiradi (ayniqsa o'zbek diniy/akademik matnlarda)."""
 
-    # O'zbek tili uchun keng kontekst (diniy, akademik, kundalik)
+    # O'zbek tili uchun kontekst — FAQAT LOTIN ALIFBOSI, oddiy so'zlar
+    # MUHIM: arabcha translit so'zlar (Bismillah, alayhissalom) prompt'da BO'LMASIN,
+    # chunki Whisper ularni ko'rsa, output'ni arab alifbosida qaytarishi mumkin.
     uz_prompt = (
-        "Assalomu alaykum. Bismillahir Rohmanir Rohim. "
-        "Alloh, payg'ambar sallallahu alayhi va sallam, salavot, sahobalar, "
-        "Muhammad alayhissalom, Qur'on oyatlari, hadis sharif, oyat. "
-        "Talab ilm, ustoz, shogird, madrasa, dars, kitob, fikr, mavzu. "
-        "Ilm, hifz, fahm, tafsir, fiqh, aqida, mazhab, shariat. "
-        "Imom Buxoriy, Imom Muslim, Imom Termiziy, Imom Abu Hanifa. "
-        "Toshkent, Samarqand, Buxoro, Andijon, Farg'ona, Namangan. "
-        "Yaxshi, yomon, kerak, mumkin, bo'ladi, qiladi, qildim, qilamiz. "
-        "O'zbek tili, o'zbekcha, lotin alifbosi, kirill alifbosi. "
-        "Salavot, du'o, zikr, sajda, namoz, ro'za, hajj."
+        "Bu o'zbek tilidagi yozuv. O'zbekcha lotin alifbosida yoziladi. "
+        "Salom, yaxshi, kerak, bo'lsin, qilamiz, o'tirgan, ko'rgan, gapirgan. "
+        "Toshkent, Samarqand, Buxoro, Andijon, Namangan, Farg'ona. "
+        "Maktab, dars, kitob, talaba, o'qituvchi, ilm, fikr, mavzu. "
+        "Bugun, kecha, ertaga, hozir, men, sen, biz, ular. "
+        "Apostrof bilan: o'zbek, g'oyat, qo'l, so'z, ko'rdim. "
+        "Sh, ch, ng tovushlari: shahar, chiroyli, ko'ngil."
     )
 
     # Rus tili uchun
