@@ -240,6 +240,18 @@ def _load_user_data():
                     user_info[int(k)] = v
             except (ValueError, TypeError):
                 pass
+        # === [TXT/PDF cache] last_transcripts — PDF/TXT tugma uchun ===
+        # 24 soatdan eski transkripsiyalar yuklanmaydi (xotira tejash)
+        try:
+            now_ts = time.time()
+            cutoff = now_ts - 24 * 3600
+            for k, v in (data.get("last_transcripts") or {}).items():
+                if isinstance(v, dict) and v.get("text"):
+                    ts = v.get("ts", 0)
+                    if ts and ts >= cutoff:
+                        last_transcripts[int(k)] = {"text": v["text"], "ts": ts}
+        except Exception as e:
+            logging.warning(f"last_transcripts yuklash xato: {e}")
         # === [REFERRAL] bonus daqiqalar va taklif tizimi ===
         for k, v in (data.get("user_bonus_minutes") or {}).items():
             try:
@@ -281,6 +293,12 @@ def _save_user_data():
                 "pending_translations": {str(k): v for k, v in pending_translations.items()},
                 # === [USERS] user_info ham saqlanadi (deploy'larda yo'qolmasligi uchun) ===
                 "user_info": {str(k): v for k, v in user_info.items()},
+                # === [TXT/PDF cache] last_transcripts (24 soat) ===
+                "last_transcripts": {
+                    str(k): {"text": v["text"], "ts": v.get("ts", 0)}
+                    for k, v in last_transcripts.items()
+                    if isinstance(v, dict) and v.get("text") and (time.time() - v.get("ts", 0)) < 24 * 3600
+                },
                 # === [REFERRAL] bonus daqiqalar va taklif tizimi ===
                 "user_bonus_minutes": {str(k): int(v) for k, v in user_bonus_minutes.items()},
                 "user_referrals": {str(k): int(v) for k, v in user_referrals.items()},
@@ -2722,6 +2740,7 @@ async def send_result(update, msg, text):
     # Matnni keyingi yuklab olishlar uchun saqlaymiz (PDF/TXT tugma)
     try:
         last_transcripts[int(user_id)] = {"text": text, "ts": time.time()}
+        _save_user_data()  # deploy'larda yo'qolmasin
     except Exception:
         pass
 
@@ -5326,6 +5345,7 @@ def _send_text_card(user_id, text, header="📝 <b>Matn:</b>"):
     """
     try:
         last_transcripts[int(user_id)] = {"text": text, "ts": time.time()}
+        _save_user_data()  # deploy'larda yo'qolmasin
     except Exception:
         pass
 
