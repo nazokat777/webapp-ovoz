@@ -1712,30 +1712,128 @@ def _clean_whisper_hallucination(text):
     return result
 
 
+def _dedupe_by_frequency(words, is_timestamp_fn=None, max_repeats=5):
+    """Agar bir ibora (1-3 so'z) butun matnda max_repeats martadan ko'p uchrasa,
+    qolgan takrorlarni o'chiramiz. Vaqt belgilari saqlanadi.
+
+    Misol: 'Malikul Mulk' butun matnda 20 marta uchrasa,
+    faqat birinchi 5 tasi qoladi, qolgan 15 tasi o'chiriladi.
+    """
+    if not words or len(words) < 20:
+        return words
+
+    is_ts = is_timestamp_fn or (lambda w: False)
+
+    # 1-3 so'zli ibora kombinatsiyalari uchun sanash
+    for window in [3, 2, 1]:
+        # Phrase frequency
+        phrase_count = {}
+        i = 0
+        while i < len(words) - window + 1:
+            phrase_parts = []
+            j = i
+            consumed = 0
+            while j < len(words) and consumed < window:
+                if not is_ts(words[j]):
+                    phrase_parts.append(words[j].lower().strip(".,;:!?\"'"))
+                    consumed += 1
+                j += 1
+            if consumed == window:
+                phrase = " ".join(phrase_parts)
+                if len(phrase) > 3:  # juda qisqa iboralarni o'tkazib yuborish
+                    phrase_count[phrase] = phrase_count.get(phrase, 0) + 1
+            i += 1
+
+        # Takror iboralarni topish
+        repeat_phrases = {p for p, c in phrase_count.items() if c > max_repeats}
+        if not repeat_phrases:
+            continue
+
+        # Endi takror iboralarni o'chiramiz (birinchi 'max_repeats' martagacha qoldiramiz)
+        seen_count = {p: 0 for p in repeat_phrases}
+        result = []
+        i = 0
+        while i < len(words):
+            # Vaqt belgisi — har doim qoldiramiz
+            if is_ts(words[i]):
+                result.append(words[i])
+                i += 1
+                continue
+            # Kandidat ibora
+            phrase_parts = []
+            j = i
+            consumed = 0
+            while j < len(words) and consumed < window:
+                if not is_ts(words[j]):
+                    phrase_parts.append(words[j].lower().strip(".,;:!?\"'"))
+                    consumed += 1
+                j += 1
+            if consumed == window:
+                phrase = " ".join(phrase_parts)
+                if phrase in repeat_phrases:
+                    seen_count[phrase] += 1
+                    if seen_count[phrase] > max_repeats:
+                        # O'chir — bu iboraga tegishli so'zlarni o'tkazib yuboramiz
+                        i = j
+                        continue
+            result.append(words[i])
+            i += 1
+        words = result
+
+    return words
+
+
 def _dedupe_repeated_words(text):
     """So'z/ibora takroridan tozalash.
     'yaqinlikka yaqinlikka yaqinlikka... yaqinlikka' → 'yaqinlikka'
     Bir xil so'z 3+ marta ketma-ket bo'lsa, 1 ta qoldiramiz.
-    Ibora (2-5 so'z) takrori ham aniqlanadi."""
+    Ibora (2-5 so'z) takrori ham aniqlanadi.
+
+    VAQT BELGILARI ([MM:SS]) tekshirishda e'tiborga olinmaydi — ular ajratuvchi
+    bo'lib turishi mumkin, lekin asl matn takror bo'lishi mumkin."""
     if not text:
         return text
+
+    # Vaqt belgilarini olib tashlab tekshirish uchun helper
+    import re as _re
+    def _is_timestamp(w):
+        """[12:34] yoki [1:23:45] formatdagi vaqt belgisi"""
+        return bool(_re.match(r'^\[\d{1,2}:\d{2}(:\d{2})?\]?$', w.strip(".,;:")))
+
     words = text.split()
     if len(words) < 10:
         return text
 
-    # 1. Bir so'z 3+ marta ketma-ket
+    # 1. Bir so'z 3+ marta ketma-ket (vaqt belgilarini hisoblamasdan)
     cleaned = []
     skipped = 0
+    # Vaqt belgilarisiz oldingi so'zlarni izlash uchun
+    def _last_non_ts(arr, n=2):
+        result = []
+        for x in reversed(arr):
+            if not _is_timestamp(x):
+                result.append(x)
+                if len(result) >= n:
+                    break
+        return list(reversed(result))
+
     for i, w in enumerate(words):
-        # Oxirgi 2 ta so'z bilan solishtirish
-        if (len(cleaned) >= 2 and
-            cleaned[-1].lower() == w.lower() and
-            cleaned[-2].lower() == w.lower()):
+        # Vaqt belgilari har doim saqlanadi (skip qilinmaydi)
+        if _is_timestamp(w):
+            cleaned.append(w)
+            continue
+        # Oldingi 2 ta non-timestamp so'z bilan solishtirish
+        prev = _last_non_ts(cleaned, 2)
+        if len(prev) >= 2 and prev[-1].lower() == w.lower() and prev[-2].lower() == w.lower():
             skipped += 1
             continue
         cleaned.append(w)
 
-    # 2. Ibora (2-4 so'z) takrori — masalan "Yaxshi yaxshi yaxshi yaxshi yaxshi"
+    # 2. Frequency-based filtering: agar bir ibora butun matnda 5+ marta takrorlansa,
+    #    har bir ortiqcha takrorni o'chiramiz (timestamp'lar e'tiborga olinmaydi)
+    cleaned = _dedupe_by_frequency(cleaned, _is_timestamp)
+
+    # 3. Ibora (2-4 so'z) takrori — masalan "Yaxshi yaxshi yaxshi yaxshi yaxshi"
     # yoki "Va men va men va men va men"
     for window in [4, 3, 2]:
         result = []
