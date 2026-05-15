@@ -137,7 +137,7 @@ ADMIN_USERNAMES = {"nazokat_571"}
 
 # Tariflar (O'zbek STT uchun)
 TARIFFS = {
-    "free":     {"name": "🌸 Bepul",         "minutes": 10,   "price": 0},       # 10 daq (testlik)
+    "free":     {"name": "🌸 Bepul",         "minutes": 5,    "price": 0},       # 5 daq (testlik)
     "basic":    {"name": "💎 Boshlang'ich", "minutes": 180,  "price": 60000},   # 3 soat — 60,000 so'm
     "standart": {"name": "⭐ Standart",     "minutes": 600,  "price": 150000},  # 10 soat — 150,000 so'm
     "premium":  {"name": "👑 Premium",      "minutes": 1500, "price": 300000},  # 25 soat — 300,000 so'm
@@ -162,7 +162,7 @@ user_info = {}
 last_transcripts = {}
 # === [REFERRAL] Do'st taklif qilish tizimi ===
 # Sozlash:
-REFERRAL_BONUS_MIN = 10        # Har taklif uchun har ikkalasiga +10 daqiqa
+REFERRAL_BONUS_MIN = 5         # Har taklif uchun har ikkalasiga +5 daqiqa
 MAX_REFERRALS_PER_USER = 3     # Bitta user max 3 ta odam taklif qila oladi (anti-abuse)
 # Ma'lumotlar:
 # {user_id: extra_min} — referral va boshqa bonus daqiqalar (tarif daqiqalariga qo'shiladi)
@@ -2936,7 +2936,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "(YouTube/Instagram havolasini bo'lish shart emas)\n"
         "• *Aniq, tiniq ovoz* yuboring (shovqin kam bo'lsin)\n"
         "• Bir vaqtda bitta odam gapirsa, sifat yaxshi chiqadi\n\n"
-        "🎁 *Bonus daqiqalar:* Do'st taklif qilsangiz ikkalangizgayam +10 daqiqa bepul!\n"
+        "🎁 *Bonus daqiqalar:* Do'st taklif qilsangiz ikkalangizgayam +5 daqiqa bepul!\n"
         "Tavsiya havolangizni olish: /tavsiya\n\n"
         "Quyidagi tugma orqali *Web ilovani* oching 👇".format(
             update.effective_user.first_name
