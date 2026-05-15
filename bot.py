@@ -1415,13 +1415,12 @@ def transcribe_unified(file_path, progress_cb=None, language="uz"):
     if language == "uz" and text:
         text = _cleanup_uzbek_transcript(text)
 
-    # 3) YAKUNIY xavfsizlik: agar GPT cleanup'dan keyin ham takrorlar qolgan bo'lsa
+    # 3) YAKUNIY xavfsizlik: takrorlarni yana tozalash (lekin matnni saqlab)
     if text:
         text = _dedupe_repeated_words(text)
-        # Va yana so'nggi marta hallucination tekshiruvi
+        # Hallucination bo'lsa log qoldiramiz, lekin matnni o'chirmaymiz
         if _is_chunk_hallucinated(text):
-            logging.warning("🚨 Yakuniy natija hallucination — bo'sh qaytariladi")
-            return ""
+            logging.warning("⚠️ Yakuniy natija qisman hallucination — agressive dedupe qilindi")
 
     return text
 # === [/WHISPER UNIFIED STT] =====================================================
@@ -1664,14 +1663,17 @@ def _clean_whisper_hallucination(text):
     Algoritm (2 darajada):
       1) Gap darajasida: agar bir gap ketma-ket 2 martadan ko'p takrorlansa
       2) So'z darajasida: agar bir so'z/ibora 5+ marta ketma-ket takrorlansa
+
+    MUHIM: bo'lakni butunlay o'chirmaydi (BOSHI YO'Q bo'lib qoladi).
+    Faqat takrorlarni olib tashlaydi.
     """
     if not text or len(text) < 100:
         return text
 
-    # === 0-daraja: agar butun bo'lak hallucinatsiya bo'lsa, bo'shga qaytaramiz ===
+    # === 0-daraja: hallucination bormi log uchun (lekin o'chirmaydi) ===
     if _is_chunk_hallucinated(text):
-        logging.warning("🚨 Bo'lak butunlay hallucinatsiya — bo'sh qaytariladi")
-        return ""
+        logging.warning("⚠️ Bo'lak hallucination borligi — agressive dedupe qilamiz")
+        # Bo'sh qaytarmaymiz! Faqat takrorlarni tozalaymiz
 
     # === 1-daraja: so'z/ibora darajasida tozalash ===
     text = _dedupe_repeated_words(text)
