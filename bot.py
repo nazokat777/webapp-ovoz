@@ -1415,6 +1415,14 @@ def transcribe_unified(file_path, progress_cb=None, language="uz"):
     if language == "uz" and text:
         text = _cleanup_uzbek_transcript(text)
 
+    # 3) YAKUNIY xavfsizlik: agar GPT cleanup'dan keyin ham takrorlar qolgan bo'lsa
+    if text:
+        text = _dedupe_repeated_words(text)
+        # Va yana so'nggi marta hallucination tekshiruvi
+        if _is_chunk_hallucinated(text):
+            logging.warning("🚨 Yakuniy natija hallucination — bo'sh qaytariladi")
+            return ""
+
     return text
 # === [/WHISPER UNIFIED STT] =====================================================
 
