@@ -1565,7 +1565,9 @@ WHISPER_SUPPORTED_LANGS = {
     "nl", "en", "et", "fi", "fr", "gl", "de", "el", "he", "hi", "hu", "is",
     "id", "it", "ja", "kn", "kk", "ko", "lv", "lt", "mk", "ms", "mr", "mi",
     "ne", "no", "fa", "pl", "pt", "ro", "ru", "sr", "sk", "sl", "es", "sw",
-    "sv", "tl", "ta", "th", "tr", "uk", "ur", "uz", "vi", "cy",  # 'uz' qo'shildi
+    "sv", "tl", "ta", "th", "tr", "uk", "ur", "vi", "cy",
+    # NOTE: 'uz' QO'SHMA! Whisper API "unsupported_language" HTTP 400 qaytaradi.
+    # O'zbek uchun avto-aniqlash + GPT-4o cleanup ishlatamiz.
 }
 WHISPER_MAX_FILE_MB = 22        # 22 MB dan oshganda bo'laklash (25 MB Whisper chegarasi - 3 MB margin)
 WHISPER_CHUNK_BITRATE = "64k"   # 64 kbps mono — 10 daqiqa ≈ 4.8 MB
@@ -3576,6 +3578,62 @@ async def admin_revoke_callback(update: Update, context: ContextTypes.DEFAULT_TY
         )
     except Exception as e:
         logging.warning(f"User'ga ({target_id}) tarif bekor qilish xabari yetmadi: {e}")
+
+
+async def openai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: OpenAI xarajatlari (bot ichki statistikasidan hisoblanadi).
+
+    Real xarajat OpenAI dashboard'da: https://platform.openai.com/usage
+    """
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+
+    # Jami daqiqa (audio'dan matn qilingan)
+    total_sec = sum(user_uzbek_usage.values())
+    total_min = total_sec / 60.0
+    active_users = sum(1 for s in user_uzbek_usage.values() if s > 0)
+
+    # OpenAI narxlari ($ AS OF 2026)
+    # Whisper-1 / gpt-4o-transcribe: $0.006/min
+    # GPT-4o cleanup (Uzbek post-process): ~10% qo'shimcha
+    # Translation (agar bo'lsa): ~$0.10/hour = $0.0017/min (sa'tlik nisbati)
+    PRICE_STT_PER_MIN = 0.006
+    PRICE_CLEANUP_OVERHEAD = 0.10   # 10% qo'shimcha
+    USD_TO_UZS = 12500              # taxminiy kurs (har oy yangilab tursin)
+
+    stt_cost_usd = total_min * PRICE_STT_PER_MIN
+    cleanup_cost_usd = stt_cost_usd * PRICE_CLEANUP_OVERHEAD
+    total_usd = stt_cost_usd + cleanup_cost_usd
+    total_uzs = total_usd * USD_TO_UZS
+
+    # Eng faol 5 user
+    top_users = sorted(user_uzbek_usage.items(), key=lambda x: -x[1])[:5]
+    top_lines = []
+    for uid, sec in top_users:
+        if sec <= 0:
+            continue
+        label = _user_label(uid)
+        top_lines.append(f"  • {label}: {sec/60:.1f} daq (~${sec/60*PRICE_STT_PER_MIN:.2f})")
+    top_text = "\n".join(top_lines) if top_lines else "  (hech kim yo'q)"
+
+    text = (
+        f"💰 *OpenAI xarajat (taxminiy)*\n\n"
+        f"📊 Jami foydalanish:\n"
+        f"  • Daqiqa: *{total_min:.0f}* daqiqa\n"
+        f"  • Faol user: *{active_users}* ta\n\n"
+        f"💸 Xarajat hisoblovi:\n"
+        f"  • STT (Whisper): ${stt_cost_usd:.2f}\n"
+        f"  • Cleanup (GPT-4o): ${cleanup_cost_usd:.2f}\n"
+        f"━━━━━━━━━━━━━━\n"
+        f"📌 *Jami: ${total_usd:.2f}* (≈ {total_uzs:,.0f} so'm)\n\n"
+        f"🔝 *Eng faol userlar:*\n{top_text}\n\n"
+        f"💡 *Eslatma:* Bu taxmiriy hisob. Real summa OpenAI dashboard'da:\n"
+        f"`platform.openai.com/usage`\n\n"
+        f"⚠️ Tarjima va PDF→audio xarajatlari bu yerda hisoblanmagan.\n"
+        f"   Agar ko'p ishlatilsa, +20-30% qo'shing."
+    )
+    await update.message.reply_text(text, parse_mode="Markdown")
 
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6370,6 +6428,7 @@ def main():
     app.add_handler(CommandHandler("tariflar", tariflar_cmd))
     app.add_handler(CommandHandler("buy", buy_cmd))
     app.add_handler(CommandHandler("tavsiya", tavsiya_cmd))
+    app.add_handler(CommandHandler("openai", openai_cmd))
     app.add_handler(CommandHandler("test", test_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
