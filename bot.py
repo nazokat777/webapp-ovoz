@@ -1568,6 +1568,59 @@ def _split_by_time(file_path, chunk_seconds, total_dur):
     return chunks
 
 
+def _is_output_quality_acceptable(text, audio_duration_sec=0):
+    """Yakuniy natija sifati tarif daqiqasini yechishga arziydimi tekshirish.
+
+    AGAR:
+      - Matn juda qisqa (5 daqiqali audio'dan 50 ta so'z kam) — yomon
+      - Bitta so'z 25%+ takrorlanadi — hallucination
+      - Unique so'zlar nisbati < 15% — hallucination
+    → False (sifat past, pul yechilmasin)
+    """
+    if not text or len(text.strip()) < 30:
+        return False
+
+    words = text.split()
+    if len(words) < 10:
+        return False
+
+    # Tekshiruv 1: davomiylik mos kelyaptimi?
+    # O'rtacha tezlik 130-150 so'z/daq, minimum 50 so'z/daq
+    if audio_duration_sec > 300:  # 5 daq+ audio
+        expected_min_words = int(audio_duration_sec / 60 * 30)  # 30 so'z/daq xavfsiz minimum
+        if len(words) < expected_min_words:
+            logging.warning(
+                f"⚠️ Sifat past: {audio_duration_sec/60:.1f} daq audio → {len(words)} so'z "
+                f"(kutilgan: {expected_min_words}+)"
+            )
+            return False
+
+    # Tekshiruv 2: unique so'z nisbati
+    unique_words = set(w.lower().strip(".,!?\"'") for w in words)
+    unique_ratio = len(unique_words) / len(words)
+    if unique_ratio < 0.15 and len(words) > 100:
+        logging.warning(f"⚠️ Sifat past: unique_ratio={unique_ratio:.2f}")
+        return False
+
+    # Tekshiruv 3: bitta so'z 25%+ ?
+    word_freq = {}
+    for w in words:
+        wl = w.lower().strip(".,!?\"'")
+        if len(wl) > 2:  # juda qisqa so'zlarni hisoblamaslik (va, bu, men)
+            word_freq[wl] = word_freq.get(wl, 0) + 1
+    if word_freq:
+        max_freq = max(word_freq.values())
+        if max_freq / len(words) > 0.25:
+            most_common = max(word_freq, key=word_freq.get)
+            logging.warning(
+                f"⚠️ Sifat past: '{most_common}' {max_freq}/{len(words)} "
+                f"({max_freq/len(words)*100:.0f}%)"
+            )
+            return False
+
+    return True
+
+
 def _is_chunk_hallucinated(text, chunk_duration_sec=600):
     """Bo'lak natijasi hallucination ekanini aniqlash.
     10 daqiqa audio uchun normal 800-1500 so'z bo'ladi.
@@ -5119,7 +5172,15 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
                 telegram_send_message(user_id, "🔤 Matn Kirill alifbosiga o'tkazilmoqda...")
                 text = convert_latin_to_cyrillic(text)
             _send_text_and_pdf(user_id, text)
-            success = True
+            # === SIFAT TEKSHIRUVI ===
+            if _is_output_quality_acceptable(text, actual_duration):
+                success = True
+            else:
+                telegram_send_message(
+                    user_id,
+                    "⚠️ Natija sifati past (audio hallucination).\n"
+                    "💚 Daqiqa hisobingizdan yechilmadi."
+                )
         else:
             telegram_send_message(
                 user_id,
@@ -5226,8 +5287,19 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
             except Exception: pass
         except Exception as e:
             logging.warning(f"Tarjima PDF xato (HTTP): {e}")
-        success = True  # matn yuborildi — to'lov haqli
-        # 4) Tarif daqiqalari — faqat success'da
+
+        # === SIFAT TEKSHIRUVI: yomon natija bo'lsa, daqiqa yechilmasin ===
+        if not _is_output_quality_acceptable(translated, actual_duration):
+            telegram_send_message(
+                user_id,
+                "⚠️ Natija sifati past (audio hallucinationga uchragan).\n"
+                "💚 Daqiqa hisobingizdan yechilmadi.\n\n"
+                "💡 Tavsiya: aniq, tiniq ovozli audio yuboring."
+            )
+            success = False
+        else:
+            success = True  # matn yuborildi — to'lov haqli
+        # 4) Tarif daqiqalari — faqat success va sifat OK bo'lsa
         if success and not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
     except Exception as e:
