@@ -1506,6 +1506,7 @@ def _uzbek_transcription_quality(text):
 def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges_out=None):
     """Audio/video'ni matnga aylantirish — FAQAT Whisper/gpt-4o-transcribe (OpenAI) orqali.
 
+    progress_cb(current, total) — har bo'lak tugagach chaqiriladi.
     failed_ranges_out: list pass qilsangiz, yiqilgan bo'lak vaqt oraliqlari to'ldiriladi:
         [(start_sec, end_sec, error), ...]
     """
@@ -1513,8 +1514,8 @@ def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges
         logging.warning("OPENAI_API_KEY yo'q — Muxlisa fallback ishlatiladi")
         return transcribe(file_path, progress_cb, language)
 
-    # 1) STT
-    text = transcribe_whisper(file_path, language, None, failed_ranges_out) or ""
+    # 1) STT — progress_cb ni transcribe_whisper'ga uzatamiz
+    text = transcribe_whisper(file_path, language, progress_cb, failed_ranges_out) or ""
 
     # 2) O'zbek matn — HAR DOIM GPT-4o bilan tozalash (TAK! TEXT darajasidagi sifat)
     if language == "uz" and text:
@@ -2281,6 +2282,27 @@ def _format_failed_ranges_text(failed_ranges):
         lines.append(f"• <code>{_format_time_range(s, e)}</code>")
     lines.append("\n💡 Bu qismlarni qayta olish uchun: audio'ni o'sha vaqtdan kesib qayta yuboring.")
     return "\n".join(lines)
+
+
+def _make_http_progress_cb(user_id, message_id, base_label="🎙 Matn tayyorlanmoqda"):
+    """HTTP/WebApp flow uchun progress callback — Telegram xabarini edit qilib turadi.
+    Misol: 'Matn tayyorlanmoqda 5/7 bo'lak...'
+    Rate-limited (2 sek), Telegram API'ni ko'p chaqirmaslik uchun."""
+    state = {"last": 0.0}
+    def cb(current, total):
+        now = time.time()
+        if now - state["last"] < 2:
+            return  # rate-limit
+        state["last"] = now
+        if total and total > 1:
+            text = f"{base_label} {current}/{total} bo'lak..."
+        else:
+            text = f"{base_label}..."
+        try:
+            telegram_edit_message(user_id, message_id, text)
+        except Exception as e:
+            logging.debug(f"Progress edit xato: {e}")
+    return cb
 
 
 def _send_failed_ranges_notice(user_id, failed_ranges):
@@ -5416,9 +5438,13 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
             if not check_limit_by_user_id(user_id, actual_duration):
                 return
 
-        telegram_send_message(user_id, "🎙 Web ilova yuborgan fayl tanilmoqda...")
+        status_msg_id = telegram_send_message_returning_id(user_id, "🎙 Matn tayyorlanmoqda...")
+        progress_cb = _make_http_progress_cb(user_id, status_msg_id) if status_msg_id else None
         failed_ranges = []
-        text = transcribe_unified(file_path, language=language, failed_ranges_out=failed_ranges)
+        text = transcribe_unified(file_path, progress_cb=progress_cb, language=language, failed_ranges_out=failed_ranges)
+        if status_msg_id:
+            try: telegram_delete_message(user_id, status_msg_id)
+            except Exception: pass
         if failed_ranges:
             _send_failed_ranges_notice(user_id, failed_ranges)
         if text and text.strip() and text.strip() != "Matn aniqlanmadi.":
@@ -5914,8 +5940,16 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
             return
 
         telegram_send_message(user_id, f"📌 Qabul qilindi:\n🔗 {url}")
-        telegram_send_message(user_id, "📥 Yuklanmoqda...")
-        audio_path = download_audio_from_url(url)
+        # Status xabari — edit qilib stage bo'yicha yangilanadi
+        status_msg_id = telegram_send_message_returning_id(user_id, "📥 Video yuklanmoqda...")
+        try:
+            audio_path = download_audio_from_url(url)
+        except Exception as e:
+            if status_msg_id:
+                telegram_edit_message(user_id, status_msg_id, f"❌ Video yuklanmadi: {str(e)[:200]}")
+            else:
+                telegram_send_message(user_id, f"❌ Video yuklanmadi: {str(e)[:200]}")
+            return
 
         # Yuklab olingach real davomiylikni aniqlaymiz
         actual_duration = 0
@@ -5925,21 +5959,32 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
             except Exception:
                 actual_duration = 0
             if not check_limit_by_user_id(user_id, actual_duration):
+                if status_msg_id:
+                    telegram_edit_message(user_id, status_msg_id, "❌ Limit yetmadi.")
                 return
 
-        telegram_send_message(user_id, "✅ Yuklanidi! 🎙 Matn tanilmoqda...")
+        if status_msg_id:
+            telegram_edit_message(user_id, status_msg_id, "✅ Yuklandi. 🎙 Matn tayyorlanmoqda...")
+        progress_cb = _make_http_progress_cb(user_id, status_msg_id) if status_msg_id else None
         failed_ranges = []
-        text = transcribe_unified(audio_path, language=language, failed_ranges_out=failed_ranges)
+        text = transcribe_unified(audio_path, progress_cb=progress_cb, language=language, failed_ranges_out=failed_ranges)
+
+        # Status xabarini o'chiramiz (matn yetkazilgach kerak emas)
+        if status_msg_id:
+            try:
+                telegram_delete_message(user_id, status_msg_id)
+            except Exception:
+                pass
+
         if failed_ranges:
             _send_failed_ranges_notice(user_id, failed_ranges)
         if text and text.strip() != "Matn aniqlanmadi.":
-            # === [ALIFBO] Kirill so'ralsa o'tkazamiz ===
             if output_alphabet == "cyrillic":
                 telegram_send_message(user_id, "🔤 Matn Kirill alifbosiga o'tkazilmoqda...")
                 text = convert_latin_to_cyrillic(text)
             _send_text_and_pdf(user_id, text)
         else:
-            telegram_send_message(user_id, "Matn aniqlanmadi.")
+            telegram_send_message(user_id, "❌ Matn aniqlanmadi (audio sifati past bo'lishi mumkin).")
 
         if not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration)
