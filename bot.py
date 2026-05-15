@@ -1598,6 +1598,41 @@ def _clean_whisper_hallucination(text):
     return result
 
 
+def _format_text_with_timestamps(segments, chunk_offset_sec=0, marker_interval=30):
+    """Whisper segmentlarini har 30 sek belgi bilan formatlash.
+    Misol: '[00:00] Salom... [00:30] Bugun... [01:00] Ko'rib chiqamiz...'
+
+    segments: Whisper verbose_json'dan kelgan segmentlar ro'yxati
+    chunk_offset_sec: bu bo'lakning butun audio'da boshlanish vaqti (sekundlar)
+    marker_interval: belgi qo'yiladigan interval (default: har 30 sek)
+    """
+    if not segments:
+        return ""
+
+    parts = []
+    next_marker_at = 0  # keyingi belgi qachon qo'yilishi
+    last_marker_sec = -marker_interval
+
+    for seg in segments:
+        seg_start = chunk_offset_sec + (seg.get("start") or 0)
+        seg_text = (seg.get("text") or "").strip()
+        if not seg_text:
+            continue
+
+        # Belgi qo'yish kerakmi?
+        if seg_start >= last_marker_sec + marker_interval:
+            # MM:SS formatda
+            mins = int(seg_start // 60)
+            secs = int(seg_start % 60)
+            timestamp = f"[{mins:02d}:{secs:02d}]"
+            parts.append(timestamp)
+            last_marker_sec = seg_start - (seg_start % marker_interval)
+
+        parts.append(seg_text)
+
+    return " ".join(parts)
+
+
 def _cleanup_uzbek_transcript(text):
     """O'zbek transkripsiyani GPT-4o bilan tozalash — TAK! TEXT darajasidagi sifat.
 
@@ -1798,36 +1833,34 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None):
             # 3 marta urinish (retry) — HTTP 400/429/500 uchun
             last_error = None
             chunk_text = None
+            chunk_offset_sec = (idx - 1) * WHISPER_CHUNK_SECONDS  # bu bo'lakning audioda boshlanish vaqti
             for attempt in range(3):
                 try:
                     with open(chunk_path, "rb") as f:
                         files = {"file": (os.path.basename(chunk_path), f, "application/octet-stream")}
-                        # === Yangi gpt-4o-transcribe modeli — whisper-1 dan 2x aniqroq ===
-                        # O'zbek + diniy matnlar uchun sezilarli yaxshilanish
+                        # whisper-1 + verbose_json — segmentlar (timestamps) uchun
                         data = {
-                            "model": "gpt-4o-transcribe",
-                            "response_format": "json",  # gpt-4o-transcribe verbose_json'ni qo'llab-quvvatlamaydi
+                            "model": "whisper-1",
+                            "response_format": "verbose_json",
                             "prompt": _get_whisper_prompt(source_lang),
                             "temperature": 0.0,
+                            "timestamp_granularities[]": "segment",
                         }
                         if source_lang and source_lang != "auto" and source_lang in WHISPER_SUPPORTED_LANGS:
                             data["language"] = source_lang
                         resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
 
-                        # Agar yangi model mavjud bo'lmasa, eski whisper-1 ga qaytamiz
-                        if resp.status_code in (404, 400) and "gpt-4o-transcribe" in (resp.text or ""):
-                            logging.info("gpt-4o-transcribe yo'q, whisper-1 ga qaytamiz")
-                            data["model"] = "whisper-1"
-                            data["response_format"] = "verbose_json"
-                            with open(chunk_path, "rb") as f2:
-                                files2 = {"file": (os.path.basename(chunk_path), f2, "application/octet-stream")}
-                                resp = requests.post(url, headers=headers, files=files2, data=data, timeout=600)
-
                     if resp.status_code == 200:
                         result = resp.json()
-                        text = (result.get("text") or "").strip()
-                        if text:
-                            chunk_text = _clean_whisper_hallucination(text)
+                        # Segments bilan ishlash — har 30 sek belgi qo'yamiz
+                        segments = result.get("segments") or []
+                        if segments:
+                            chunk_text = _format_text_with_timestamps(segments, chunk_offset_sec)
+                        else:
+                            # Fallback: oddiy matn
+                            chunk_text = (result.get("text") or "").strip()
+                        if chunk_text:
+                            chunk_text = _clean_whisper_hallucination(chunk_text)
                         else:
                             logging.info(f"Bo'lak {idx} bo'sh natija (audio jim?)")
                         break  # muvaffaqiyat
