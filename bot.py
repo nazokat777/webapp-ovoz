@@ -5167,20 +5167,28 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
         telegram_send_message(user_id, "🎙 Web ilova yuborgan fayl tanilmoqda...")
         text = transcribe_unified(file_path, language=language)
         if text and text.strip() and text.strip() != "Matn aniqlanmadi.":
-            # === [ALIFBO] Kirill so'ralsa matnni o'tkazamiz ===
-            if output_alphabet == "cyrillic":
-                telegram_send_message(user_id, "🔤 Matn Kirill alifbosiga o'tkazilmoqda...")
-                text = convert_latin_to_cyrillic(text)
-            _send_text_and_pdf(user_id, text)
-            # === SIFAT TEKSHIRUVI ===
-            if _is_output_quality_acceptable(text, actual_duration):
-                success = True
-            else:
+            # === SIFAT TEKSHIRUVI — YUBORISHDAN OLDIN ===
+            if not _is_output_quality_acceptable(text, actual_duration):
+                # Yomon natija — UMUMAN YUBORILMAYDI
                 telegram_send_message(
                     user_id,
-                    "⚠️ Natija sifati past (audio hallucination).\n"
-                    "💚 Daqiqa hisobingizdan yechilmadi."
+                    "⚠️ *Audio sifat past — to'liq matnga aylantirib bo'lmadi*\n\n"
+                    "Bot bu audioda hallucination (xato takrorlar) aniqladi va "
+                    "buzilgan natijani sizga yubormadi.\n\n"
+                    "💚 Daqiqa hisobingizdan yechilmadi.\n\n"
+                    "💡 *Yaxshi natija uchun:*\n"
+                    "• Audio aniq, tiniq bo'lsin (shovqin kam)\n"
+                    "• Jim joylar (sukunat) ko'p bo'lmasin\n"
+                    "• Bir vaqtda bitta odam gapirsin\n"
+                    "• Mikrofon yaqinroq bo'lsin"
                 )
+            else:
+                # === [ALIFBO] Kirill so'ralsa matnni o'tkazamiz ===
+                if output_alphabet == "cyrillic":
+                    telegram_send_message(user_id, "🔤 Matn Kirill alifbosiga o'tkazilmoqda...")
+                    text = convert_latin_to_cyrillic(text)
+                _send_text_and_pdf(user_id, text)
+                success = True
         else:
             telegram_send_message(
                 user_id,
@@ -5268,37 +5276,43 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
                 "❌ Tarjima bo'sh qaytdi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
             )
             return
-        # 3) Natija — matn + PDF
-        src_label = TRANSLATION_LANGS.get(source_lang, source_lang)
-        tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
-        # === [ALIFBO] target=uz va Kirill so'ralsa, kirill alifbosiga o'tkazamiz ===
-        if output_alphabet == "cyrillic" and target_lang == "uz":
-            progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
-            translated = convert_latin_to_cyrillic(translated)
-            tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
-        telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
-        for i in range(0, len(translated), 4000):
-            telegram_send_message(user_id, translated[i:i+4000])
-        # PDF (best-effort — agar PDF buzilsa ham matn yetkazilgan, hisoblanadi)
-        try:
-            pdf_path = make_pdf(translated, f"Tarjima — {tgt_label}")
-            telegram_send_document(user_id, pdf_path, filename=f"tarjima_{target_lang}.pdf", caption=f"📎 Tarjima PDF ({tgt_label})")
-            try: os.remove(pdf_path)
-            except Exception: pass
-        except Exception as e:
-            logging.warning(f"Tarjima PDF xato (HTTP): {e}")
-
-        # === SIFAT TEKSHIRUVI: yomon natija bo'lsa, daqiqa yechilmasin ===
+        # === SIFAT TEKSHIRUVI: YUBORISHDAN OLDIN ===
         if not _is_output_quality_acceptable(translated, actual_duration):
             telegram_send_message(
                 user_id,
-                "⚠️ Natija sifati past (audio hallucinationga uchragan).\n"
+                "⚠️ *Audio sifat past — tarjima qila olmadim*\n\n"
+                "Bot bu audioda hallucination (xato takrorlar) aniqladi va "
+                "buzilgan natijani sizga yubormadi.\n\n"
                 "💚 Daqiqa hisobingizdan yechilmadi.\n\n"
-                "💡 Tavsiya: aniq, tiniq ovozli audio yuboring."
+                "💡 *Yaxshi natija uchun:*\n"
+                "• Audio aniq, tiniq bo'lsin (shovqin kam)\n"
+                "• Jim joylar (sukunat) ko'p bo'lmasin\n"
+                "• Bir vaqtda bitta odam gapirsin\n"
+                "• Mikrofon yaqinroq bo'lsin"
             )
             success = False
         else:
-            success = True  # matn yuborildi — to'lov haqli
+            # 3) Natija — matn + PDF
+            src_label = TRANSLATION_LANGS.get(source_lang, source_lang)
+            tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
+            # === [ALIFBO] target=uz va Kirill so'ralsa, kirill alifbosiga o'tkazamiz ===
+            if output_alphabet == "cyrillic" and target_lang == "uz":
+                progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
+                translated = convert_latin_to_cyrillic(translated)
+                tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
+            telegram_send_message(user_id, f"🌐 Tarjima ({src_label} → {tgt_label}):")
+            for i in range(0, len(translated), 4000):
+                telegram_send_message(user_id, translated[i:i+4000])
+            # PDF (best-effort)
+            try:
+                pdf_path = make_pdf(translated, f"Tarjima — {tgt_label}")
+                telegram_send_document(user_id, pdf_path, filename=f"tarjima_{target_lang}.pdf", caption=f"📎 Tarjima PDF ({tgt_label})")
+                try: os.remove(pdf_path)
+                except Exception: pass
+            except Exception as e:
+                logging.warning(f"Tarjima PDF xato (HTTP): {e}")
+            success = True
+
         # 4) Tarif daqiqalari — faqat success va sifat OK bo'lsa
         if success and not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
