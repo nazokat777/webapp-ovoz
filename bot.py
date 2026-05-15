@@ -479,10 +479,18 @@ def download_audio_from_url(url):
         # 4) cookies'siz oddiy (default)
         attempts = []
         if is_youtube:
+            # Bot detection'ni chetlab o'tish uchun har xil strategiyalar.
+            # YouTube datacenter IP'larni bloklaydi — turli player_client'lar
+            # boshqacha API endpoint'larga so'rov yuboradi.
             attempts = [
                 {"use_cookies": True,  "player_client": None},
                 {"use_cookies": True,  "player_client": "android"},
+                {"use_cookies": True,  "player_client": "mweb"},
+                {"use_cookies": False, "player_client": "mweb"},
+                {"use_cookies": False, "player_client": "tv_embedded"},
+                {"use_cookies": False, "player_client": "tv"},
                 {"use_cookies": False, "player_client": "android,web"},
+                {"use_cookies": False, "player_client": "ios"},
                 {"use_cookies": False, "player_client": "web_safari"},
                 {"use_cookies": False, "player_client": None},
             ]
