@@ -162,7 +162,7 @@ user_info = {}
 last_transcripts = {}
 # === [REFERRAL] Do'st taklif qilish tizimi ===
 # Sozlash:
-REFERRAL_BONUS_MIN = 15        # Har taklif uchun har ikkalasiga +15 daqiqa
+REFERRAL_BONUS_MIN = 10        # Har taklif uchun har ikkalasiga +10 daqiqa
 MAX_REFERRALS_PER_USER = 3     # Bitta user max 3 ta odam taklif qila oladi (anti-abuse)
 # Ma'lumotlar:
 # {user_id: extra_min} — referral va boshqa bonus daqiqalar (tarif daqiqalariga qo'shiladi)
@@ -378,7 +378,7 @@ def add_user_usage(user_id, seconds):
 
 def _try_claim_referral_bonus(user_id):
     """User real foydalanish qilgach, taklif bonusi'ni faollashtirish.
-    Bonus shu yerda beriladi (har ikkalasiga +15 daqiqa).
+    Bonus shu yerda beriladi (har ikkalasiga +REFERRAL_BONUS_MIN daqiqa).
 
     Shartlar:
     - user_id taklif qilingan bo'lishi kerak (user_referrals'da bor)
@@ -2936,7 +2936,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "(YouTube/Instagram havolasini bo'lish shart emas)\n"
         "• *Aniq, tiniq ovoz* yuboring (shovqin kam bo'lsin)\n"
         "• Bir vaqtda bitta odam gapirsa, sifat yaxshi chiqadi\n\n"
-        "🎁 *Bonus daqiqalar:* Do'st taklif qilsangiz ikkalangizgayam +15 daqiqa bepul!\n"
+        "🎁 *Bonus daqiqalar:* Do'st taklif qilsangiz ikkalangizgayam +10 daqiqa bepul!\n"
         "Tavsiya havolangizni olish: /tavsiya\n\n"
         "Quyidagi tugma orqali *Web ilovani* oching 👇".format(
             update.effective_user.first_name
