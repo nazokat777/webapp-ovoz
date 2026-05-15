@@ -2606,9 +2606,13 @@ async def process_url(update, context, url, language="uz"):
         await send_result(update, msg, "[TEST REJIMI] Bu sahta natija. URL yuklanmadi, Muxlisa chaqirilmadi.")
         return
 
-    msg = await update.message.reply_text(
-        f"📥 Video yuklanmoqda...\n🔗 {url[:50]}\n\nBiroz sabr qiling..."
+    # Doimiy xabar — URL chatda turaveradi, edit bo'lmaydi
+    await update.message.reply_text(
+        f"📌 Qabul qilindi:\n🔗 {url}",
+        disable_web_page_preview=False,
     )
+    # Progress xabari — yuklanish/transkripsiya jarayoni shu yerda edit bo'ladi
+    msg = await update.message.reply_text("📥 Yuklanmoqda...\n\nBiroz sabr qiling...")
     audio_path = None
     actual_duration = 0
     try:
@@ -5492,6 +5496,7 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
         # Limit dastlabki tekshiruvi
         if not check_limit_by_user_id(user_id, 0):
             return
+        telegram_send_message(user_id, f"📌 Qabul qilindi:\n🔗 {url}")
         telegram_send_message(user_id, "⏳ Biroz kuting, tarjima qilinmoqda...")
         # 1) Video yuklab olish
         try:
@@ -5592,7 +5597,8 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
         if not check_limit_by_user_id(user_id, 0):
             return
 
-        telegram_send_message(user_id, f"📥 Video yuklanmoqda...\n🔗 {url[:80]}")
+        telegram_send_message(user_id, f"📌 Qabul qilindi:\n🔗 {url}")
+        telegram_send_message(user_id, "📥 Yuklanmoqda...")
         audio_path = download_audio_from_url(url)
 
         # Yuklab olingach real davomiylikni aniqlaymiz
