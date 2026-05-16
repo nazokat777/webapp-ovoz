@@ -4128,8 +4128,75 @@ async def paid_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def _send_chek_for_manual_approval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """User 'Men to'ladim' bosmasdan chek yuborganda — adminga manual tarif
+    tanlash imkoniyati bilan yuboramiz. Admin tarif tugmalaridan birini bosadi."""
+    user = update.effective_user
+    if not user:
+        return
+    if not ADMIN_CHAT_ID["id"]:
+        await update.message.reply_text(
+            "✅ Chek qabul qilindi.\n\n"
+            "⚠️ Lekin tarifni avval `/buy` orqali tanlashingiz kerak edi.\n"
+            "Iltimos /buy yozing va tarif tanlang."
+        )
+        return
+
+    photo = update.message.photo[-1] if update.message.photo else None
+    if not photo:
+        return
+
+    username_raw = f"@{user.username}" if user.username else (user.first_name or "noma'lum")
+    caption = (
+        f"⚠️ *Manual tasdiqlash kerak*\n\n"
+        f"👤 Foydalanuvchi: {username_raw}\n"
+        f"🆔 ID: `{user.id}`\n\n"
+        f"User chek yubordi LEKIN tarif tanlamagan.\n"
+        f"Quyidagi tugmalardan tarifni tanlang va tasdiqlang:"
+    )
+
+    # Faqat sotuvchi tariflar uchun tugma
+    visible_keys = ["basic", "standart", "premium", "pro_standart", "pro_premium", "pro_max"]
+    buttons = []
+    for key in visible_keys:
+        if key not in TARIFFS or TARIFFS[key].get("price", 0) == 0:
+            continue
+        t = TARIFFS[key]
+        label = f"✅ {t['name']} • {t['price']:,} so'm"
+        buttons.append([InlineKeyboardButton(label, callback_data=f"approve:{user.id}:{key}")])
+    buttons.append([InlineKeyboardButton("❌ Rad etish", callback_data=f"reject:{user.id}:manual")])
+
+    try:
+        await context.bot.send_photo(
+            chat_id=ADMIN_CHAT_ID["id"],
+            photo=photo.file_id,
+            caption=caption,
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(buttons),
+        )
+    except Exception as e:
+        logging.error(f"Manual chek admin'ga yuborishda xato: {e}")
+        # Fallback: Markdown'siz
+        try:
+            await context.bot.send_photo(
+                chat_id=ADMIN_CHAT_ID["id"],
+                photo=photo.file_id,
+                caption=caption.replace("*", "").replace("`", ""),
+                reply_markup=InlineKeyboardMarkup(buttons),
+            )
+        except Exception as e2:
+            logging.error(f"Manual chek (fallback) ham yiqildi: {e2}")
+            return
+
+    await update.message.reply_text(
+        "✅ Chek qabul qilindi.\n\n"
+        "Admin tekshirib tarif beradi. Odatda 5-30 daqiqa ichida xabar olasiz."
+    )
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """User chek (rasm) yuborganda — agar to'lov kutilayotgan bo'lsa adminga uzatamiz."""
+    """User chek (rasm) yuborganda — agar to'lov kutilayotgan bo'lsa adminga uzatamiz.
+    Agar user 'Men to'ladim' bosmagan bo'lsa ham — adminga manual tasdiqlash uchun yuboramiz."""
     user_id = update.effective_user.id if update.effective_user else None
     # Atomik pop — bir vaqtning o'zida ikkita rasm yuborilsa, faqat bittasi qabul qilinadi
     tariff_key = None
@@ -4139,8 +4206,9 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not tariff_key and user_id in pending_payments:
             tariff_key = pending_payments.pop(user_id, None)
     if not tariff_key or tariff_key not in TARIFFS:
-        # Boshqa rasm yuborilgan — javob bermaymiz (o'tkazib yuboramiz)
-        logging.info(f"📸 Photo (chek emas) user_id={user_id} — pending_payments'da yo'q")
+        # User 'Men to'ladim' bosmasdan chek yuborgan bo'lishi mumkin —
+        # adminga manual tarif tanlash bilan yuboramiz (xato bo'lib qolmasin)
+        await _send_chek_for_manual_approval(update, context)
         return
     # State allaqachon olib tashlandi — faylga yozish (deploy'da yo'qolmasligi uchun)
     _save_user_data()
@@ -4249,9 +4317,11 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
     except ValueError:
         return
     tariff_key = parts[2]
-    if tariff_key not in TARIFFS:
+    # Reject uchun tariff_key kerak emas, ammo approve uchun TARIFFS'da bo'lishi shart
+    if action == "approve" and tariff_key not in TARIFFS:
+        await query.answer("❌ Bu tarif endi mavjud emas.", show_alert=True)
         return
-    t = TARIFFS[tariff_key]
+    t = TARIFFS.get(tariff_key, {"name": "tarif", "minutes": 0, "price": 0})
 
     async def _update_admin_message(suffix):
         """Admin xabarini yangilash — caption yoki text, qaysi mavjud bo'lsa."""
