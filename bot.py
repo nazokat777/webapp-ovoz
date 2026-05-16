@@ -63,7 +63,9 @@ GOOGLE_LANG = {
 _sr_recognizer = sr.Recognizer()
 
 BOT_TOKEN   = os.getenv("BOT_TOKEN", "8502384684:AAETKbx4YBtiQ9W7PRTWUeVumwwnG-lH9R8")
-# MUXLISA_KEY olib tashlandi — Muxlisa AI ishlatilmaydi (cho'ntak xavfsizligi)
+# Muhlisa AI — Pro Uzbek tarifi uchun (premium sifat, Uzbek native STT)
+# Bu kalitni Railway env vars'ga MUXLISA_KEY nomi bilan qo'shish kerak.
+MUXLISA_KEY = os.getenv("MUXLISA_KEY", "")
 
 # To'lov ma'lumotlari (Railway env variable orqali kiritiladi — kodga qo'yilmaydi!)
 PAYMENT_CARD = os.getenv("PAYMENT_CARD", "")
@@ -117,8 +119,9 @@ WEBAPP_URL = os.getenv("WEBAPP_URL", "https://botch-engaging-mustang.ngrok-free.
 # Railway/Heroku PORT env, lokal sinov uchun HTTP_PORT yoki default 8000
 HTTP_PORT  = int(os.getenv("HTTP_PORT") or os.getenv("PORT") or 8000)
 
-# MUXLISA_URL olib tashlandi — Muxlisa STT ishlatilmaydi.
-# Eski legacy konstantalar (boshqa joylar uchun zarur bo'lishi mumkin)
+# Muhlisa AI STT endpoint — Pro Uzbek tarifi uchun
+MUXLISA_URL = "https://service.muxlisa.uz/api/v2/stt"
+# Muhlisa cheklovi: 60 sek/request → 50 sek bo'laklar (xavfsizlik buferi)
 CHUNK_SECONDS = 50
 OVERLAP_SECONDS = 2
 
@@ -135,12 +138,15 @@ ADMIN_USERNAMES = {"nazokat_571"}
 
 # Tariflar (O'zbek STT uchun)
 TARIFFS = {
-    "free":     {"name": "🌸 Bepul",         "minutes": 5,    "price": 0},       # 5 daq (testlik)
-    "basic":    {"name": "💎 Boshlang'ich", "minutes": 180,  "price": 60000},   # 3 soat — 60,000 so'm
-    "standart": {"name": "⭐ Standart",     "minutes": 600,  "price": 150000},  # 10 soat — 150,000 so'm
-    "premium":  {"name": "👑 Premium",      "minutes": 1500, "price": 300000},  # 25 soat — 300,000 so'm
-    # Eski tariflar — backward compat (eski paid userlar uchun)
-    "pro":      {"name": "💎 Pro",          "minutes": 600,  "price": 500000}, # eski, mavjud paid userlar uchun
+    "free":           {"name": "🌸 Bepul",         "minutes": 5,    "price": 0},
+    # === ODDIY tarif (OpenAI Whisper — arzon, har tilda ishlaydi) ===
+    "basic":          {"name": "💚 Boshlang'ich", "minutes": 180,  "price": 60000},   # 3 soat
+    "standart":       {"name": "💙 Standart",     "minutes": 600,  "price": 150000},  # 10 soat
+    "premium":        {"name": "💜 Premium",      "minutes": 1500, "price": 300000},  # 25 soat
+    # === PRO tarif (Muhlisa AI — native Uzbek, sifat eng yuqori) ===
+    "pro_standart":   {"name": "⭐ Pro Standart", "minutes": 180,  "price": 170000},  # 3 soat
+    "pro_premium":    {"name": "👑 Pro Premium",  "minutes": 360,  "price": 300000},  # 6 soat
+    "pro_max":        {"name": "💎 Pro Pro",      "minutes": 600,  "price": 500000},  # 10 soat
 }
 
 # Foydalanuvchi xarajatlarini saqlash {user_id: jami_soniya}
@@ -445,15 +451,35 @@ def format_tariffs_text():
     lines.append("Tarif daqiqalari barcha xizmatlarga sarflanadi:")
     lines.append("• 🎤 Audio/video → matn (har qanday tilda)")
     lines.append("• 📄 PDF → Audio (TTS)")
-    lines.append("• 📝 Matn → Ovoz (TTS)")
     lines.append("")
-    for _, t in TARIFFS.items():
+
+    def _fmt(key):
+        if key not in TARIFFS:
+            return None
+        t = TARIFFS[key]
         mins = t["minutes"]
         hrs_str = f" ({mins // 60} soat)" if mins >= 60 else ""
         if t["price"] == 0:
-            lines.append(f"{t['name']} — *{mins} daqiqa/oy* — BEPUL")
-        else:
-            lines.append(f"{t['name']} — *{mins} daqiqa{hrs_str}* — *{t['price']:,} so'm*")
+            return f"{t['name']} — *{mins} daqiqa* — BEPUL"
+        return f"{t['name']} — *{mins} daqiqa{hrs_str}* — *{t['price']:,} so'm*"
+
+    # Bepul
+    free_line = _fmt("free")
+    if free_line:
+        lines.append(free_line)
+    # Oddiy guruh
+    lines.append("\n🌿 *Oddiy tarif* (Whisper — universal):")
+    for k in ("basic", "standart", "premium"):
+        line = _fmt(k)
+        if line:
+            lines.append(line)
+    # Pro guruh
+    lines.append("\n✨ *Pro tarif* (Muhlisa AI — Uzbek sifat eng yuqori):")
+    for k in ("pro_standart", "pro_premium", "pro_max"):
+        line = _fmt(k)
+        if line:
+            lines.append(line)
+
     lines.append("\n💎 Tarif sotib olish uchun pastdagi tugmani bosing 👇")
     return "\n".join(lines)
 
@@ -804,10 +830,149 @@ def split_audio(wav_path):
     return chunks
 
 
-"""
-Eski Muxlisa/Google STT chain olib tashlandi (user talabi: cho'ntak xavfsizligi).
-Endi STT faqat OpenAI Whisper orqali (transcribe_whisper / transcribe_unified).
-"""
+# === [PRO UZBEK STT] — Muhlisa AI orqali Uzbek native STT ===
+# Faqat "pro_uz" tarifidagi userlar uchun ishlatiladi (user-facing nom: "Pro Uzbek").
+# 60 sek/request limit — 50 sek chunklarga ajratamiz.
+def _do_muxlisa_request(path, timeout=120):
+    """Muhlisa STT API'ga audio bo'lakni yuboradi.
+    Returns: requests.Response or raises."""
+    with open(path, "rb") as f:
+        return requests.post(
+            MUXLISA_URL,
+            headers={"x-api-key": MUXLISA_KEY},
+            files=[("audio", ("audio.wav", f, "audio/wav"))],
+            data={"language": "uz"},
+            timeout=timeout,
+        )
+
+
+def _transcribe_chunk_muhlisa(chunk_path, max_retries=3):
+    """Bitta bo'lakni Muhlisa AI orqali transkripsiya qiladi."""
+    last_error = None
+    timeouts = [60, 90, 120]
+    for attempt in range(max_retries):
+        timeout = timeouts[min(attempt, len(timeouts) - 1)]
+        try:
+            response = _do_muxlisa_request(chunk_path, timeout)
+            if response.status_code == 200:
+                return (response.json().get("text") or "").strip(), None
+            err_text = response.text or ""
+            err_lower = err_text.lower()
+            if response.status_code in (401, 402, 403) or any(
+                k in err_lower for k in ("balance", "insufficient", "credit", "quota", "unauthorized", "forbidden")
+            ):
+                # Fatal — retry foydasiz
+                return None, f"HTTP {response.status_code}: {err_text[:200]}"
+            last_error = f"HTTP {response.status_code}"
+        except requests.exceptions.Timeout:
+            last_error = f"Timeout ({timeout}s)"
+        except Exception as e:
+            last_error = str(e)[:200]
+        if attempt < max_retries - 1:
+            time.sleep(1 + attempt)
+    return None, last_error or "Noma'lum xato"
+
+
+def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
+    """Muhlisa AI orqali Uzbek audio'ni matnga aylantirish.
+    Bo'lak hajmi: 50 sek (Muhlisa 60-sek limitiga moslashish uchun).
+    progress_cb(current, total) — har bo'lak tugagach.
+    failed_ranges_out: list — yiqilgan vaqt oraliqlari to'ldiriladi.
+    """
+    if not MUXLISA_KEY:
+        raise Exception("MUXLISA_KEY sozlanmagan. Pro Uzbek tarifi uchun Railway env qo'shing.")
+    if not have_cmd("ffmpeg"):
+        raise Exception("ffmpeg topilmadi.")
+
+    # 1) Audio'ni WAV ga aylantiramiz
+    wav_path = convert_to_wav(file_path)
+
+    # 2) 50-sek bo'laklar (overlap 2 sek)
+    if progress_cb:
+        try: progress_cb(0, 0)
+        except Exception: pass
+    chunks = split_audio(wav_path)  # [(chunk_path, start_sec, end_sec), ...]
+    total = len(chunks)
+    if total == 0:
+        if wav_path != file_path and os.path.exists(wav_path):
+            try: os.remove(wav_path)
+            except Exception: pass
+        return ""
+
+    if progress_cb:
+        try: progress_cb(0, total)
+        except Exception: pass
+
+    # 3) Parallel ishlash (4 worker)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    chunk_results = {}
+    completed = {"count": 0}
+    completed_lock = threading.Lock()
+
+    def _process_chunk(idx_data):
+        idx, chunk_path, start_sec, end_sec = idx_data
+        text, err = _transcribe_chunk_muhlisa(chunk_path)
+        return idx, text, err, start_sec, end_sec
+
+    try:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = {
+                executor.submit(_process_chunk, (i + 1, ch[0], ch[1], ch[2])): i + 1
+                for i, ch in enumerate(chunks)
+            }
+            for future in as_completed(futures):
+                try:
+                    idx, text, err, start_sec, end_sec = future.result()
+                except Exception as e:
+                    idx = futures[future]
+                    text, err = None, str(e)[:200]
+                    start_sec, end_sec = 0, 0
+
+                with completed_lock:
+                    completed["count"] += 1
+                    cur = completed["count"]
+                if progress_cb:
+                    try: progress_cb(cur, total)
+                    except Exception: pass
+
+                if text:
+                    chunk_results[idx] = text
+                elif err:
+                    logging.error(f"Muhlisa bo'lak {idx}/{total} yiqildi: {err}")
+                    if failed_ranges_out is not None and start_sec >= 0 and end_sec > 0:
+                        failed_ranges_out.append((start_sec, end_sec, err))
+    finally:
+        # Bo'lak fayllarni o'chirish
+        for ch in chunks:
+            if ch[0] != wav_path and os.path.exists(ch[0]):
+                try: os.remove(ch[0])
+                except Exception: pass
+        if wav_path != file_path and os.path.exists(wav_path):
+            try: os.remove(wav_path)
+            except Exception: pass
+
+    # Natijalarni tartibda yig'ish
+    results = [chunk_results[k] for k in sorted(chunk_results.keys())]
+    final_text = " ".join(r for r in results if r).strip()
+    return final_text
+
+
+def _transcribe_for_user(user_id, file_path, language="uz", progress_cb=None, failed_ranges_out=None):
+    """User tarifiga qarab to'g'ri STT'ga yo'naltiradi.
+    PRO tarif (pro_standart/pro_premium/pro_max) + Uzbek → Muhlisa AI (native Uzbek).
+    Oddiy tarif yoki boshqa til → OpenAI Whisper (universal).
+    """
+    tariff = get_user_tariff(user_id)
+    # PRO tarif (pro_*) + Uzbek = Muhlisa STT (yuqori sifat)
+    is_pro_tariff = tariff.startswith("pro_") or tariff == "pro"
+    if is_pro_tariff and language == "uz" and MUXLISA_KEY:
+        logging.info(f"🌟 PRO tarif ({tariff}) — Muhlisa STT user_id={user_id}")
+        try:
+            return transcribe_muhlisa(file_path, progress_cb, failed_ranges_out)
+        except Exception as e:
+            logging.error(f"Muhlisa STT yiqildi: {e}. OpenAI Whisper fallback...")
+    return transcribe_unified(file_path, progress_cb, language, failed_ranges_out)
+# === [/PRO UZBEK STT] =================================================
 
 
 FATAL_KEYWORDS = ("balance", "insufficient", "credit", "payment", "quota",
@@ -3739,20 +3904,33 @@ async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _show_buy_menu(message_obj):
     """Tarif tugmalari ko'rsatadi (chat message yoki callback edit uchun).
-    'pro' eski legacy tarif — buy menyusida ko'rsatilmaydi, faqat 3 ta yangi tarif."""
-    # Buy menyusida ko'rsatiladigan tariflar (legacy 'pro' yashirin)
-    visible_keys = ["basic", "standart", "premium"]
-    paid = [(k, TARIFFS[k]) for k in visible_keys if k in TARIFFS and TARIFFS[k].get("price", 0) > 0]
+    Ikki guruh: Oddiy (Whisper) va Pro (Muhlisa AI)."""
+    oddiy_keys = ["basic", "standart", "premium"]
+    pro_keys = ["pro_standart", "pro_premium", "pro_max"]
     buttons = []
-    for key, t in paid:
-        hrs = t["minutes"] // 60
-        label = f"{t['name']} • {hrs} soat • {t['price']:,} so'm"
-        buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
+    # Oddiy guruh sarlavhasi (faqat ko'rsatish, callback yo'q)
+    buttons.append([InlineKeyboardButton("─── 🌿 Oddiy tarif ───", callback_data="buy:menu")])
+    for key in oddiy_keys:
+        if key in TARIFFS and TARIFFS[key].get("price", 0) > 0:
+            t = TARIFFS[key]
+            hrs = t["minutes"] // 60
+            label = f"{t['name']} • {hrs} soat • {t['price']:,} so'm"
+            buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
+    # Pro guruh sarlavhasi
+    buttons.append([InlineKeyboardButton("─── ✨ Pro tarif (Uzbek eng yuqori sifat) ───", callback_data="buy:menu")])
+    for key in pro_keys:
+        if key in TARIFFS and TARIFFS[key].get("price", 0) > 0:
+            t = TARIFFS[key]
+            hrs = t["minutes"] // 60
+            label = f"{t['name']} • {hrs} soat • {t['price']:,} so'm"
+            buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
     text = (
         "💎 *Tarifni tanlang*\n\n"
+        "🌿 *Oddiy* — Whisper STT, har tilda ishlaydi (arzon).\n"
+        "✨ *Pro* — Muhlisa AI, Uzbek sifati eng yuqori (qimmatroq).\n\n"
         "Tanlagan tarifingiz uchun to'lov ma'lumotlari ko'rinadi.\n"
         "💳 Click / Payme / Paynet / Uzcard / Humo orqali to'lashingiz mumkin.\n\n"
-        "📸 To'lov chekini botga yuborgach tarifingiz tasdiqlanadi va faollashadi."
+        "📸 To'lov chekini botga yuborgach tarifingiz tasdiqlanadi."
     )
     if hasattr(message_obj, "edit_message_text"):
         await message_obj.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
@@ -5484,7 +5662,8 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
         status_msg_id = telegram_send_message_returning_id(user_id, "🎙 Matn tayyorlanmoqda...")
         progress_cb = _make_http_progress_cb(user_id, status_msg_id) if status_msg_id else None
         failed_ranges = []
-        text = transcribe_unified(file_path, progress_cb=progress_cb, language=language, failed_ranges_out=failed_ranges)
+        # Paid tarif + Uzbek = Muhlisa native STT, aks holda OpenAI Whisper
+        text = _transcribe_for_user(user_id, file_path, language=language, progress_cb=progress_cb, failed_ranges_out=failed_ranges)
         if status_msg_id:
             try: telegram_delete_message(user_id, status_msg_id)
             except Exception: pass
@@ -6013,7 +6192,8 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
             telegram_edit_message(user_id, status_msg_id, "✅ Yuklandi. 🎙 Matn tayyorlanmoqda...")
         progress_cb = _make_http_progress_cb(user_id, status_msg_id) if status_msg_id else None
         failed_ranges = []
-        text = transcribe_unified(audio_path, progress_cb=progress_cb, language=language, failed_ranges_out=failed_ranges)
+        # Paid tarif + Uzbek = Muhlisa native STT, aks holda OpenAI Whisper
+        text = _transcribe_for_user(user_id, audio_path, language=language, progress_cb=progress_cb, failed_ranges_out=failed_ranges)
 
         # Status xabarini o'chiramiz (matn yetkazilgach kerak emas)
         if status_msg_id:
