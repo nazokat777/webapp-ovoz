@@ -3430,6 +3430,7 @@ async def admin_panel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_min = sum(user_uzbek_usage.values()) / 60
     paid_users = sum(1 for uid in user_tariffs if user_tariffs.get(uid) != "free")
     buttons = [
+        [InlineKeyboardButton("🎁 Tarif berish (chek so'ramasdan)", callback_data="adm:grant_help")],
         [InlineKeyboardButton("📊 Statistika (top 30)", callback_data="adm:stats")],
         [InlineKeyboardButton("👥 Tarifli userlar (manage)", callback_data="adm:paid_users")],
         [InlineKeyboardButton("💳 Kutilayotgan to'lovlar", callback_data="adm:pending_payments")],
@@ -3539,6 +3540,30 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             "• `/grant 629686772 premium` — tarif berish\n"
             "• `/revoke 629686772` — tarif bekor qilish\n"
             "• `/reset 629686772` — daqiqalarni 0 ga tiklash",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(back),
+        )
+        return
+
+    if action == "grant_help":
+        # Admin tarif berish guide — soddaroq, qisqaroq qadamlar
+        back = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")]]
+        await query.edit_message_text(
+            "🎁 *Userga tarif berish*\n\n"
+            "Chek so'ramasdan, qo'lda tarif berish uchun:\n\n"
+            "1️⃣ User'ning ID'ini bilib oling:\n"
+            "   • `/user @username` yoki\n"
+            "   • Admin sifatida statistikadan ko'rasiz\n\n"
+            "2️⃣ Buyruqni yozing:\n"
+            "   `/grant <user_id> <tarif_kaliti>`\n\n"
+            "*Misol:*\n"
+            "   `/grant 629686772 standart`\n"
+            "   `/grant 629686772 premium`\n"
+            "   `/grant 629686772 pro_max`\n\n"
+            "*Tarif kalitlari:*\n"
+            "🌿 Oddiy: `basic`, `standart`, `premium`\n"
+            "✨ Pro: `pro_standart`, `pro_premium`, `pro_max`\n\n"
+            "User darhol tarif oladi, xabar keladi.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(back),
         )
@@ -3829,12 +3854,32 @@ async def user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💡 Tarif berish: `/grant {target_id} <tarif>`\n"
         f"💬 Xabar yuborish: `/reply {target_id} <xabar>`"
     )
-    keyboard = None
+    # Tarif berish tugmalari — admin chek so'ramasdan tarif beradi
+    grant_buttons = []
+    grant_keys = ["basic", "standart", "premium", "pro_standart", "pro_premium", "pro_max"]
+    row = []
+    for k in grant_keys:
+        if k not in TARIFFS:
+            continue
+        t = TARIFFS[k]
+        # Qisqa nom (emoji + tarif so'zi)
+        short_name = t["name"]
+        row.append(InlineKeyboardButton(short_name, callback_data=f"approve:{target_id}:{k}"))
+        if len(row) == 2:
+            grant_buttons.append(row)
+            row = []
+    if row:
+        grant_buttons.append(row)
+    # Bekor qilish va profil tugmalari
+    grant_buttons.append([InlineKeyboardButton("🚫 Tarifni bekor qilish (free)", callback_data=f"approve:{target_id}:free")])
     if profile_url:
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton(f"💬 @{uname} bilan yozish", url=profile_url)]
-        ])
-    await update.message.reply_text(text, parse_mode="Markdown", reply_markup=keyboard)
+        grant_buttons.append([InlineKeyboardButton(f"💬 @{uname} bilan yozish", url=profile_url)])
+
+    text += "\n\n🎁 *Tarif berish:* pastdagi tugmadan tanlang."
+    await update.message.reply_text(
+        text, parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(grant_buttons),
+    )
 
 
 async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
