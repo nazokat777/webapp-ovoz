@@ -115,7 +115,25 @@ TRANSLATION_LANG_NAMES = {"uz": "o'zbek", "ru": "rus", "en": "ingliz", "ar": "ar
 # === [/TARJIMA MODULI] ==========================================================
 
 # Web App URL — ngrok yoki o'z serveringiz URL'ini kiriting
-WEBAPP_URL = os.getenv("WEBAPP_URL", "https://botch-engaging-mustang.ngrok-free.dev")
+# WEBAPP_URL avtomatik aniqlash:
+# 1) RAILWAY_PUBLIC_DOMAIN env (Railway avtomatik beradi — eng ishonchli)
+# 2) WEBAPP_URL env (manual sozlangan bo'lsa)
+# 3) Hardcoded Railway URL (oxirgi chora)
+def _resolve_webapp_url():
+    rw_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
+    if rw_domain:
+        # Railway avtomatik domen beradi — ngrok yoki manual qiymat'dan ustun
+        return f"https://{rw_domain}"
+    manual = os.getenv("WEBAPP_URL", "").strip()
+    if manual and "ngrok" not in manual:
+        # Manual qiymat bor va ngrok emas — ishonchli
+        return manual
+    # Fallback: webapp-ovoz Railway URL
+    return "https://webapp-ovoz-production.up.railway.app"
+
+
+WEBAPP_URL = _resolve_webapp_url()
+print(f"🔗 WEBAPP_URL = {WEBAPP_URL}")  # Deploy logda ko'rinadi
 # Railway/Heroku PORT env, lokal sinov uchun HTTP_PORT yoki default 8000
 HTTP_PORT  = int(os.getenv("HTTP_PORT") or os.getenv("PORT") or 8000)
 
