@@ -422,26 +422,33 @@ def _save_user_data():
                 "runtime_settings": dict(runtime_settings),
             }
 
-            # XAVFSIZLIK 1: bo'sh data eski to'la faylni overwrite qilmasin
-            in_memory_count = len(user_uzbek_usage) + len(user_tariffs) + len(user_info)
+            # XAVFSIZLIK 1: KUCHLI himoya — diskdagi entries soni bilan solishtiramiz.
+            # Agar memory diskdan ko'ra 50%+ kam bo'lsa — XAVF (data wipe ehtimoli)
             if os.path.exists(DATA_FILE):
                 try:
-                    existing_size = os.path.getsize(DATA_FILE)
-                    # Agar in-memory data juda kichik (<5 entry) va fayl katta (>2000 bayt) — XAVF!
-                    if in_memory_count < 5 and existing_size > 2000:
+                    with open(DATA_FILE, "r", encoding="utf-8") as fexist:
+                        existing = json.load(fexist)
+                    existing_tariffs = len(existing.get("tariffs") or {})
+                    existing_usage = len(existing.get("usage") or {})
+                    existing_info = len(existing.get("user_info") or {})
+                    # Har bir kategoriya alohida tekshiriladi
+                    danger_tariffs = existing_tariffs >= 3 and len(user_tariffs) < existing_tariffs * 0.5
+                    danger_usage = existing_usage >= 3 and len(user_uzbek_usage) < existing_usage * 0.5
+                    danger_info = existing_info >= 3 and len(user_info) < existing_info * 0.5
+                    if danger_tariffs or danger_usage or danger_info:
                         logging.error(
-                            f"🛑 SAVE ABORTED — in-memory={in_memory_count} entries, "
-                            f"existing_file={existing_size} bayt. Possibilities: empty memory or data wipe risk!"
+                            f"🛑 SAVE ABORTED (KUCHLI) — disk: tariffs={existing_tariffs}, usage={existing_usage}, info={existing_info}; "
+                            f"memory: tariffs={len(user_tariffs)}, usage={len(user_uzbek_usage)}, info={len(user_info)}"
                         )
-                        # Tryload from disk
+                        # Memory'ni diskdan tikla
                         try:
                             _load_user_data()
-                            logging.info(f"💾 Disk'dan qayta yuklab olindi: {len(user_uzbek_usage)} usage")
+                            logging.info(f"💾 Memory diskdan qayta yuklandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif")
                         except Exception as e2:
                             logging.error(f"Reload xato: {e2}")
                         return
-                except Exception:
-                    pass
+                except Exception as e_check:
+                    logging.debug(f"Save check xato (davom): {e_check}")
 
             os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
 
@@ -3792,6 +3799,11 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if action == "paid_users":
         # Tarifli userlar ro'yxati — har biriga "Bekor qilish" tugmasi
+        # MUHIM: avval log'dan tariflarni yangilab olamiz (xotira yo'qolgan bo'lsa)
+        try:
+            _replay_tariff_log()
+        except Exception as e:
+            logging.warning(f"paid_users replay xato: {e}")
         paid_list = [(uid, t) for uid, t in user_tariffs.items() if t != "free"]
         if not paid_list:
             back = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")]]
