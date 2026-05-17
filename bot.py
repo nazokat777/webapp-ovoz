@@ -3141,26 +3141,16 @@ async def send_result(update, msg, text):
         [InlineKeyboardButton("✕ Yopish", callback_data="dl:close")],
     ])
 
-    # <pre> bloki — Telegram'da copy tugmasi bilan keladi
-    CHUNK = 3900  # <pre> tag + header bilan 4096 char limit'ga sig'ishi uchun
-    if len(text) <= CHUNK:
-        escaped = html.escape(text)
-        await msg.edit_text(
-            f"📝 <b>Matn:</b>\n<pre>{escaped}</pre>",
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
-    else:
-        await msg.edit_text("✅ Tayyor! Qismlarga bo'lib yuborilmoqda...")
-        parts = [text[i:i+CHUNK] for i in range(0, len(text), CHUNK)]
-        for i, part in enumerate(parts):
-            escaped = html.escape(part)
-            is_last = (i == len(parts) - 1)
-            await update.message.reply_text(
-                f"📄 <b>Qism {i+1}/{len(parts)}:</b>\n<pre>{escaped}</pre>",
-                parse_mode="HTML",
-                reply_markup=(keyboard if is_last else None),
-            )
+    # Matn chatda ko'rsatilmaydi — faqat PDF/TXT tugmalari (user talabi)
+    word_count = len(text.split())
+    char_count = len(text)
+    await msg.edit_text(
+        f"✅ <b>Transkripsiya tayyor!</b>\n\n"
+        f"📊 {word_count:,} ta so'z • {char_count:,} ta belgi\n\n"
+        f"📥 Quyidagi tugmalardan yuklab oling:",
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
 
 
 def make_progress_cb(loop, msg, base_label="🎙 Tanilmoqda"):
@@ -6344,37 +6334,23 @@ def _send_text_card(user_id, text, header="📝 <b>Matn:</b>"):
         ]
     }
 
-    CHUNK = 3900
+    # Matn chatda ko'rsatilmaydi — faqat PDF/TXT tugmalari (user talabi)
+    word_count = len(text.split())
+    char_count = len(text)
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    if len(text) <= CHUNK:
-        escaped = html.escape(text)
-        try:
-            requests.post(url, json={
-                "chat_id": user_id,
-                "text": f"{header}\n<pre>{escaped}</pre>",
-                "parse_mode": "HTML",
-                "reply_markup": keyboard,
-            }, timeout=30)
-        except Exception as e:
-            logging.error(f"Matn card yuborish xato: {e}")
-        return
-
-    # Uzun matn — qismlarga bo'linadi, oxirgi qismda tugmalar
-    parts = [text[i:i+CHUNK] for i in range(0, len(text), CHUNK)]
-    for i, part in enumerate(parts):
-        escaped = html.escape(part)
-        is_last = (i == len(parts) - 1)
-        body = {
+    try:
+        requests.post(url, json={
             "chat_id": user_id,
-            "text": f"{header} <i>Qism {i+1}/{len(parts)}</i>\n<pre>{escaped}</pre>",
+            "text": (
+                f"✅ <b>Transkripsiya tayyor!</b>\n\n"
+                f"📊 {word_count:,} ta so'z • {char_count:,} ta belgi\n\n"
+                f"📥 Quyidagi tugmalardan yuklab oling:"
+            ),
             "parse_mode": "HTML",
-        }
-        if is_last:
-            body["reply_markup"] = keyboard
-        try:
-            requests.post(url, json=body, timeout=30)
-        except Exception as e:
-            logging.error(f"Matn qism yuborish xato: {e}")
+            "reply_markup": keyboard,
+        }, timeout=30)
+    except Exception as e:
+        logging.error(f"Tayyor xabar yuborish xato: {e}")
 
 
 def _send_text_and_pdf(user_id, text):
