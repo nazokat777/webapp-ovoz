@@ -5648,9 +5648,9 @@ async def audit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         await update.message.reply_text("⛔ Faqat admin uchun.")
         return
-    lines = ["🔍 *AUDIT*\n"]
+    lines = ["🔍 AUDIT\n"]
     # DATA_FILE
-    lines.append(f"📂 DATA_FILE: `{DATA_FILE}`")
+    lines.append(f"📂 DATA_FILE: {DATA_FILE}")
     if os.path.exists(DATA_FILE):
         sz = os.path.getsize(DATA_FILE)
         lines.append(f"   ✅ Mavjud, hajmi: {sz:,} bayt")
@@ -5666,7 +5666,7 @@ async def audit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("   ❌ FAYL YO'Q!")
 
     # TARIFF_LOG_FILE
-    lines.append(f"\n📝 TARIFF_LOG_FILE: `{TARIFF_LOG_FILE}`")
+    lines.append(f"\n📝 TARIFF_LOG_FILE: {TARIFF_LOG_FILE}")
     if os.path.exists(TARIFF_LOG_FILE):
         sz = os.path.getsize(TARIFF_LOG_FILE)
         cnt = 0
@@ -5680,7 +5680,7 @@ async def audit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines.append("   ❌ LOG FAYL YO'Q!")
 
     # Memory
-    lines.append(f"\n🧠 *Memory*:")
+    lines.append(f"\n🧠 Memory:")
     lines.append(f"   🔹 Tariflar (memory): {len(user_tariffs)}")
     lines.append(f"   🔹 Usage (memory): {len(user_uzbek_usage)}")
     lines.append(f"   🔹 User info (memory): {len(user_info)}")
@@ -5688,7 +5688,7 @@ async def audit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"   💎 Paid (memory): {paid_count}")
 
     # Volume tekshirish
-    lines.append(f"\n💾 *Persistent volume*:")
+    lines.append(f"\n💾 Persistent volume:")
     if DATA_FILE.startswith("/data"):
         lines.append("   ✅ /data yo'l ishlatilyapti")
         # /data papkasi mavjudmi
@@ -5703,9 +5703,9 @@ async def audit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             lines.append("   ⚠️ /data papka YO'Q! (volume mount qilinmagan)")
     else:
-        lines.append(f"   ⚠️ /data emas: `{DATA_FILE}` — bu ephemeral bo'lishi mumkin!")
+        lines.append(f"   ⚠️ /data emas: {DATA_FILE} — bu ephemeral bo'lishi mumkin!")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n".join(lines))
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
