@@ -3169,7 +3169,7 @@ async def process_url(update, context, url, language="uz"):
             shutil.rmtree(os.path.dirname(audio_path), ignore_errors=True)
 
 
-def webapp_keyboard(chat_id=None):
+def webapp_keyboard(chat_id=None, username=None):
     # Cache buster + chat_id (iMe va boshqa Telegram fork'lari uchun fallback)
     sep = "&" if "?" in WEBAPP_URL else "?"
     parts = [f"v={int(time.time())}"]
@@ -3183,10 +3183,12 @@ def webapp_keyboard(chat_id=None):
         [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="❓ Yordam")],
         [KeyboardButton(text="💬 Murojaat"), KeyboardButton(text="🔄 /start")],
     ]
-    # Admin uchun qo'shimcha tugmalar
-    is_admin_user = chat_id is not None and (
-        ADMIN_CHAT_ID["id"] is not None and chat_id == ADMIN_CHAT_ID["id"]
-    )
+    # Admin tekshiruvi — chat_id YOKI username orqali
+    is_admin_user = False
+    if chat_id is not None and ADMIN_CHAT_ID["id"] is not None and chat_id == ADMIN_CHAT_ID["id"]:
+        is_admin_user = True
+    elif username and username.lower().lstrip("@") in ADMIN_USERNAMES:
+        is_admin_user = True
     if is_admin_user:
         rows.append([KeyboardButton(text="👥 Userlar"), KeyboardButton(text="🎁 Tarif berish")])
         rows.append([KeyboardButton(text="🔐 Admin panel")])
@@ -3263,7 +3265,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             update.effective_user.first_name
         ),
         parse_mode="Markdown",
-        reply_markup=webapp_keyboard(chat_id=chat_id),
+        reply_markup=webapp_keyboard(chat_id=chat_id, username=update.effective_user.username),
     )
 
 
@@ -5153,7 +5155,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 📄 PDF fayl (matn ovozga aylanadi)\n"
         "• 📝 Matn (30+ belgi — ovozga aylanadi)\n\n"
         "Yoki pastdagi tugmalardan birini bosing 👇",
-        reply_markup=webapp_keyboard(chat_id=update.effective_user.id),
+        reply_markup=webapp_keyboard(chat_id=update.effective_user.id, username=update.effective_user.username),
     )
 
 
