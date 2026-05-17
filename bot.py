@@ -462,6 +462,63 @@ def _save_user_data():
             logging.error(f"❌ user_data.json yozishda xato: {e} | DATA_FILE={DATA_FILE}")
 
 
+# === [TARIFF LOG] Append-only jurnal — har grant darrov yoziladi, hech qachon yo'qolmaydi ===
+TARIFF_LOG_FILE = os.path.join(os.path.dirname(DATA_FILE) or ".", "tariff_log.jsonl")
+
+
+def _append_tariff_log(user_id, tariff_key, source="approve"):
+    """Tariff o'zgarishini append-only jurnal'ga yozish — Railway deploy chog'ida ham yo'qolmaydi.
+    Har qator: {"uid": 123, "tariff": "pro_max", "ts": 1234567890, "src": "approve"}"""
+    try:
+        os.makedirs(os.path.dirname(TARIFF_LOG_FILE) or ".", exist_ok=True)
+        entry = {"uid": int(user_id), "tariff": tariff_key, "ts": int(time.time()), "src": source}
+        with open(TARIFF_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())  # diskka kafolatli yozish
+        logging.info(f"📝 Tariff log: {entry}")
+    except Exception as e:
+        logging.error(f"❌ Tariff log yozishda xato: {e}")
+
+
+def _replay_tariff_log():
+    """Bot ishga tushganda jurnal'dan eng so'nggi tarif'ni har user uchun tiklash.
+    Bu user_data.json'dagi tarif'ni o'rnini bosadi (jurnal ustivor — chunki append-only)."""
+    if not os.path.exists(TARIFF_LOG_FILE):
+        return 0
+    try:
+        latest = {}  # {user_id: tariff_key} — eng so'nggi
+        with open(TARIFF_LOG_FILE, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                    uid = int(entry["uid"])
+                    tariff = entry["tariff"]
+                    if tariff in TARIFFS:
+                        latest[uid] = tariff
+                except Exception:
+                    continue
+        # Faqat JSON'dagi tarif farq qilsa, jurnal'dan tiklash
+        recovered = 0
+        for uid, tariff in latest.items():
+            if user_tariffs.get(uid) != tariff:
+                logging.warning(f"⚠️ Tariff mismatch: user_id={uid}, JSON={user_tariffs.get(uid, 'YO\\'Q')}, LOG={tariff} → LOG'dan tiklandi")
+                user_tariffs[uid] = tariff
+                recovered += 1
+        if recovered > 0:
+            _save_user_data()
+            logging.info(f"✅ Tariff log replay: {recovered} ta user tarifi tiklandi")
+        else:
+            logging.info(f"✓ Tariff log replay: {len(latest)} entry, hech qaysi tariflanmagan")
+        return recovered
+    except Exception as e:
+        logging.error(f"❌ Tariff log replay xato: {e}")
+        return 0
+
+
 def track_user(update):
     """=== [USERS] Foydalanuvchi ma'lumotlarini saqlash (admin keyinroq ko'rishi uchun) ===
     Har handler chaqirilganda chaqiriladi — username, first_name, last_seen yangilanadi."""
@@ -4379,6 +4436,7 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
 
     user_tariffs[target_id] = tariff_key
     user_uzbek_usage[target_id] = 0
+    _append_tariff_log(target_id, tariff_key, source="telegram_pay")
     _save_user_data()
 
     t = TARIFFS[tariff_key]
@@ -4793,6 +4851,7 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
     if action == "approve":
         user_tariffs[target_id] = tariff_key
         user_uzbek_usage[target_id] = 0
+        _append_tariff_log(target_id, tariff_key, source="approve")
         _save_user_data()
         # Admin uchun aniq alert
         await query.answer(
@@ -4930,6 +4989,7 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_tariffs[target_id] = tariff_key
     # Yangi tarif berilganda ishlatilganlar tiklanadi
     user_uzbek_usage[target_id] = 0
+    _append_tariff_log(target_id, tariff_key, source="grant_cmd")
     _save_user_data()
     t = TARIFFS[tariff_key]
     await update.message.reply_text(
@@ -7266,6 +7326,12 @@ def main():
 
     # Saqlangan usage va tariflarni yuklash
     _load_user_data()
+
+    # MUHIM: Tariff log'dan tiklash — JSON eski/buzilgan bo'lsa ham tarif yo'qolmaydi
+    try:
+        _replay_tariff_log()
+    except Exception as e:
+        logging.error(f"❌ Tariff log replay xato: {e}")
 
     # One-time: ma'lum yo'qolgan paid user'larni tiklash (faqat ular yo'q bo'lsa)
     try:
