@@ -4298,10 +4298,11 @@ async def _send_chek_for_manual_approval(update: Update, context: ContextTypes.D
         return
 
     username_raw = f"@{user.username}" if user.username else (user.first_name or "noma'lum")
+    # Plain text — Markdown xatosi yo'q (username'da _ bo'lishi mumkin)
     caption = (
-        f"⚠️ *Manual tasdiqlash kerak*\n\n"
+        f"⚠️ Manual tasdiqlash kerak\n\n"
         f"👤 Foydalanuvchi: {username_raw}\n"
-        f"🆔 ID: `{user.id}`\n\n"
+        f"🆔 ID: {user.id}\n\n"
         f"User chek yubordi LEKIN tarif tanlamagan.\n"
         f"Quyidagi tugmalardan tarifni tanlang va tasdiqlang:"
     )
@@ -4322,22 +4323,11 @@ async def _send_chek_for_manual_approval(update: Update, context: ContextTypes.D
             chat_id=ADMIN_CHAT_ID["id"],
             photo=photo.file_id,
             caption=caption,
-            parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(buttons),
         )
     except Exception as e:
         logging.error(f"Manual chek admin'ga yuborishda xato: {e}")
-        # Fallback: Markdown'siz
-        try:
-            await context.bot.send_photo(
-                chat_id=ADMIN_CHAT_ID["id"],
-                photo=photo.file_id,
-                caption=caption.replace("*", "").replace("`", ""),
-                reply_markup=InlineKeyboardMarkup(buttons),
-            )
-        except Exception as e2:
-            logging.error(f"Manual chek (fallback) ham yiqildi: {e2}")
-            return
+        return
 
     await update.message.reply_text(
         "✅ Chek qabul qilindi.\n\n"
