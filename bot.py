@@ -422,8 +422,9 @@ def _save_user_data():
                 "runtime_settings": dict(runtime_settings),
             }
 
-            # XAVFSIZLIK 1: KUCHLI himoya — diskdagi entries soni bilan solishtiramiz.
-            # Agar memory diskdan ko'ra 50%+ kam bo'lsa — XAVF (data wipe ehtimoli)
+            # XAVFSIZLIK 1: ENG QATTIQ himoya — memory diskdan KAMROQ bo'lsa darrov abort.
+            # Bu kategoriyalar (tariffs, usage, info) faqat o'sadi, hech qachon kamaymaydi.
+            # Shuning uchun memory < disk = ma'lumot yo'qolish belgisi.
             if os.path.exists(DATA_FILE):
                 try:
                     with open(DATA_FILE, "r", encoding="utf-8") as fexist:
@@ -431,21 +432,42 @@ def _save_user_data():
                     existing_tariffs = len(existing.get("tariffs") or {})
                     existing_usage = len(existing.get("usage") or {})
                     existing_info = len(existing.get("user_info") or {})
-                    # Har bir kategoriya alohida tekshiriladi
-                    danger_tariffs = existing_tariffs >= 3 and len(user_tariffs) < existing_tariffs * 0.5
-                    danger_usage = existing_usage >= 3 and len(user_uzbek_usage) < existing_usage * 0.5
-                    danger_info = existing_info >= 3 and len(user_info) < existing_info * 0.5
-                    if danger_tariffs or danger_usage or danger_info:
+                    # Har kategoriya: memory < disk → DARROV abort
+                    if (len(user_tariffs) < existing_tariffs or
+                        len(user_uzbek_usage) < existing_usage or
+                        len(user_info) < existing_info):
                         logging.error(
-                            f"🛑 SAVE ABORTED (KUCHLI) — disk: tariffs={existing_tariffs}, usage={existing_usage}, info={existing_info}; "
-                            f"memory: tariffs={len(user_tariffs)}, usage={len(user_uzbek_usage)}, info={len(user_info)}"
+                            f"🛑 SAVE ABORTED — memory diskdan kam! "
+                            f"DISK: tariffs={existing_tariffs}, usage={existing_usage}, info={existing_info} | "
+                            f"MEMORY: tariffs={len(user_tariffs)}, usage={len(user_uzbek_usage)}, info={len(user_info)}"
                         )
-                        # Memory'ni diskdan tikla
+                        # Memory'ni diskdan to'ldirish — yo'qolgan entries qaytariladi
                         try:
-                            _load_user_data()
-                            logging.info(f"💾 Memory diskdan qayta yuklandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif")
+                            # Diskdagilar memory'ga qo'shiladi (memory'dagilar ustivor — yangi o'zgarishlar)
+                            for k, v in (existing.get("tariffs") or {}).items():
+                                try:
+                                    uid = int(k)
+                                    if uid not in user_tariffs and v in TARIFFS:
+                                        user_tariffs[uid] = v
+                                except Exception:
+                                    pass
+                            for k, v in (existing.get("usage") or {}).items():
+                                try:
+                                    uid = int(k)
+                                    if uid not in user_uzbek_usage:
+                                        user_uzbek_usage[uid] = int(v)
+                                except Exception:
+                                    pass
+                            for k, v in (existing.get("user_info") or {}).items():
+                                try:
+                                    uid = int(k)
+                                    if uid not in user_info and isinstance(v, dict):
+                                        user_info[uid] = v
+                                except Exception:
+                                    pass
+                            logging.info(f"✅ Memory diskdan to'ldirildi: tariffs={len(user_tariffs)}, usage={len(user_uzbek_usage)}, info={len(user_info)}")
                         except Exception as e2:
-                            logging.error(f"Reload xato: {e2}")
+                            logging.error(f"Memory to'ldirishda xato: {e2}")
                         return
                 except Exception as e_check:
                     logging.debug(f"Save check xato (davom): {e_check}")
