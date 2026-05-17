@@ -3529,6 +3529,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💡 *Tavsiyalar:*\n"
         "• *Aniq, tiniq ovoz* yuboring (shovqin kam bo'lsin)\n"
         "• Bir vaqtda bitta odam gapirsa, sifat yaxshi chiqadi\n\n"
+        "⚠️ *Muhim eslatma:* Men botman — inson kabi xato qilishim mumkin. "
+        "Xato qilishimni oldini olish uchun eng yaxshi tavsiya: uzun soatlik "
+        "videolarni *10-20 daqiqalik bo'laklarga* bo'lib yuboring. Audio/video "
+        "qancha qisqa bo'lsa, men shuncha sifatli matn qilaman. Uzun bo'lsa "
+        "xatolik darajam oshadi.\n\n"
         "🎁 *Bonus daqiqalar:* Do'st taklif qilsangiz ikkalangizgayam +5 daqiqa bepul!\n"
         "Tavsiya havolangizni olish: /tavsiya\n\n"
         "Quyidagi tugma orqali *Web ilovani* oching 👇".format(
