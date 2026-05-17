@@ -3176,15 +3176,22 @@ def webapp_keyboard(chat_id=None):
     if chat_id is not None:
         parts.append(f"user={chat_id}")
     url = f"{WEBAPP_URL}{sep}{'&'.join(parts)}"
-    return ReplyKeyboardMarkup(
-        [
-            [KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))],
-            [KeyboardButton(text="📊 Balansim"), KeyboardButton(text="💎 Tariflar")],
-            [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="❓ Yordam")],
-            [KeyboardButton(text="💬 Murojaat"), KeyboardButton(text="🔄 /start")],
-        ],
-        resize_keyboard=True,
+
+    rows = [
+        [KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))],
+        [KeyboardButton(text="📊 Balansim"), KeyboardButton(text="💎 Tariflar")],
+        [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="❓ Yordam")],
+        [KeyboardButton(text="💬 Murojaat"), KeyboardButton(text="🔄 /start")],
+    ]
+    # Admin uchun qo'shimcha tugmalar
+    is_admin_user = chat_id is not None and (
+        ADMIN_CHAT_ID["id"] is not None and chat_id == ADMIN_CHAT_ID["id"]
     )
+    if is_admin_user:
+        rows.append([KeyboardButton(text="👥 Userlar"), KeyboardButton(text="🎁 Tarif berish")])
+        rows.append([KeyboardButton(text="🔐 Admin panel")])
+
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
 # ── BOT HANDLERS ────────────────────────────────────────────────────────────
@@ -5068,7 +5075,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         # Tugmalarni bosgan bo'lsa ham — murojaat rejimini bekor qilamiz
         if text in ("📊 Balansim", "💎 Tariflar", "💳 Sotib olish", "❓ Yordam",
-                    "💬 Murojaat", "🔄 /start", "/start"):
+                    "💬 Murojaat", "🔄 /start", "/start",
+                    "👥 Userlar", "🎁 Tarif berish", "🔐 Admin panel"):
             context.user_data.pop("awaiting_feedback", None)
             # Pastdagi tugma handler'lari ishlasin
         else:
@@ -5105,6 +5113,30 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if text == "🔄 /start" or text == "/start":
         await start(update, context)
+        return
+    # === Admin tugmalari ===
+    if text == "👥 Userlar":
+        await stats_cmd(update, context)
+        return
+    if text == "🎁 Tarif berish":
+        if is_admin(update):
+            await update.message.reply_text(
+                "🎁 *Tarif berish*\n\n"
+                "User ID'sini bilib `/user <id>` yozing.\n"
+                "Ko'ringan ma'lumotning pastida tarif tugmalari chiqadi —\n"
+                "tugmani bosib darrov tarif beriladi.\n\n"
+                "*Misol:*\n"
+                "`/user 629686772`\n\n"
+                "Yoki to'g'ridan-to'g'ri:\n"
+                "`/grant <id> standart` yoki\n"
+                "`/grant <id> pro_max`",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text("⛔ Bu tugma faqat admin uchun.")
+        return
+    if text == "🔐 Admin panel":
+        await admin_panel_cmd(update, context)
         return
     url = extract_url(text)
     if url:
