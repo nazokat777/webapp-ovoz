@@ -3782,46 +3782,45 @@ async def openai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_min = total_sec / 60.0
     active_users = sum(1 for s in user_uzbek_usage.values() if s > 0)
 
-    # OpenAI narxlari ($ AS OF 2026)
-    # Whisper-1 / gpt-4o-transcribe: $0.006/min
-    # GPT-4o cleanup (Uzbek post-process): ~10% qo'shimcha
-    # Translation (agar bo'lsa): ~$0.10/hour = $0.0017/min (sa'tlik nisbati)
-    PRICE_STT_PER_MIN = 0.006
-    PRICE_CLEANUP_OVERHEAD = 0.10   # 10% qo'shimcha
-    USD_TO_UZS = 12500              # taxminiy kurs (har oy yangilab tursin)
+    # OpenAI narxlari ($) — 2026 holati
+    PRICE_STT_PER_MIN = 0.006        # Whisper-1 / gpt-4o-transcribe
+    PRICE_CLEANUP_OVERHEAD = 0.10    # GPT-4o cleanup (~10%)
+    PRICE_EXTRAS_OVERHEAD = 0.20     # Tarjima + PDF→audio (taxminiy 20%)
+    USD_TO_UZS = 12500               # taxminiy kurs
 
     stt_cost_usd = total_min * PRICE_STT_PER_MIN
     cleanup_cost_usd = stt_cost_usd * PRICE_CLEANUP_OVERHEAD
-    total_usd = stt_cost_usd + cleanup_cost_usd
+    extras_cost_usd = stt_cost_usd * PRICE_EXTRAS_OVERHEAD
+    total_usd = stt_cost_usd + cleanup_cost_usd + extras_cost_usd
     total_uzs = total_usd * USD_TO_UZS
 
-    # Eng faol 5 user
+    # Eng faol 5 user (plain text — Markdown xatosi yo'q)
     top_users = sorted(user_uzbek_usage.items(), key=lambda x: -x[1])[:5]
     top_lines = []
     for uid, sec in top_users:
         if sec <= 0:
             continue
         label = _user_label(uid)
-        top_lines.append(f"  • {label}: {sec/60:.1f} daq (~${sec/60*PRICE_STT_PER_MIN:.2f})")
+        top_lines.append(f"  • {label}: {sec/60:.1f} daq (~${sec/60*PRICE_STT_PER_MIN*1.3:.2f})")
     top_text = "\n".join(top_lines) if top_lines else "  (hech kim yo'q)"
 
+    # Plain text — Markdown xatosi bo'lmasin
     text = (
-        f"💰 *OpenAI xarajat (taxminiy)*\n\n"
+        f"💰 OpenAI xarajat (taxminiy)\n\n"
         f"📊 Jami foydalanish:\n"
-        f"  • Daqiqa: *{total_min:.0f}* daqiqa\n"
-        f"  • Faol user: *{active_users}* ta\n\n"
+        f"  • Daqiqa: {total_min:.0f} daqiqa\n"
+        f"  • Faol user: {active_users} ta\n\n"
         f"💸 Xarajat hisoblovi:\n"
         f"  • STT (Whisper): ${stt_cost_usd:.2f}\n"
         f"  • Cleanup (GPT-4o): ${cleanup_cost_usd:.2f}\n"
+        f"  • Tarjima + PDF audio: ${extras_cost_usd:.2f}\n"
         f"━━━━━━━━━━━━━━\n"
-        f"📌 *Jami: ${total_usd:.2f}* (≈ {total_uzs:,.0f} so'm)\n\n"
-        f"🔝 *Eng faol userlar:*\n{top_text}\n\n"
-        f"💡 *Eslatma:* Bu taxmiriy hisob. Real summa OpenAI dashboard'da:\n"
-        f"`platform.openai.com/usage`\n\n"
-        f"⚠️ Tarjima va PDF→audio xarajatlari bu yerda hisoblanmagan.\n"
-        f"   Agar ko'p ishlatilsa, +20-30% qo'shing."
+        f"📌 Jami: ${total_usd:.2f} (≈ {total_uzs:,.0f} so'm)\n\n"
+        f"🔝 Eng faol userlar:\n{top_text}\n\n"
+        f"💡 Eslatma: Bu taxmiriy hisob (barcha xizmatlar).\n"
+        f"   Real summa OpenAI dashboard'da: platform.openai.com/usage"
     )
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(text)
 
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
