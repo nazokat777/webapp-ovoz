@@ -595,14 +595,8 @@ def format_tariffs_text():
     free_line = _fmt("free")
     if free_line:
         lines.append(free_line)
-    # Tariflar (asosiy)
-    lines.append("\n📋 *Tariflar:*")
-    for k in ("basic", "standart", "premium"):
-        line = _fmt(k)
-        if line:
-            lines.append(line)
-    # O'zbek tili pro
-    lines.append("\n✨ *O'zbek tili pro* (Uzbek sifat eng yuqori):")
+    # Faqat Pro Uzbek tariflar — Oddiy (Whisper) sotuvdan olib tashlandi (sifat past edi)
+    lines.append("\n✨ *Tariflar* (O'zbek tili sifat eng yuqori):")
     for k in ("pro_standart", "pro_premium", "pro_max"):
         line = _fmt(k)
         if line:
@@ -4200,21 +4194,9 @@ async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _show_buy_menu(message_obj):
-    """Tarif tugmalari ko'rsatadi (chat message yoki callback edit uchun).
-    Ikki guruh: asosiy va O'zbek tili pro."""
-    oddiy_keys = ["basic", "standart", "premium"]
+    """Tarif tugmalari ko'rsatadi — faqat Pro Uzbek (Oddiy tariflar sotuvdan olib tashlandi)."""
     pro_keys = ["pro_standart", "pro_premium", "pro_max"]
     buttons = []
-    # Asosiy guruh sarlavhasi
-    buttons.append([InlineKeyboardButton("─── 📋 Tariflar ───", callback_data="buy:menu")])
-    for key in oddiy_keys:
-        if key in TARIFFS and TARIFFS[key].get("price", 0) > 0:
-            t = TARIFFS[key]
-            hrs = t["minutes"] // 60
-            label = f"{t['name']} • {hrs} soat • {t['price']:,} so'm"
-            buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
-    # O'zbek tili pro guruhi
-    buttons.append([InlineKeyboardButton("─── ✨ O'zbek tili pro ───", callback_data="buy:menu")])
     for key in pro_keys:
         if key in TARIFFS and TARIFFS[key].get("price", 0) > 0:
             t = TARIFFS[key]
@@ -4223,8 +4205,7 @@ async def _show_buy_menu(message_obj):
             buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
     text = (
         "💎 *Tarifni tanlang*\n\n"
-        "📋 *Tariflar* — har tilda ishlaydi (arzon).\n"
-        "✨ *O'zbek tili pro* — O'zbek tilida sifat eng yuqori (qimmatroq).\n\n"
+        "✨ Bizning tariflar O'zbek tilida **eng yuqori sifat** beradi.\n\n"
         "Tanlagan tarifingiz uchun to'lov ma'lumotlari ko'rinadi.\n"
         "💳 Click / Payme / Paynet / Uzcard / Humo orqali to'lashingiz mumkin.\n\n"
         "📸 To'lov chekini botga yuborgach tarifingiz tasdiqlanadi."
