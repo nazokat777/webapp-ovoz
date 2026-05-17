@@ -1081,14 +1081,16 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
 
 def _transcribe_for_user(user_id, file_path, language="uz", progress_cb=None, failed_ranges_out=None):
     """User tarifiga qarab to'g'ri STT'ga yo'naltiradi.
-    PRO tarif (pro_standart/pro_premium/pro_max) + Uzbek → Muhlisa AI (native Uzbek).
-    Oddiy tarif yoki boshqa til → OpenAI Whisper (universal).
+    BEPUL + PRO tarif (pro_*) + Uzbek → Muhlisa AI (eng yuqori sifat).
+    Eski Oddiy tarif (basic/standart/premium) → Whisper (saqlanadi, narx oshmasin).
+    Boshqa til → Whisper.
     """
     tariff = get_user_tariff(user_id)
-    # PRO tarif (pro_*) + Uzbek = Muhlisa STT (yuqori sifat)
     is_pro_tariff = tariff.startswith("pro_") or tariff == "pro"
-    if is_pro_tariff and language == "uz" and MUXLISA_KEY:
-        logging.info(f"🌟 PRO tarif ({tariff}) — Muhlisa STT user_id={user_id}")
+    is_free_tariff = tariff == "free"
+    # Muhlisa: Bepul + Pro tariflar + Uzbek (sifat eng yuqori, user xursand)
+    if (is_pro_tariff or is_free_tariff) and language == "uz" and MUXLISA_KEY:
+        logging.info(f"🌟 Muhlisa STT (tarif={tariff}) user_id={user_id}")
         try:
             return transcribe_muhlisa(file_path, progress_cb, failed_ranges_out)
         except Exception as e:
