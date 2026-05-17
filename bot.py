@@ -632,12 +632,15 @@ def is_admin(update):
 
 
 def get_user_tariff(user_id):
-    """Tariff o'qish — memory'dan, agar yo'q bo'lsa log'dan tiklash.
-    Bu Railway deploy/restart chog'ida tarif yo'qolishini OLDINI OLADI."""
+    """Tariff o'qish — memory'dan, agar 'free' yoki yo'q bo'lsa log'dan tekshirish.
+    Bu Railway deploy/restart chog'ida tarif yo'qolishini OLDINI OLADI.
+    MUHIM: memory'da 'free' bo'lsa ham log'dan paid bo'lsa, log ustivor (wipe'dan keyin)."""
     uid = int(user_id)
-    if uid in user_tariffs:
-        return user_tariffs[uid]
-    # Memory'da yo'q — log'dan tekshirish (yo'qolib qolgan paid tariflarni tiklash)
+    mem_tariff = user_tariffs.get(uid, "free")
+    # Agar memory'da paid tariff bo'lsa, darrov qaytaramiz
+    if mem_tariff != "free":
+        return mem_tariff
+    # Memory'da 'free' yoki yo'q — log'dan tekshirish
     try:
         if os.path.exists(TARIFF_LOG_FILE):
             latest_tariff = None
@@ -652,8 +655,8 @@ def get_user_tariff(user_id):
                             latest_tariff = entry["tariff"]
                     except Exception:
                         continue
-            if latest_tariff:
-                logging.warning(f"🔁 Tariff log'dan tiklandi: user_id={uid} → {latest_tariff}")
+            if latest_tariff and latest_tariff != "free":
+                logging.warning(f"🔁 Tariff log'dan tiklandi: user_id={uid} → {latest_tariff} (memory'da {mem_tariff} edi)")
                 user_tariffs[uid] = latest_tariff
                 return latest_tariff
     except Exception as e:
@@ -4017,6 +4020,7 @@ async def admin_revoke_callback(update: Update, context: ContextTypes.DEFAULT_TY
     label = _user_label(target_id).replace("_", "\\_").replace("*", "\\*")
     user_tariffs[target_id] = "free"
     user_uzbek_usage[target_id] = 0
+    _append_tariff_log(target_id, "free", source="revoke")
     _save_user_data()
     back = [[InlineKeyboardButton("⬅️ Panelga qaytish", callback_data="adm:back")]]
     await query.edit_message_text(
@@ -4198,6 +4202,7 @@ async def revoke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Bepul tarifga qaytarish + daqiqalarni tiklash
     user_tariffs[target_id] = "free"
     user_uzbek_usage[target_id] = 0
+    _append_tariff_log(target_id, "free", source="revoke")
     _save_user_data()
     await update.message.reply_text(
         f"✅ *Tarif bekor qilindi*\n\n"
@@ -5710,7 +5715,12 @@ async def audit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 disk_data = json.load(f)
-            lines.append(f"   🔹 Tariflar (disk): {len(disk_data.get('tariffs') or {})}")
+            disk_tariffs = disk_data.get('tariffs') or {}
+            lines.append(f"   🔹 Tariflar (disk): {len(disk_tariffs)}")
+            # Har paid user'ni ko'rsatamiz
+            for k, v in disk_tariffs.items():
+                if v != "free":
+                    lines.append(f"      • {k} → {v}")
             lines.append(f"   🔹 Usage (disk): {len(disk_data.get('usage') or {})}")
             lines.append(f"   🔹 User info (disk): {len(disk_data.get('user_info') or {})}")
         except Exception as e:
