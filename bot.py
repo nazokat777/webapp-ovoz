@@ -5706,13 +5706,23 @@ async def audit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"\n📝 TARIFF_LOG_FILE: {TARIFF_LOG_FILE}")
     if os.path.exists(TARIFF_LOG_FILE):
         sz = os.path.getsize(TARIFF_LOG_FILE)
-        cnt = 0
+        log_entries = []
         try:
             with open(TARIFF_LOG_FILE, "r", encoding="utf-8") as f:
-                cnt = sum(1 for _ in f)
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        try:
+                            entry = json.loads(line)
+                            log_entries.append(entry)
+                        except Exception:
+                            pass
         except Exception:
             pass
-        lines.append(f"   ✅ Mavjud, hajmi: {sz:,} bayt, qatorlar: {cnt}")
+        lines.append(f"   ✅ Mavjud, hajmi: {sz:,} bayt, qatorlar: {len(log_entries)}")
+        # Har bir log entry'ni ko'rsatish
+        for entry in log_entries:
+            lines.append(f"   • {entry.get('uid')} → {entry.get('tariff')} ({entry.get('src', '?')})")
     else:
         lines.append("   ❌ LOG FAYL YO'Q!")
 
