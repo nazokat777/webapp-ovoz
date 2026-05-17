@@ -4388,13 +4388,13 @@ async def _show_restore_grant_buttons(update, context, target_id, original_capti
     buttons.append([InlineKeyboardButton("❌ Bekor qilish", callback_data="adm:back")])
 
     suggest_hint = f"\n\n💡 Tavsiya: {TARIFFS[suggested_key]['name']}" if suggested_key else ""
+    # Plain text — Markdown xatosi yo'q (username'da _ bo'lishi mumkin)
     await update.message.reply_text(
-        f"🔍 *Eski chek aniqlandi!*\n\n"
+        f"🔍 Eski chek aniqlandi!\n\n"
         f"👤 {username}\n"
-        f"🆔 ID: `{target_id}`\n"
+        f"🆔 ID: {target_id}\n"
         f"{suggest_hint}\n\n"
         f"Pastdagi tugmadan tarifni tanlang:",
-        parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(buttons),
     )
 
