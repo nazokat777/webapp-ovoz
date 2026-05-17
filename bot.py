@@ -5643,6 +5643,71 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def audit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: ma'lumot saqlash holatini tekshirish (persistent volume etc)."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Faqat admin uchun.")
+        return
+    lines = ["🔍 *AUDIT*\n"]
+    # DATA_FILE
+    lines.append(f"📂 DATA_FILE: `{DATA_FILE}`")
+    if os.path.exists(DATA_FILE):
+        sz = os.path.getsize(DATA_FILE)
+        lines.append(f"   ✅ Mavjud, hajmi: {sz:,} bayt")
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                disk_data = json.load(f)
+            lines.append(f"   🔹 Tariflar (disk): {len(disk_data.get('tariffs') or {})}")
+            lines.append(f"   🔹 Usage (disk): {len(disk_data.get('usage') or {})}")
+            lines.append(f"   🔹 User info (disk): {len(disk_data.get('user_info') or {})}")
+        except Exception as e:
+            lines.append(f"   ❌ O'qishda xato: {e}")
+    else:
+        lines.append("   ❌ FAYL YO'Q!")
+
+    # TARIFF_LOG_FILE
+    lines.append(f"\n📝 TARIFF_LOG_FILE: `{TARIFF_LOG_FILE}`")
+    if os.path.exists(TARIFF_LOG_FILE):
+        sz = os.path.getsize(TARIFF_LOG_FILE)
+        cnt = 0
+        try:
+            with open(TARIFF_LOG_FILE, "r", encoding="utf-8") as f:
+                cnt = sum(1 for _ in f)
+        except Exception:
+            pass
+        lines.append(f"   ✅ Mavjud, hajmi: {sz:,} bayt, qatorlar: {cnt}")
+    else:
+        lines.append("   ❌ LOG FAYL YO'Q!")
+
+    # Memory
+    lines.append(f"\n🧠 *Memory*:")
+    lines.append(f"   🔹 Tariflar (memory): {len(user_tariffs)}")
+    lines.append(f"   🔹 Usage (memory): {len(user_uzbek_usage)}")
+    lines.append(f"   🔹 User info (memory): {len(user_info)}")
+    paid_count = sum(1 for t in user_tariffs.values() if t != "free")
+    lines.append(f"   💎 Paid (memory): {paid_count}")
+
+    # Volume tekshirish
+    lines.append(f"\n💾 *Persistent volume*:")
+    if DATA_FILE.startswith("/data"):
+        lines.append("   ✅ /data yo'l ishlatilyapti")
+        # /data papkasi mavjudmi
+        if os.path.isdir("/data"):
+            try:
+                files = os.listdir("/data")
+                lines.append(f"   📁 /data ichida: {len(files)} fayl")
+                for f in files[:10]:
+                    lines.append(f"      • {f}")
+            except Exception as e:
+                lines.append(f"   ❌ /data o'qishda: {e}")
+        else:
+            lines.append("   ⚠️ /data papka YO'Q! (volume mount qilinmagan)")
+    else:
+        lines.append(f"   ⚠️ /data emas: `{DATA_FILE}` — bu ephemeral bo'lishi mumkin!")
+
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Foydalanuvchilar uchun yordam — admin'ga to'g'ridan-to'g'ri chiqmaydi."""
     text = (
@@ -7443,6 +7508,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("audit", audit_cmd))
     app.add_handler(CommandHandler("lang", lang_command))
     app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CommandHandler("tariflar", tariflar_cmd))
