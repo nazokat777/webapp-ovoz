@@ -4874,25 +4874,25 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = (update.message.text or "").split()
     if len(args) < 3:
         await update.message.reply_text(
-            "*Foydalanish:*\n"
-            "`/grant <user_id> <tarif>`\n\n"
-            "*Tariflar:* `free`, `standart`, `premium`, `pro`\n\n"
-            "*Misol:*\n"
-            "`/grant 123456789 standart`",
-            parse_mode="Markdown"
+            "/grant <id> <tarif>\n\n"
+            "Tariflar:\n"
+            "• pro_standart — ⭐ 3 soat\n"
+            "• pro_premium — 👑 6 soat\n"
+            "• pro_max — 💎 10 soat\n"
+            "• free — 🌸 Bepul\n\n"
+            "Misol: /grant 94184684 pro_max"
         )
         return
     try:
         target_id = int(args[1])
     except ValueError:
-        await update.message.reply_text("❌ user_id raqam bo'lishi kerak.")
+        await update.message.reply_text("❌ ID raqam bo'lishi kerak.")
         return
     tariff_key = args[2].lower()
     if tariff_key not in TARIFFS:
         await update.message.reply_text(
-            f"❌ Tarif `{tariff_key}` mavjud emas.\n\n"
-            f"Mavjud: `free`, `standart`, `premium`, `pro`",
-            parse_mode="Markdown"
+            f"❌ '{tariff_key}' yo'q.\n\n"
+            f"Mavjud: pro_standart, pro_premium, pro_max, free"
         )
         return
     user_tariffs[target_id] = tariff_key
