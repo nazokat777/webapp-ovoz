@@ -1054,6 +1054,37 @@ def _normalize_uzbek_apostrophes(text):
     return out
 
 
+def _is_user_pro_tariff(user_id):
+    """User Pro Uzbek tarifida (pro_* yoki legacy pro)mi?"""
+    tariff = get_user_tariff(user_id)
+    return tariff.startswith("pro_") or tariff == "pro"
+
+
+def _enforce_alphabet_by_tariff(user_id, requested_alphabet):
+    """Cyrillic alifbo faqat Pro Uzbek tarif user'lar uchun.
+    Oddiy/Free tarif user Cyrillic so'rasa — Latin'ga qaytariladi va xabar yuboriladi.
+    Returns: effective_alphabet (latin yoki cyrillic)."""
+    if requested_alphabet != "cyrillic":
+        return requested_alphabet
+    if _is_user_pro_tariff(user_id):
+        return "cyrillic"
+    # Oddiy user Cyrillic so'radi — Latin majburiy
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, json={
+            "chat_id": user_id,
+            "text": (
+                "ℹ️ *Eslatma:* Kirill alifbosi faqat *Pro Uzbek* tarifi uchun.\n\n"
+                "Sizning matn Lotin alifbosida tayyorlandi.\n"
+                "Kirill alifbo + yuqori sifat uchun: /tariflar → ✨ O'zbek tili pro"
+            ),
+            "parse_mode": "Markdown",
+        }, timeout=15)
+    except Exception as e:
+        logging.debug(f"Alphabet warning yuborish xato: {e}")
+    return "latin"
+
+
 def convert_latin_to_cyrillic(text):
     """O'zbek Lotin alifbosidagi matnni Kirill alifbosiga o'tkazish — GPT-4o orqali.
     Yuqori sifat, imloviy xatolarsiz. Uzun matn 3000 so'zlik bo'laklarda ishlanadi.
@@ -4506,6 +4537,70 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
             logging.warning(f"Userga ({target_id}) rad xabari yuborilmadi: {e}")
 
 
+async def refund_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: norozi mijozga pul qaytarish + Pro Uzbek taklif xabarini yuborish.
+    Foydalanish: /refund <user_id>
+    Bot user'ga uzr xabari va Pro Uzbek tariff tavsiyasini yuboradi.
+    Pulni admin alohida qaytaradi (karta orqali)."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    args = (update.message.text or "").split()
+    if len(args) < 2:
+        await update.message.reply_text(
+            "*Foydalanish:*\n"
+            "`/refund <user_id>`\n\n"
+            "*Misol:*\n"
+            "`/refund 629686772`\n\n"
+            "Bot user'ga uzr xabari yuboradi va Pro Uzbek tarif tavsiyasi.\n"
+            "Pulni siz alohida qaytarasiz (karta orqali).",
+            parse_mode="Markdown",
+        )
+        return
+    try:
+        target_id = int(args[1])
+    except ValueError:
+        await update.message.reply_text("❌ user_id raqam bo'lishi kerak.")
+        return
+
+    # User tarifini bilamiz (refund vaqtidagi holatda)
+    old_tariff_key = get_user_tariff(target_id)
+    old_tariff = TARIFFS.get(old_tariff_key, TARIFFS["free"])
+
+    refund_msg = (
+        "🙏 *Sizdan uzr so'raymiz*\n\n"
+        f"Ko'rinishidan, *{old_tariff['name']}* tarifida olgan matn sifati past chiqdi. "
+        "Bu Whisper STT'ning O'zbek diniy/akademik kontentdagi cheklovi.\n\n"
+        "💰 *Pulingiz qaytariladi* (admin tez orada karta orqali yuboradi).\n\n"
+        "✨ *Eng yaxshi yechim — Pro Uzbek tarifi:*\n"
+        "• Maxsus O'zbek STT (Muhlisa AI) — sifat 2x yuqori\n"
+        "• Arab oyatlari va diniy terminlar yaxshiroq aniqlaydi\n"
+        "• 3 soat 170,000 so'm dan boshlanadi\n\n"
+        "Tarif sotib olish: /tariflar yoki /buy"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=target_id,
+            text=refund_msg,
+            parse_mode="Markdown",
+        )
+        # Tarif bekor qilamiz — user qayta sotib olishi mumkin
+        user_tariffs[target_id] = "free"
+        user_uzbek_usage[target_id] = 0
+        _save_user_data()
+        await update.message.reply_text(
+            f"✅ User `{target_id}`'ga uzr xabari + Pro tavsiya yuborildi.\n"
+            f"Tarifi *{old_tariff['name']}* → *Bepul*'ga qaytarildi.\n\n"
+            f"⚠️ *Pulni siz alohida qaytaring* (karta orqali).",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ User'ga xabar yuborilmadi: {str(e)[:200]}",
+        )
+
+
 async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: foydalanuvchiga tarif berish.
     Foydalanish: /grant <user_id> <free|standart|premium|pro>"""
@@ -5914,6 +6009,8 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
                 )
             else:
                 # === [ALIFBO] Kirill so'ralsa matnni o'tkazamiz ===
+                # Cyrillic faqat Pro tariflar uchun
+                output_alphabet = _enforce_alphabet_by_tariff(user_id, output_alphabet)
                 if output_alphabet == "cyrillic":
                     telegram_send_message(user_id, "🔤 Matn Kirill alifbosiga o'tkazilmoqda...")
                     text = convert_latin_to_cyrillic(text)
@@ -6031,6 +6128,7 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
             src_label = TRANSLATION_LANGS.get(source_lang, source_lang)
             tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
             # === [ALIFBO] target=uz va Kirill so'ralsa, kirill alifbosiga o'tkazamiz ===
+            output_alphabet = _enforce_alphabet_by_tariff(user_id, output_alphabet)
             if output_alphabet == "cyrillic" and target_lang == "uz":
                 progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
                 translated = convert_latin_to_cyrillic(translated)
@@ -6232,6 +6330,7 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
         # 4) Natija — matn + PDF + audio (target tilda)
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
         # === [ALIFBO] Kirill so'ralsa O'zbek matni kirillga o'tkazamiz ===
+        output_alphabet = _enforce_alphabet_by_tariff(user_id, output_alphabet)
         if output_alphabet == "cyrillic" and target_lang == "uz":
             progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
             translated = convert_latin_to_cyrillic(translated)
@@ -6357,6 +6456,7 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
         src_label = TRANSLATION_LANGS[source_lang]
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
         # === [ALIFBO] Kirill so'ralsa O'zbek matni kirillga o'tkazamiz ===
+        output_alphabet = _enforce_alphabet_by_tariff(user_id, output_alphabet)
         if output_alphabet == "cyrillic" and target_lang == "uz":
             progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
             translated = convert_latin_to_cyrillic(translated)
@@ -6732,6 +6832,7 @@ def main():
     app.add_handler(CommandHandler("stats", stats_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(CommandHandler("grant", grant_cmd))
+    app.add_handler(CommandHandler("refund", refund_cmd))
     app.add_handler(CommandHandler("setcard", setcard_cmd))
     app.add_handler(CommandHandler("setholder", setholder_cmd))
     app.add_handler(CommandHandler("feedback", feedback_cmd))
