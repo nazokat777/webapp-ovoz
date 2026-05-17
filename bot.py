@@ -3794,48 +3794,85 @@ async def openai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
         return
 
-    # Jami daqiqa (audio'dan matn qilingan)
-    total_sec = sum(user_uzbek_usage.values())
-    total_min = total_sec / 60.0
+    # Jami daqiqa — Pro tarif (Muhlisa) va Oddiy (Whisper) alohida
+    pro_sec = 0
+    whisper_sec = 0
+    for uid, sec in user_uzbek_usage.items():
+        tariff = get_user_tariff(uid)
+        if tariff.startswith("pro_") or tariff == "pro":
+            pro_sec += sec
+        else:
+            whisper_sec += sec
+    pro_min = pro_sec / 60.0
+    whisper_min = whisper_sec / 60.0
+    total_min = pro_min + whisper_min
     active_users = sum(1 for s in user_uzbek_usage.values() if s > 0)
 
-    # OpenAI narxlari ($) — 2026 holati
-    PRICE_STT_PER_MIN = 0.006        # Whisper-1 / gpt-4o-transcribe
-    PRICE_CLEANUP_OVERHEAD = 0.10    # GPT-4o cleanup (~10%)
-    PRICE_EXTRAS_OVERHEAD = 0.20     # Tarjima + PDF→audio (taxminiy 20%)
-    USD_TO_UZS = 12500               # taxminiy kurs
+    # Narxlar (2026 holati)
+    PRICE_WHISPER_PER_MIN = 0.006          # OpenAI Whisper STT ($)
+    PRICE_CLEANUP_OVERHEAD = 0.10          # GPT-4o cleanup (~10% qo'shimcha)
+    PRICE_EXTRAS_OVERHEAD = 0.20           # Tarjima + PDF audio (taxmin 20%)
+    PRICE_MUHLISA_PER_MIN_UZS = 500        # Muhlisa AI ~500 so'm/daq
+    SERVER_PER_MONTH_USD = 5.0             # Railway Hobby $5/oy
+    USD_TO_UZS = 12500                     # taxminiy kurs
 
-    stt_cost_usd = total_min * PRICE_STT_PER_MIN
-    cleanup_cost_usd = stt_cost_usd * PRICE_CLEANUP_OVERHEAD
-    extras_cost_usd = stt_cost_usd * PRICE_EXTRAS_OVERHEAD
-    total_usd = stt_cost_usd + cleanup_cost_usd + extras_cost_usd
-    total_uzs = total_usd * USD_TO_UZS
+    # OpenAI xarajat
+    whisper_cost_usd = whisper_min * PRICE_WHISPER_PER_MIN
+    cleanup_cost_usd = whisper_cost_usd * PRICE_CLEANUP_OVERHEAD
+    extras_cost_usd = whisper_cost_usd * PRICE_EXTRAS_OVERHEAD
+    openai_cost_usd = whisper_cost_usd + cleanup_cost_usd + extras_cost_usd
+    openai_cost_uzs = openai_cost_usd * USD_TO_UZS
 
-    # Eng faol 5 user (plain text — Markdown xatosi yo'q)
+    # Muhlisa xarajat (so'mda)
+    muhlisa_cost_uzs = pro_min * PRICE_MUHLISA_PER_MIN_UZS
+
+    # Server xarajat (oylik sobit)
+    server_cost_uzs = SERVER_PER_MONTH_USD * USD_TO_UZS
+
+    # JAMI (so'mda)
+    total_uzs = openai_cost_uzs + muhlisa_cost_uzs + server_cost_uzs
+
+    # Eng faol 5 user
     top_users = sorted(user_uzbek_usage.items(), key=lambda x: -x[1])[:5]
     top_lines = []
     for uid, sec in top_users:
         if sec <= 0:
             continue
         label = _user_label(uid)
-        top_lines.append(f"  • {label}: {sec/60:.1f} daq (~${sec/60*PRICE_STT_PER_MIN*1.3:.2f})")
+        tariff = get_user_tariff(uid)
+        is_pro = tariff.startswith("pro_") or tariff == "pro"
+        per_min_uzs = PRICE_MUHLISA_PER_MIN_UZS if is_pro else PRICE_WHISPER_PER_MIN * USD_TO_UZS
+        cost_uzs = sec / 60 * per_min_uzs
+        top_lines.append(f"  • {label}: {sec/60:.1f} daq (~{cost_uzs:,.0f} so'm)")
     top_text = "\n".join(top_lines) if top_lines else "  (hech kim yo'q)"
 
-    # Plain text — Markdown xatosi bo'lmasin
     text = (
-        f"💰 OpenAI xarajat (taxminiy)\n\n"
-        f"📊 Jami foydalanish:\n"
-        f"  • Daqiqa: {total_min:.0f} daqiqa\n"
+        f"💰 To'liq xarajat (taxminiy)\n\n"
+        f"📊 Foydalanish:\n"
+        f"  • Oddiy (Whisper): {whisper_min:.0f} daq\n"
+        f"  • Pro (Muhlisa): {pro_min:.0f} daq\n"
+        f"  • Jami daqiqa: {total_min:.0f}\n"
         f"  • Faol user: {active_users} ta\n\n"
-        f"💸 Xarajat hisoblovi:\n"
-        f"  • STT (Whisper): ${stt_cost_usd:.2f}\n"
+
+        f"💸 OpenAI xarajat:\n"
+        f"  • STT (Whisper): ${whisper_cost_usd:.2f}\n"
         f"  • Cleanup (GPT-4o): ${cleanup_cost_usd:.2f}\n"
         f"  • Tarjima + PDF audio: ${extras_cost_usd:.2f}\n"
+        f"  Jami OpenAI: ${openai_cost_usd:.2f} (≈ {openai_cost_uzs:,.0f} so'm)\n\n"
+
+        f"🌟 Muhlisa AI (Pro tarif):\n"
+        f"  • {pro_min:.0f} daq × 500 so'm = {muhlisa_cost_uzs:,.0f} so'm\n\n"
+
+        f"🖥 Server (Railway, oylik sobit):\n"
+        f"  • $5/oy × {USD_TO_UZS} = {server_cost_uzs:,.0f} so'm\n\n"
+
         f"━━━━━━━━━━━━━━\n"
-        f"📌 Jami: ${total_usd:.2f} (≈ {total_uzs:,.0f} so'm)\n\n"
+        f"📌 JAMI: ~{total_uzs:,.0f} so'm\n"
+        f"━━━━━━━━━━━━━━\n\n"
+
         f"🔝 Eng faol userlar:\n{top_text}\n\n"
-        f"💡 Eslatma: Bu taxmiriy hisob (barcha xizmatlar).\n"
-        f"   Real summa OpenAI dashboard'da: platform.openai.com/usage"
+
+        f"💡 Eslatma: Bu taxminiy. Real OpenAI: platform.openai.com/usage"
     )
     await update.message.reply_text(text)
 
