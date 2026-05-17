@@ -318,7 +318,9 @@ def _load_user_data():
 
 
 def _save_user_data():
-    """user_uzbek_usage, user_tariffs va admin_chat_id ni faylga yozadi (atomik)."""
+    """user_uzbek_usage, user_tariffs va admin_chat_id ni faylga yozadi (atomik).
+    XAVFSIZLIK: bo'sh in-memory data eski to'la faylni overwrite qila olmaydi.
+    Backup .bak fayl ham saqlanadi."""
     with _save_lock:
         try:
             data = {
@@ -326,24 +328,51 @@ def _save_user_data():
                 "tariffs": {str(k): v for k, v in user_tariffs.items()},
                 "admin_chat_id": ADMIN_CHAT_ID["id"],
                 "pending_payments": {str(k): v for k, v in pending_payments.items()},
-                # === [TARJIMA] pending translations ham saqlanadi ===
                 "pending_translations": {str(k): v for k, v in pending_translations.items()},
-                # === [USERS] user_info ham saqlanadi (deploy'larda yo'qolmasligi uchun) ===
                 "user_info": {str(k): v for k, v in user_info.items()},
-                # === [TXT/PDF cache] last_transcripts (24 soat) ===
                 "last_transcripts": {
                     str(k): {"text": v["text"], "ts": v.get("ts", 0)}
                     for k, v in last_transcripts.items()
                     if isinstance(v, dict) and v.get("text") and (time.time() - v.get("ts", 0)) < 24 * 3600
                 },
-                # === [REFERRAL] bonus daqiqalar va taklif tizimi ===
                 "user_bonus_minutes": {str(k): int(v) for k, v in user_bonus_minutes.items()},
                 "user_referrals": {str(k): int(v) for k, v in user_referrals.items()},
                 "user_referral_claimed": {str(k): True for k in user_referral_claimed},
                 "runtime_settings": dict(runtime_settings),
             }
-            tmp_path = DATA_FILE + ".tmp"
+
+            # XAVFSIZLIK 1: bo'sh data eski to'la faylni overwrite qilmasin
+            in_memory_count = len(user_uzbek_usage) + len(user_tariffs) + len(user_info)
+            if os.path.exists(DATA_FILE):
+                try:
+                    existing_size = os.path.getsize(DATA_FILE)
+                    # Agar in-memory data juda kichik (<5 entry) va fayl katta (>2000 bayt) — XAVF!
+                    if in_memory_count < 5 and existing_size > 2000:
+                        logging.error(
+                            f"🛑 SAVE ABORTED — in-memory={in_memory_count} entries, "
+                            f"existing_file={existing_size} bayt. Possibilities: empty memory or data wipe risk!"
+                        )
+                        # Tryload from disk
+                        try:
+                            _load_user_data()
+                            logging.info(f"💾 Disk'dan qayta yuklab olindi: {len(user_uzbek_usage)} usage")
+                        except Exception as e2:
+                            logging.error(f"Reload xato: {e2}")
+                        return
+                except Exception:
+                    pass
+
             os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
+
+            # XAVFSIZLIK 2: backup .bak fayl (eski versiya saqlanadi)
+            if os.path.exists(DATA_FILE):
+                try:
+                    bak_path = DATA_FILE + ".bak"
+                    shutil.copy2(DATA_FILE, bak_path)
+                except Exception as e:
+                    logging.debug(f"Backup .bak xato: {e}")
+
+            tmp_path = DATA_FILE + ".tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
             os.replace(tmp_path, DATA_FILE)
