@@ -568,7 +568,33 @@ def is_admin(update):
 
 
 def get_user_tariff(user_id):
-    return user_tariffs.get(user_id, "free")
+    """Tariff o'qish — memory'dan, agar yo'q bo'lsa log'dan tiklash.
+    Bu Railway deploy/restart chog'ida tarif yo'qolishini OLDINI OLADI."""
+    uid = int(user_id)
+    if uid in user_tariffs:
+        return user_tariffs[uid]
+    # Memory'da yo'q — log'dan tekshirish (yo'qolib qolgan paid tariflarni tiklash)
+    try:
+        if os.path.exists(TARIFF_LOG_FILE):
+            latest_tariff = None
+            with open(TARIFF_LOG_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        if int(entry["uid"]) == uid and entry["tariff"] in TARIFFS:
+                            latest_tariff = entry["tariff"]
+                    except Exception:
+                        continue
+            if latest_tariff:
+                logging.warning(f"🔁 Tariff log'dan tiklandi: user_id={uid} → {latest_tariff}")
+                user_tariffs[uid] = latest_tariff
+                return latest_tariff
+    except Exception as e:
+        logging.error(f"Tariff log o'qishda xato: {e}")
+    return "free"
 
 
 def get_user_bonus_min(user_id):
