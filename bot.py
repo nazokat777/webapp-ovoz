@@ -206,7 +206,24 @@ ADMIN_CHAT_ID = {"id": None}
 # ── PERSISTENCE: usage va tarif ma'lumotlarini JSON faylga saqlash ──────────
 # Railway'da volume bo'lsa /data ga, aks holda working dir'ga yoziladi.
 # Bot qayta yoqilganda limitlar yo'qolib ketmasligi uchun.
-DATA_FILE = os.getenv("DATA_FILE", os.path.join(HERE, "user_data.json"))
+def _resolve_data_file():
+    """DATA_FILE yo'lini aniqlash — Railway'da MAJBURIY /data ishlatamiz.
+    Railway env'ni o'qimasligini ham hisobga olamiz."""
+    # 1) Agar env aniq /data bilan boshlansa — to'g'ri sozlangan
+    env_path = os.getenv("DATA_FILE", "").strip()
+    if env_path and env_path.startswith("/data"):
+        return env_path
+    # 2) Railway aniqlangan bo'lsa — /data majburiy (volume mount)
+    if os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("RAILWAY_PROJECT_ID"):
+        return "/data/user_data.json"
+    # 3) Lokal dev — script directory
+    if env_path:
+        return env_path
+    return os.path.join(HERE, "user_data.json")
+
+
+DATA_FILE = _resolve_data_file()
+print(f"💾 DATA_FILE = {DATA_FILE}")  # Deploy logda ko'rinadi
 _save_lock = threading.Lock()
 
 
