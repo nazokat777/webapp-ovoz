@@ -4345,10 +4345,76 @@ async def _send_chek_for_manual_approval(update: Update, context: ContextTypes.D
     )
 
 
+async def _show_restore_grant_buttons(update, context, target_id, original_caption=""):
+    """Admin eski chek'ni forward qilganda — tarif berish tugmalari bilan javob.
+    Eski chek caption'idan tarif nomini topishga harakat qiladi (auto-suggest)."""
+    # Tarif nomini topishga harakat — auto suggest uchun
+    suggested_key = None
+    if "Boshlang'ich" in original_caption:
+        suggested_key = "basic"
+    elif "Pro Standart" in original_caption or "✨" in original_caption:
+        suggested_key = "pro_standart"
+    elif "Pro Premium" in original_caption:
+        suggested_key = "pro_premium"
+    elif "Pro Pro" in original_caption or "💎" in original_caption:
+        suggested_key = "pro_max"
+    elif "Premium" in original_caption:
+        suggested_key = "premium"
+    elif "Standart" in original_caption:
+        suggested_key = "standart"
+
+    # User nomini olish (agar caption'da bo'lsa)
+    username = "(noma'lum)"
+    m = re.search(r"Foydalanuvchi:\s*([^\n]+)", original_caption)
+    if m:
+        username = m.group(1).strip().replace("`", "").replace("*", "")
+
+    # Tarif tugmalari
+    visible_keys = ["basic", "standart", "premium", "pro_standart", "pro_premium", "pro_max"]
+    buttons = []
+    row = []
+    for key in visible_keys:
+        if key not in TARIFFS:
+            continue
+        t = TARIFFS[key]
+        emoji = "⭐ " if key == suggested_key else ""
+        label = f"{emoji}{t['name']}"
+        row.append(InlineKeyboardButton(label, callback_data=f"approve:{target_id}:{key}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+    buttons.append([InlineKeyboardButton("❌ Bekor qilish", callback_data="adm:back")])
+
+    suggest_hint = f"\n\n💡 Tavsiya: {TARIFFS[suggested_key]['name']}" if suggested_key else ""
+    await update.message.reply_text(
+        f"🔍 *Eski chek aniqlandi!*\n\n"
+        f"👤 {username}\n"
+        f"🆔 ID: `{target_id}`\n"
+        f"{suggest_hint}\n\n"
+        f"Pastdagi tugmadan tarifni tanlang:",
+        parse_mode="Markdown",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """User chek (rasm) yuborganda — agar to'lov kutilayotgan bo'lsa adminga uzatamiz.
-    Agar user 'Men to'ladim' bosmagan bo'lsa ham — adminga manual tasdiqlash uchun yuboramiz."""
+    Agar user 'Men to'ladim' bosmagan bo'lsa ham — adminga manual tasdiqlash uchun yuboramiz.
+    Agar ADMIN forward qilgan eski chek bo'lsa — user_id avtomat aniqlanib tarif tugmalari ko'rsatiladi."""
     user_id = update.effective_user.id if update.effective_user else None
+
+    # === [ADMIN RESTORE] Admin eski chek'ni forward qilgan bo'lsa — auto-detect ===
+    if user_id and is_admin(update):
+        caption = update.message.caption or ""
+        # Eski chek pattern: "🆔 ID: 12345" yoki "🆔 ID: `12345`"
+        m = re.search(r"🆔\s*ID:\s*`?(\d{5,})`?", caption)
+        if m:
+            target_id = int(m.group(1))
+            await _show_restore_grant_buttons(update, context, target_id, caption)
+            return
+
     # Atomik pop — bir vaqtning o'zida ikkita rasm yuborilsa, faqat bittasi qabul qilinadi
     tariff_key = None
     with _save_lock:
