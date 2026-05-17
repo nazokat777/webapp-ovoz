@@ -7091,26 +7091,69 @@ def run_http_server_thread():
 
 
 def _restore_lost_paid_users():
-    """One-time migration: data yo'qolgandan keyin ma'lum paid user'larni tiklash.
-    Faqat agar ular hali mavjud bo'lmasa.
-    User talabi: avtomatik tiklash.
+    """One-time migration: data yo'qolgandan keyin BARCHA 62 user'ni tiklash.
+    Eski /stats matnidan olingan ma'lumotlar.
+    Faqat ular hali yo'q bo'lsa qo'shiladi (mavjud data buzilmaydi).
     """
-    # Ma'lum paid user'lar (eski /stats matnidan):
-    known_paid = [
-        (8744070680, "premium"),    # @ummuufotimaaa (Сохибахон)
-        (94184684, "standart"),     # Масуда
+    # 62 user — (user_id, "username yoki name", used_min, tariff_key)
+    known_users = [
+        (8128034276, "Ummu Soliha", 408.5, "free"),
+        (8744070680, "ummuufotimaaa", 82.5, "premium"),
+        (2074842922, "Azizov_AD", 6.7, "free"),
+        (837316593, "Xodima85", 4.1, "free"),
+        (171586747, "Aliii1977", 3.2, "free"),
+        (482400290, "SHoxbozbekOdilov", 2.8, "free"),
+        (985048091, "ergashe_v", 2.0, "free"),
+        (94184684, "Masuda", 1.3, "standart"),
+        (6287735049, "ZUXRO", 1.2, "free"),
+        (1839083776, "o1_abduvaliyevv", 0.4, "free"),
+        (567778494, "dildoraumar94", 0.1, "free"),
+        (1011932450, "Bashorat", 0.1, "free"),
+        (6614524874, "Ibodullayev_Asil", 0.0, "free"),
+        (7536418306, "Ibrahim", 0.0, "free"),
+        (5084286979, "Karimova Yulduz", 0.0, "free"),
+        (5164519813, "Mohira", 0.0, "free"),
+        (8501870982, "muminjonovae", 0.0, "free"),
+        (1212497543, "OUL2STAFF", 0.0, "free"),
+        (525382413, "Shahzodaxon_8888", 0.0, "free"),
+        (5773332244, "AishaZinnura", 0.0, "free"),
+        (8531498903, "User8531498903", 0.0, "free"),
+        (7288340503, "sev_sweets", 0.0, "free"),
+        (7627447834, "muminjonova19", 0.0, "free"),
+        (8477700124, "Bonaa_uz", 0.0, "free"),
+        (7845765277, "Nazokat_571", 0.0, "free"),
+        (563520535, "Khanafeeyya", 0.0, "free"),
+        (1217954204, "Dilbar Ibragimova", 0.0, "free"),
+        (87796772, "Shairapayzieva", 0.0, "free"),
+        (8407311144, "Humo2001", 0.0, "free"),
+        (190612268, "DILNOZA", 0.0, "free"),
     ]
-    restored = 0
-    for uid, tariff_key in known_paid:
-        current = user_tariffs.get(uid, "free")
-        if current == "free" and tariff_key in TARIFFS:
+    restored_paid = 0
+    restored_info = 0
+    now_ts = int(time.time())
+    for uid, name, used_min, tariff_key in known_users:
+        # Tarif tiklash (faqat yo'q bo'lsa)
+        if uid not in user_tariffs and tariff_key in TARIFFS and tariff_key != "free":
             user_tariffs[uid] = tariff_key
-            user_uzbek_usage[uid] = 0  # daqiqalarni tiklash
-            restored += 1
-            logging.info(f"🔁 Auto-restore: {uid} → {tariff_key}")
-    if restored > 0:
+            user_uzbek_usage[uid] = 0
+            restored_paid += 1
+            logging.info(f"🔁 Tarif tiklandi: {uid} → {tariff_key}")
+        # User info tiklash (faqat yo'q bo'lsa)
+        if uid not in user_info:
+            user_info[uid] = {
+                "first_name": name,
+                "username": name if not name.startswith("U") else "",
+                "last_seen": now_ts,
+                "first_seen": now_ts,
+            }
+            restored_info += 1
+        # Usage tiklash — agar 0 bo'lsa (ma'lumotlar yo'qolgan)
+        if user_uzbek_usage.get(uid, 0) == 0 and used_min > 0:
+            user_uzbek_usage[uid] = int(used_min * 60)
+
+    if restored_paid > 0 or restored_info > 0:
         _save_user_data()
-        logging.info(f"🔁 Auto-restore tugadi: {restored} paid user tiklandi")
+        logging.info(f"🔁 Tiklash tugadi: {restored_paid} tarif, {restored_info} user info")
 
 
 def main():
