@@ -6088,6 +6088,20 @@ async def ai_tools_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # PDF/TXT — matn kerak
     record = last_transcripts.get(user_id)
+    # Fallback: agar memory'da yo'q bo'lsa, diskdan o'qib ko'ramiz
+    if not record or not record.get("text"):
+        try:
+            if os.path.exists(DATA_FILE):
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    disk_data = json.load(f)
+                disk_transcripts = disk_data.get("last_transcripts") or {}
+                disk_record = disk_transcripts.get(str(user_id))
+                if disk_record and disk_record.get("text"):
+                    record = disk_record
+                    last_transcripts[user_id] = disk_record
+                    logging.info(f"📂 last_transcripts diskdan tiklandi: user_id={user_id}")
+        except Exception as e:
+            logging.warning(f"last_transcripts disk fallback xato: {e}")
     if not record or not record.get("text"):
         await context.bot.send_message(
             chat_id=user_id,
