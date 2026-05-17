@@ -168,8 +168,10 @@ TARIFFS = {
     "pro_max":        {"name": "💎 Pro Pro",      "minutes": 600,  "price": 500000},  # 10 soat
 }
 
-# Foydalanuvchi xarajatlarini saqlash {user_id: jami_soniya}
+# Foydalanuvchi xarajatlarini saqlash {user_id: jami_soniya} — TARIF LIMITI uchun (grant'da 0'ga tushadi)
 user_uzbek_usage = {}
+# Lifetime ishlatilgan daqiqalar {user_id: jami_soniya} — HECH QACHON 0'ga tushmaydi (statistika uchun)
+user_total_usage = {}
 # Foydalanuvchi tarifi {user_id: tariff_kalit}, default = "free"
 user_tariffs = {}
 # "Men to'ladim" tugmasini bosgan foydalanuvchilar — keyingi rasmni chek deb qabul qilamiz
@@ -304,6 +306,19 @@ def _load_user_data():
                 user_uzbek_usage[int(k)] = int(v)
             except (ValueError, TypeError):
                 pass
+        # Lifetime usage — agar fayl'da yo'q bo'lsa, joriy usage'ni boshlanish nuqtasi qilamiz
+        loaded_lifetime = data.get("total_usage") or {}
+        if loaded_lifetime:
+            for k, v in loaded_lifetime.items():
+                try:
+                    user_total_usage[int(k)] = int(v)
+                except (ValueError, TypeError):
+                    pass
+        else:
+            # Migration: birinchi marta — joriy usage'ni lifetime'ga ko'chiramiz
+            for uid, sec in user_uzbek_usage.items():
+                user_total_usage[uid] = sec
+            logging.info(f"📊 Lifetime usage migration: {len(user_total_usage)} user")
         for k, v in (data.get("tariffs") or {}).items():
             try:
                 if v in TARIFFS:
@@ -390,6 +405,7 @@ def _save_user_data():
         try:
             data = {
                 "usage": {str(k): int(v) for k, v in user_uzbek_usage.items()},
+                "total_usage": {str(k): int(v) for k, v in user_total_usage.items()},
                 "tariffs": {str(k): v for k, v in user_tariffs.items()},
                 "admin_chat_id": ADMIN_CHAT_ID["id"],
                 "pending_payments": {str(k): v for k, v in pending_payments.items()},
@@ -517,7 +533,8 @@ def add_user_usage(user_id, seconds):
     logging.info(f"➕ add_user_usage(user_id={user_id}, seconds={seconds}, joriy={user_uzbek_usage.get(user_id, 0)})")
     if seconds and seconds > 0:
         user_uzbek_usage[user_id] = user_uzbek_usage.get(user_id, 0) + seconds
-        logging.info(f"   ✅ Yangi total: {user_uzbek_usage[user_id]} sek")
+        user_total_usage[user_id] = user_total_usage.get(user_id, 0) + seconds
+        logging.info(f"   ✅ Yangi total: {user_uzbek_usage[user_id]} sek (lifetime: {user_total_usage[user_id]} sek)")
         # Referral bonus — birinchi real foydalanishdan keyin beriladi (anti-fake)
         _try_claim_referral_bonus(user_id)
         _save_user_data()
@@ -3976,19 +3993,29 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📊 Hozircha foydalanuvchilar bot'ni ishlatmagan.")
         return
     lines = ["📊 *Foydalanuvchi statistikasi:*\n"]
-    # Userlarni tarif daqiqalari bo'yicha tartiblash
-    all_user_ids = set(list(user_uzbek_usage.keys()) + list(user_info.keys()))
-    user_data_list = [(uid, user_uzbek_usage.get(uid, 0)) for uid in all_user_ids]
+    # Userlarni LIFETIME daqiqa bo'yicha tartiblash (grant'da tushmaydigan)
+    all_user_ids = set(list(user_uzbek_usage.keys()) + list(user_info.keys()) + list(user_total_usage.keys()))
+    user_data_list = [(uid, user_total_usage.get(uid, user_uzbek_usage.get(uid, 0))) for uid in all_user_ids]
     user_data_list.sort(key=lambda x: x[1], reverse=True)
-    for user_id, sec in user_data_list[:30]:
+    for user_id, lifetime_sec in user_data_list[:30]:
+        current_sec = user_uzbek_usage.get(user_id, 0)
         label = _user_label(user_id)
         # Markdown'da xavfsiz qilamiz (underscore, asterisk)
         safe_label = label.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
         tariff_key = get_user_tariff(user_id)
         tariff_name = TARIFFS.get(tariff_key, TARIFFS["free"])["name"]
-        lines.append(f"• {safe_label}\n  `{user_id}` — {sec/60:.1f} daq — {tariff_name}")
-    total_sec = sum(user_uzbek_usage.values())
-    lines.append(f"\n*Jami:* {len(all_user_ids)} ta user, {total_sec/60:.1f} daqiqa ishlatilgan")
+        # Jami ishlatgan | joriy davr | tarif
+        lines.append(
+            f"• {safe_label}\n"
+            f"  `{user_id}` — jami: {lifetime_sec/60:.1f} daq (joriy: {current_sec/60:.1f}) — {tariff_name}"
+        )
+    total_lifetime = sum(user_total_usage.get(uid, user_uzbek_usage.get(uid, 0)) for uid in all_user_ids)
+    total_current = sum(user_uzbek_usage.values())
+    lines.append(
+        f"\n*Jami:* {len(all_user_ids)} ta user\n"
+        f"⏱ Umumiy ishlatilgan (lifetime): *{total_lifetime/60:.1f} daqiqa*\n"
+        f"📊 Joriy davr (grant'dan keyin): {total_current/60:.1f} daqiqa"
+    )
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
 
