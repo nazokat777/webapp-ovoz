@@ -5000,8 +5000,9 @@ async def restore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Tiklash xato: {str(e)[:300]}")
 
 
-# Avtomatik backup OLIB TASHLANDI — user talabi: faqat /backup qo'lda
-# Eslatma: Adminga vaqti-vaqti bilan /backup yozish tavsiya etiladi
+# Auto-backup OLIB TASHLANDI — user talabi: faqat /backup so'ralganda
+# Data avtomat /data/user_data.json + .bak'ga saqlanadi (kod ichida)
+# Backup fayl Telegram'ga FAQAT /backup yozilganda yuboriladi
 
 
 async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
