@@ -1526,7 +1526,8 @@ def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges
 # Whisper: max 25 MB per request. 4 soatlik audio uchun bo'laklash kerak.
 # Claude: max 8192 output tokens. 30K+ so'zlar uchun bo'laklash kerak.
 
-WHISPER_CHUNK_SECONDS = 300    # 5 daqiqa per chunk (kichikroq = hallucination kam, oxiri yo'qolmaydi)
+WHISPER_CHUNK_SECONDS = 180    # 3 daqiqa per chunk (kichik = hallucination kam, aniqlik yuqori)
+WHISPER_CHUNK_OVERLAP = 30     # Har bo'lak oxirgi 30 sek keyingisi bilan birlashadi (qirralar yo'qolmaydi)
 
 # OpenAI Whisper API qo'llab-quvvatlovchi tillar (ISO 639-1).
 # Uzbek (uz), Kyrgyz (ky), Tajik (tg), Mongolian (mn) — qo'llab-quvvatlanmaydi.
@@ -1571,9 +1572,16 @@ def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
     # Faqat normalizatsiya va highpass shovqin filtri qoldi.
     tmp_dir = tempfile.mkdtemp(prefix="whisper_recode_")
     recoded_path = os.path.join(tmp_dir, "recoded.mp3")
+    # Yaxshilangan audio filter:
+    # - highpass=80Hz — past chastotali shovqin (vibratsiya, electric hum)
+    # - lowpass=12000Hz — yuqori chastotali shovqin (whistle, hiss)
+    # - afftdn=nr=12 — FFT noise reduction (shovqin pasaytirish)
+    # - loudnorm — normallashtirish (jim/baland ovozni tenglashtirish)
     audio_filter = (
-        "loudnorm=I=-16:LRA=11:TP=-1.5,"
-        "highpass=f=80"
+        "highpass=f=80,"
+        "lowpass=f=12000,"
+        "afftdn=nr=12,"
+        "loudnorm=I=-16:LRA=11:TP=-1.5"
     )
     cmd = [
         "ffmpeg", "-y", "-v", "error",
@@ -1627,22 +1635,28 @@ def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
 
 
 def _split_by_time(file_path, chunk_seconds, total_dur):
-    """Audio'ni vaqt bo'yicha bo'laklarga ajratish (past bitrate bilan).
+    """Audio'ni vaqt bo'yicha bo'laklarga ajratish (overlap bilan).
+    Har bo'lak `chunk_seconds + WHISPER_CHUNK_OVERLAP` davom etadi.
+    Boshlanish nuqtasi: i * chunk_seconds (overlap'siz).
+    Bu — keyingi bo'lak chetida kesilgan so'zlar to'liq saqlanadi.
     Eslatma: file_path AVVAL qayta kodlangan bo'lishi kerak (64kbps mono)."""
     n_chunks = int(total_dur // chunk_seconds) + (1 if total_dur % chunk_seconds > 0 else 0)
     n_chunks = max(1, min(n_chunks, 100))  # max 100 ta bo'lak (~16 soat)
     chunks = []
     tmp_dir = tempfile.mkdtemp(prefix="whisper_chunks_")
-    logging.info(f"🔪 vaqt bo'yicha bo'laklash: {n_chunks} ta bo'lak")
+    logging.info(f"🔪 vaqt bo'yicha bo'laklash: {n_chunks} ta bo'lak (overlap {WHISPER_CHUNK_OVERLAP}s)")
     for i in range(n_chunks):
         start = i * chunk_seconds
+        # Oxirgi bo'lakda overlap kerak emas; boshqalarda overlap qo'shiladi
+        is_last = (i == n_chunks - 1)
+        duration = chunk_seconds if is_last else (chunk_seconds + WHISPER_CHUNK_OVERLAP)
         out_path = os.path.join(tmp_dir, f"chunk_{i:03d}.mp3")
         # Fayl allaqachon kodlangan — copy stream tezroq
         cmd = [
             "ffmpeg", "-y", "-v", "error",
             "-ss", str(start),
             "-i", file_path,
-            "-t", str(chunk_seconds),
+            "-t", str(duration),
             "-c", "copy",
             out_path
         ]
@@ -1658,7 +1672,7 @@ def _split_by_time(file_path, chunk_seconds, total_dur):
                     "ffmpeg", "-y", "-v", "error",
                     "-ss", str(start),
                     "-i", file_path,
-                    "-t", str(chunk_seconds),
+                    "-t", str(duration),
                     "-vn", "-ac", "1", "-ar", "16000",
                     "-acodec", "libmp3lame", "-b:a", WHISPER_CHUNK_BITRATE,
                     out_path
@@ -2510,26 +2524,39 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
 
         chunk_offset_sec = (idx - 1) * WHISPER_CHUNK_SECONDS
 
+        # Strict hallucination check helper
+        def _is_good(text):
+            return bool(text) and len(text) >= 20 and not _is_chunk_hallucinated(text, WHISPER_CHUNK_SECONDS)
+
         # 1) gpt-4o-audio-preview (eng yaxshi sifat, qimmat ~$1.80/soat)
         chunk_text, err1 = _try_transcribe_audio_chat(chunk_path, source_lang, headers)
-        if chunk_text:
+        if _is_good(chunk_text):
             return idx, chunk_text, None
+        if chunk_text:
+            logging.warning(f"Bo'lak {idx}/{total} audio-preview natija sifat past, fallback...")
 
         # 2) whisper-1 fallback (so'zma-so'z, arzon)
-        logging.warning(f"Bo'lak {idx}/{total} audio-preview yiqildi: {err1}. whisper-1 fallback...")
-        chunk_text, err2 = _try_transcribe(
+        logging.warning(f"Bo'lak {idx}/{total} audio-preview yiqildi/sifat past: {err1}. whisper-1 fallback...")
+        chunk_text_w, err2 = _try_transcribe(
             chunk_path, "whisper-1", source_lang, url, headers, chunk_offset_sec=chunk_offset_sec
         )
-        if chunk_text:
-            return idx, chunk_text, None
+        if _is_good(chunk_text_w):
+            return idx, chunk_text_w, None
 
         # 3) gpt-4o-transcribe fallback (oxirgi chora)
-        logging.warning(f"Bo'lak {idx}/{total} whisper-1 yiqildi: {err2}. gpt-4o-transcribe fallback...")
-        chunk_text, err3 = _try_transcribe(
+        logging.warning(f"Bo'lak {idx}/{total} whisper-1 yiqildi/sifat past: {err2}. gpt-4o-transcribe fallback...")
+        chunk_text_g, err3 = _try_transcribe(
             chunk_path, "gpt-4o-transcribe", source_lang, url, headers
         )
-        if chunk_text:
-            return idx, chunk_text, None
+        if _is_good(chunk_text_g):
+            return idx, chunk_text_g, None
+
+        # Hech qaysi sifatli emas — eng uzun natijani qaytaramiz (bo'lmagandan bor yaxshi)
+        candidates = [c for c in (chunk_text, chunk_text_w, chunk_text_g) if c]
+        if candidates:
+            best = max(candidates, key=len)
+            logging.warning(f"Bo'lak {idx}/{total} barcha modellar sifat past — eng uzunini qaytaramiz")
+            return idx, best, None
 
         logging.error(f"Bo'lak {idx}/{total} 3 MODEL HAM yiqildi: {err1} | {err2} | {err3}")
         return idx, None, f"audio-preview: {err1} | whisper-1: {err2} | gpt-4o: {err3}"
@@ -2571,7 +2598,28 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
             except Exception: pass
 
     # Natijalarni TARTIBDA yig'amiz (idx bo'yicha)
-    results = [chunk_results[k] for k in sorted(chunk_results.keys())]
+    # Bo'laklarni tartibda yig'amiz va overlap'larni dedupe qilamiz
+    sorted_keys = sorted(chunk_results.keys())
+    results = []
+    for k in sorted_keys:
+        text = chunk_results[k]
+        if not text:
+            continue
+        # Avvalgi bo'lak oxiri bilan o'rtacha (overlap) qismni kesib tashlash
+        if results and len(text) > 100:
+            prev_tail = results[-1][-150:].lower()  # avvalgi 150 ta belgi
+            new_head = text[:200].lower()
+            # Agar yangi bo'lak boshida avvalgisining oxiri takrorlansa, kesamiz
+            # Eng uzun mos keluvchi prefix'ni topamiz
+            best_overlap = 0
+            for size in range(min(150, len(new_head)), 20, -5):
+                snippet = new_head[:size]
+                if snippet in prev_tail:
+                    best_overlap = size
+                    break
+            if best_overlap > 0:
+                text = text[best_overlap:].lstrip()
+        results.append(text)
 
     # Agar BARCHA bo'laklar yiqilgan bo'lsa — xato qaytaramiz
     if not results and failed_chunks:
@@ -5599,11 +5647,57 @@ def telegram_send_voice(chat_id, file_path, caption=None):
         return False
 
 
+def _quick_quality_label(text):
+    """Matn sifatini taxminiy bahosi (audio davomiyligisiz, faqat matn asosida).
+    Returns: (emoji, label) yoki None — agar matn yaxshi bo'lsa hech narsa demaslik."""
+    if not text or len(text) < 50:
+        return None
+    words = text.split()
+    if len(words) < 20:
+        return None
+    # Unique word ratio
+    unique = set(w.lower().strip(".,!?\"'") for w in words)
+    unique_ratio = len(unique) / len(words)
+    # Eng ko'p uchragan so'z foizi
+    freq = {}
+    for w in words:
+        wl = w.lower().strip(".,!?\"'")
+        if len(wl) > 2:
+            freq[wl] = freq.get(wl, 0) + 1
+    max_word_ratio = max(freq.values()) / len(words) if freq else 0
+
+    if unique_ratio < 0.12 or max_word_ratio > 0.25:
+        return ("🔴", "Sifat past — audio'ni qisqaroq qismlarga bo'lib qayta yuboring")
+    if unique_ratio < 0.20:
+        return ("🟡", "O'rta sifat — ba'zi joylar noto'g'ri bo'lishi mumkin")
+    return None  # Yaxshi sifat, user'ga eslatma kerak emas
+
+
+def _send_quality_warning(user_id, text):
+    """Agar matn sifati past bo'lsa user'ga oldindan ogohlantirish."""
+    label = _quick_quality_label(text)
+    if not label:
+        return
+    emoji, msg = label
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+        requests.post(url, json={
+            "chat_id": user_id,
+            "text": f"{emoji} {msg}",
+        }, timeout=15)
+    except Exception as e:
+        logging.debug(f"Quality warning yuborish xato: {e}")
+
+
 def _send_text_card(user_id, text, header="📝 <b>Matn:</b>"):
     """Matnni <pre> blokida + PDF/TXT/Yopish tugmalar bilan yuborish.
     Telegram'ning copy tugmasi <pre> blokida avtomatik chiqadi.
     Sync — async kontekstda ham xavfsiz ishlaydi (requests orqali).
+    Past sifat aniqlansa — oldindan ogohlantirish yuboriladi.
     """
+    # Sifat tekshiruvi va ogohlantirish (faqat past sifat)
+    _send_quality_warning(user_id, text)
+
     try:
         last_transcripts[int(user_id)] = {"text": text, "ts": time.time()}
         _save_user_data()  # deploy'larda yo'qolmasin
