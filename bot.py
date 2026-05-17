@@ -506,6 +506,30 @@ def _save_user_data():
 TARIFF_LOG_FILE = os.path.join(os.path.dirname(DATA_FILE) or ".", "tariff_log.jsonl")
 
 
+async def _send_backup_snapshot_to_admin(bot, source="grant"):
+    """Har grant/approve'dan keyin admin chat'iga paid userlar snapshot'ini yuborish.
+    Bu Telegram'da abadiy saqlanadi — Railway disk yo'qolsa ham tiklash mumkin."""
+    if not ADMIN_CHAT_ID["id"]:
+        return
+    try:
+        paid_users = [(uid, t) for uid, t in user_tariffs.items() if t != "free"]
+        if not paid_users:
+            return
+        lines = [f"🔐 BACKUP SNAPSHOT (source: {source})"]
+        lines.append(f"Vaqt: {int(time.time())}")
+        lines.append(f"Paid userlar soni: {len(paid_users)}\n")
+        for uid, tariff in paid_users:
+            used = int(user_uzbek_usage.get(uid, 0) / 60)
+            lines.append(f"{uid} → {tariff} (used: {used} daq)")
+        lines.append("\n💾 Bu xabarni o'chirmang — data yo'qolsa tiklashda kerak")
+        await bot.send_message(
+            chat_id=ADMIN_CHAT_ID["id"],
+            text="\n".join(lines),
+        )
+    except Exception as e:
+        logging.warning(f"Backup snapshot yuborilmadi: {e}")
+
+
 def _append_tariff_log(user_id, tariff_key, source="approve"):
     """Tariff o'zgarishini append-only jurnal'ga yozish — Railway deploy chog'ida ham yo'qolmaydi.
     Har qator: {"uid": 123, "tariff": "pro_max", "ts": 1234567890, "src": "approve"}"""
@@ -4908,6 +4932,7 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
         user_uzbek_usage[target_id] = 0
         _append_tariff_log(target_id, tariff_key, source="approve")
         _save_user_data()
+        await _send_backup_snapshot_to_admin(context.bot, source=f"approve {target_id}={tariff_key}")
         # Admin uchun aniq alert
         await query.answer(
             f"✅ Tarif berildi: {t['name']} ({t['minutes']} daq)",
@@ -5046,6 +5071,7 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_uzbek_usage[target_id] = 0
     _append_tariff_log(target_id, tariff_key, source="grant_cmd")
     _save_user_data()
+    await _send_backup_snapshot_to_admin(context.bot, source=f"grant {target_id}={tariff_key}")
     t = TARIFFS[tariff_key]
     await update.message.reply_text(
         f"✅ *Tarif berildi!*\n\n"
