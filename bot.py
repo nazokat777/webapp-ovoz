@@ -29,6 +29,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     PreCheckoutQueryHandler, filters, ContextTypes,
 )
+from telegram.error import BadRequest
 from aiohttp import web
 import edge_tts
 import speech_recognition as sr
@@ -4213,7 +4214,11 @@ async def _show_buy_menu(message_obj):
         "📸 To'lov chekini botga yuborgach tarifingiz tasdiqlanadi."
     )
     if hasattr(message_obj, "edit_message_text"):
-        await message_obj.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
+        try:
+            await message_obj.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
+        except BadRequest as e:
+            if "not modified" not in str(e).lower():
+                raise
     else:
         await message_obj.reply_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
 
