@@ -182,6 +182,36 @@ user_info = {}
 # === [TXT export] Oxirgi transkripsiya matni — TXT yuklab olish uchun ===
 # {user_id: {"text": "...", "ts": timestamp}} — RAM'da saqlanadi (qisqa muddatli)
 last_transcripts = {}
+
+# === [PROCESSING TRACKER] User aynan hozir audio yuborganmi (duplicate click oldini olish) ===
+# {user_id: start_timestamp}
+processing_users = {}
+processing_lock = threading.Lock()
+
+
+def _is_user_processing(user_id):
+    """User aynan hozir audio/url ishlanmoqdami? Duplicate click oldini olish.
+    30 daqiqadan eski yozuvlar stale deb hisoblanadi va o'chiriladi."""
+    with processing_lock:
+        if user_id in processing_users:
+            elapsed = time.time() - processing_users[user_id]
+            if elapsed < 1800:  # 30 daqiqa
+                return True
+            # Stale — eski entry, o'chiramiz
+            del processing_users[user_id]
+        return False
+
+
+def _mark_processing(user_id):
+    """User ishlash boshlandi deb belgilash."""
+    with processing_lock:
+        processing_users[user_id] = time.time()
+
+
+def _unmark_processing(user_id):
+    """User ishlash tugadi (yoki xato) — belgini olib tashlash."""
+    with processing_lock:
+        processing_users.pop(user_id, None)
 # === [REFERRAL] Do'st taklif qilish tizimi ===
 # Sozlash:
 REFERRAL_BONUS_MIN = 5         # Har taklif uchun har ikkalasiga +5 daqiqa
@@ -6335,6 +6365,15 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
     """WebApp orqali yuborilgan audio'ni matnga aylantirish — tarif limiti qo'llanadi.
     XAVFSIZ TO'LOV: daqiqa faqat muvaffaqiyatli natija yuborilgandan keyin yechiladi.
     output_alphabet: 'latin' yoki 'cyrillic' — O'zbek matni alifbosi."""
+    # Duplicate click himoyasi
+    if _is_user_processing(user_id):
+        telegram_send_message(user_id,
+            "⏳ Sizning oldingi audio'ngiz hali tayyorlanmoqda.\n"
+            "Iltimos tugashini kuting (daqiqalar ortiqcha yechilmasligi uchun).")
+        try: os.remove(file_path)
+        except Exception: pass
+        return
+    _mark_processing(user_id)
     success = False  # natija userga yetkazilganmi
     typing = TypingPing(user_id)
     typing.start()
