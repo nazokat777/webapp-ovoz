@@ -4668,37 +4668,133 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"Userga ({target_id}) tarif xabari yuborilmadi: {e}")
 
 
+async def backup_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: data faylni adminga Telegram orqali yuborish (manual backup).
+    Foydalanish: /backup — fayl darrov yuboriladi."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    if not os.path.exists(DATA_FILE):
+        await update.message.reply_text(f"❌ Fayl topilmadi: `{DATA_FILE}`", parse_mode="Markdown")
+        return
+    try:
+        file_size = os.path.getsize(DATA_FILE)
+        from datetime import datetime
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"user_data_backup_{ts}.json"
+        with open(DATA_FILE, "rb") as f:
+            await context.bot.send_document(
+                chat_id=update.effective_user.id,
+                document=f,
+                filename=filename,
+                caption=(
+                    f"💾 *Backup* — `{ts}`\n\n"
+                    f"📊 Userlar: {len(user_uzbek_usage)}\n"
+                    f"💎 Paid: {sum(1 for t in user_tariffs.values() if t != 'free')}\n"
+                    f"📏 O'lcham: {file_size:,} bayt\n\n"
+                    f"⚠️ Saqlang! Data yo'qolsa /restore orqali tiklaysiz."
+                ),
+                parse_mode="Markdown",
+            )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Backup yuborish xato: {str(e)[:300]}")
+
+
+async def restore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: backup faylni yuborib data'ni tiklash.
+    Foydalanish: backup faylga reply qilib /restore yozing."""
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    # Reply qilingan xabarda document bo'lishi kerak
+    reply = update.message.reply_to_message
+    if not reply or not reply.document:
+        await update.message.reply_text(
+            "*Foydalanish:*\n\n"
+            "1. /backup yozing — bot data faylini yuboradi\n"
+            "2. Backup faylga reply qilib /restore yozing\n"
+            "3. Bot eski data'ni tiklaydi (joriy data yo'qoladi)\n\n"
+            "⚠️ *Diqqat:* tiklashdan oldin joriy /backup qiling.",
+            parse_mode="Markdown",
+        )
+        return
+    try:
+        # Faylni yuklab olish
+        tg_file = await context.bot.get_file(reply.document.file_id)
+        import io, json as _json
+        bio = io.BytesIO()
+        await tg_file.download_to_memory(bio)
+        bio.seek(0)
+        raw_text = bio.read().decode("utf-8")
+        # JSON parse tekshiruv
+        parsed = _json.loads(raw_text)
+        if not isinstance(parsed, dict) or "usage" not in parsed:
+            await update.message.reply_text("❌ Fayl noto'g'ri formatda (user_data.json emas).")
+            return
+        # Faylni yozish
+        with _save_lock:
+            os.makedirs(os.path.dirname(DATA_FILE) or ".", exist_ok=True)
+            with open(DATA_FILE, "w", encoding="utf-8") as f:
+                f.write(raw_text)
+        # Xotirani tiklash
+        user_uzbek_usage.clear()
+        user_tariffs.clear()
+        user_info.clear()
+        pending_payments.clear()
+        pending_translations.clear()
+        last_transcripts.clear()
+        user_bonus_minutes.clear()
+        user_referrals.clear()
+        user_referral_claimed.clear()
+        _load_user_data()
+        await update.message.reply_text(
+            f"✅ *Data tiklandi!*\n\n"
+            f"👥 Userlar: *{len(user_uzbek_usage)}*\n"
+            f"💎 Paid: *{sum(1 for t in user_tariffs.values() if t != 'free')}*\n\n"
+            f"Tekshirish: /stats",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        await update.message.reply_text(f"❌ Tiklash xato: {str(e)[:300]}")
+
+
+# Avtomatik backup OLIB TASHLANDI — user talabi: faqat /backup qo'lda
+# Eslatma: Adminga vaqti-vaqti bilan /backup yozish tavsiya etiladi
+
+
 async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: persistence va saqlash holatini tekshirish."""
     if not is_admin(update):
         await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
         return
-    # Fayl mavjudligi va o'lchami
     file_exists = os.path.exists(DATA_FILE)
     file_size = os.path.getsize(DATA_FILE) if file_exists else 0
-    # Xotirada saqlangan ma'lumotlar
+    card_status = "sozlangan" if runtime_settings.get("payment_card") else "yo'q"
     lines = [
-        f"🔧 *Debug — persistence holati*\n",
-        f"📁 DATA\\_FILE: `{DATA_FILE}`",
+        "🔧 Debug — persistence holati",
+        "",
+        f"📁 DATA_FILE: {DATA_FILE}",
         f"📂 Fayl mavjud: {'✅' if file_exists else '❌'}",
         f"📏 Fayl o'lchami: {file_size} bayt",
-        f"",
-        f"💾 *Xotirada:*",
-        f"• user\\_uzbek\\_usage: {len(user_uzbek_usage)} ta user",
-        f"• user\\_tariffs: {len(user_tariffs)} ta user",
-        f"• pending\\_payments: {len(pending_payments)} ta user",
-        f"• admin\\_chat\\_id: `{ADMIN_CHAT_ID['id']}`",
-        f"• runtime\\_settings.payment\\_card: {'sozlangan' if runtime_settings.get('payment_card') else 'yo`q'}",
-        f"",
+        "",
+        "💾 Xotirada:",
+        f"• user_uzbek_usage: {len(user_uzbek_usage)} ta user",
+        f"• user_tariffs: {len(user_tariffs)} ta user",
+        f"• user_info: {len(user_info)} ta user",
+        f"• pending_payments: {len(pending_payments)} ta user",
+        f"• admin_chat_id: {ADMIN_CHAT_ID['id']}",
+        f"• payment_card: {card_status}",
+        "",
     ]
-    # Eng ko'p ishlatgan 5 ta user
     if user_uzbek_usage:
         top = sorted(user_uzbek_usage.items(), key=lambda x: x[1], reverse=True)[:5]
-        lines.append("*Eng ko'p ishlatganlar:*")
+        lines.append("Eng ko'p ishlatganlar:")
         for uid, sec in top:
             tariff = TARIFFS.get(user_tariffs.get(uid, "free"), TARIFFS["free"])
-            lines.append(f"• `{uid}` — {sec/60:.1f} / {tariff['minutes']} daq ({tariff['name']})")
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+            tariff_name = tariff['name']
+            lines.append(f"• {uid} — {sec/60:.1f} / {tariff['minutes']} daq ({tariff_name})")
+    # Plain text — Markdown'siz, parse xatosi yo'q
+    await update.message.reply_text("\n".join(lines))
 
 
 async def setcard_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6867,6 +6963,8 @@ def main():
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(CommandHandler("grant", grant_cmd))
     app.add_handler(CommandHandler("refund", refund_cmd))
+    app.add_handler(CommandHandler("backup", backup_cmd))
+    app.add_handler(CommandHandler("restore", restore_cmd))
     app.add_handler(CommandHandler("setcard", setcard_cmd))
     app.add_handler(CommandHandler("setholder", setholder_cmd))
     app.add_handler(CommandHandler("feedback", feedback_cmd))
