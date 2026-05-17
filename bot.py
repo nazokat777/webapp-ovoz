@@ -507,25 +507,37 @@ TARIFF_LOG_FILE = os.path.join(os.path.dirname(DATA_FILE) or ".", "tariff_log.js
 
 
 async def _send_backup_snapshot_to_admin(bot, source="grant"):
-    """Har grant/approve'dan keyin admin chat'iga paid userlar snapshot'ini yuborish.
-    Bu Telegram'da abadiy saqlanadi — Railway disk yo'qolsa ham tiklash mumkin."""
+    """Har grant/approve'dan keyin admin chat'iga TO'LIQ backup yuborish.
+    Bu Telegram'da abadiy saqlanadi — Railway disk wipe bo'lsa /restore bilan tiklanadi."""
     if not ADMIN_CHAT_ID["id"]:
         return
     try:
+        # 1) Matn snapshot
         paid_users = [(uid, t) for uid, t in user_tariffs.items() if t != "free"]
-        if not paid_users:
-            return
-        lines = [f"🔐 BACKUP SNAPSHOT (source: {source})"]
-        lines.append(f"Vaqt: {int(time.time())}")
-        lines.append(f"Paid userlar soni: {len(paid_users)}\n")
+        lines = [f"🔐 BACKUP (source: {source})"]
+        from datetime import datetime
+        lines.append(f"Vaqt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append(f"Paid userlar: {len(paid_users)}\n")
         for uid, tariff in paid_users:
             used = int(user_uzbek_usage.get(uid, 0) / 60)
             lines.append(f"{uid} → {tariff} (used: {used} daq)")
-        lines.append("\n💾 Bu xabarni o'chirmang — data yo'qolsa tiklashda kerak")
-        await bot.send_message(
-            chat_id=ADMIN_CHAT_ID["id"],
-            text="\n".join(lines),
-        )
+        lines.append("\n💾 Pastdagi faylga REPLY qilib /restore yozing → tiklanadi")
+        await bot.send_message(chat_id=ADMIN_CHAT_ID["id"], text="\n".join(lines))
+
+        # 2) TO'LIQ JSON fayl — wipe bo'lsa /restore uchun
+        if os.path.exists(DATA_FILE):
+            try:
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"backup_{ts}.json"
+                with open(DATA_FILE, "rb") as f:
+                    await bot.send_document(
+                        chat_id=ADMIN_CHAT_ID["id"],
+                        document=f,
+                        filename=filename,
+                        caption=f"💾 To'liq backup ({source})",
+                    )
+            except Exception as e:
+                logging.warning(f"Backup file yuborilmadi: {e}")
     except Exception as e:
         logging.warning(f"Backup snapshot yuborilmadi: {e}")
 
