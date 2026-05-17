@@ -7090,11 +7090,40 @@ def run_http_server_thread():
         traceback.print_exc()
 
 
+def _restore_lost_paid_users():
+    """One-time migration: data yo'qolgandan keyin ma'lum paid user'larni tiklash.
+    Faqat agar ular hali mavjud bo'lmasa.
+    User talabi: avtomatik tiklash.
+    """
+    # Ma'lum paid user'lar (eski /stats matnidan):
+    known_paid = [
+        (8744070680, "premium"),    # @ummuufotimaaa (Сохибахон)
+        (94184684, "standart"),     # Масуда
+    ]
+    restored = 0
+    for uid, tariff_key in known_paid:
+        current = user_tariffs.get(uid, "free")
+        if current == "free" and tariff_key in TARIFFS:
+            user_tariffs[uid] = tariff_key
+            user_uzbek_usage[uid] = 0  # daqiqalarni tiklash
+            restored += 1
+            logging.info(f"🔁 Auto-restore: {uid} → {tariff_key}")
+    if restored > 0:
+        _save_user_data()
+        logging.info(f"🔁 Auto-restore tugadi: {restored} paid user tiklandi")
+
+
 def main():
     global bot_app
 
     # Saqlangan usage va tariflarni yuklash
     _load_user_data()
+
+    # One-time: ma'lum yo'qolgan paid user'larni tiklash (faqat ular yo'q bo'lsa)
+    try:
+        _restore_lost_paid_users()
+    except Exception as e:
+        logging.warning(f"Auto-restore xato: {e}")
 
     # Admin user ID env'dan o'qib ADMIN_CHAT_ID ga yozamiz (admin /start kutmasdan ishlasin)
     if ADMIN_USER_ID:
