@@ -3207,7 +3207,7 @@ def webapp_keyboard(chat_id=None, username=None):
     elif username and username.lower().lstrip("@") in ADMIN_USERNAMES:
         is_admin_user = True
     if is_admin_user:
-        rows.append([KeyboardButton(text="👥 Userlar"), KeyboardButton(text="🎁 Tarif berish")])
+        rows.append([KeyboardButton(text="👥 Userlar"), KeyboardButton(text="📖 Buyruqlar")])
         rows.append([KeyboardButton(text="🔐 Admin panel")])
 
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
@@ -4351,6 +4351,76 @@ async def _send_chek_for_manual_approval(update: Update, context: ContextTypes.D
     )
 
 
+async def _send_admin_commands_list(update):
+    """Admin uchun barcha buyruqlar ro'yxati (kategoriyalar bo'yicha)."""
+    text = (
+        "📖 ADMIN BUYRUQLARI RO'YXATI\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+        "👥 USER BOSHQARUVI\n"
+        "/stats — barcha userlar ro'yxati (top 30)\n"
+        "/user <id> — user ma'lumoti + tarif tugmalari\n"
+        "/grant <id> <tarif> — tarif berish\n"
+        "/revoke <id> — tarifni bekor qilish (Bepulga)\n"
+        "/reset <id> — daqiqalarni tiklash\n"
+        "/refund <id> — pul qaytarish + Pro Uzbek taklif\n\n"
+
+        "💰 TO'LOV SOZLAMALARI\n"
+        "/setcard <karta> — to'lov karta raqami\n"
+        "/setholder <ism> — karta egasi ismi\n\n"
+
+        "📊 STATISTIKA & DEBUG\n"
+        "/openai — OpenAI xarajat taxminiy hisob\n"
+        "/debug — persistence (data fayl holati)\n"
+        "/admin — to'liq admin panel\n\n"
+
+        "💾 BACKUP & TIKLASH\n"
+        "/backup — data faylni Telegram'ga yuborish\n"
+        "/restore — eski backup'dan tiklash (faylga reply qiling)\n\n"
+
+        "💬 ALOQA & TEST\n"
+        "/reply <id> <matn> — userga javob yuborish\n"
+        "/test — test rejimini yoqish/o'chirish\n\n"
+
+        "👤 ODDIY USER UCHUN\n"
+        "/start — botni ishga tushirish\n"
+        "/balance — sizning balans\n"
+        "/tariflar — tariflar ro'yxati\n"
+        "/buy — tarif sotib olish\n"
+        "/tavsiya — do'st taklif (referral)\n"
+        "/tarjima — xorijiy tildan tarjima\n"
+        "/feedback — murojaat\n"
+        "/help — yordam\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+        "📝 TARIF KALITLARI (/grant uchun):\n\n"
+
+        "Oddiy (Whisper):\n"
+        "  basic — 💚 Boshlang'ich (3 soat / 60k)\n"
+        "  standart — 💙 Standart (10 soat / 150k)\n"
+        "  premium — 💜 Premium (25 soat / 300k)\n\n"
+
+        "Pro (Muhlisa AI — Uzbek sifat):\n"
+        "  pro_standart — ⭐ Pro Standart (3 soat / 170k)\n"
+        "  pro_premium — 👑 Pro Premium (6 soat / 300k)\n"
+        "  pro_max — 💎 Pro Pro (10 soat / 500k)\n\n"
+
+        "free — 🌸 Bepul (5 daq)\n\n"
+
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+        "💡 MISOLLAR:\n\n"
+        "/grant 94184684 pro_max\n"
+        "/revoke 190612268\n"
+        "/refund 8744070680\n"
+        "/user 629686772\n\n"
+
+        "💡 TIP: chek xabarini bot'ga forward qilsangiz, tarif tugmalari avto chiqadi."
+    )
+    await update.message.reply_text(text)
+
+
 async def _show_restore_grant_buttons(update, context, target_id, original_caption=""):
     """Admin eski chek'ni forward qilganda — tarif berish tugmalari bilan javob.
     Eski chek caption'idan tarif nomini topishga harakat qiladi (auto-suggest)."""
@@ -5288,20 +5358,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "👥 Userlar":
         await stats_cmd(update, context)
         return
-    if text == "🎁 Tarif berish":
+    if text == "📖 Buyruqlar":
         if is_admin(update):
-            await update.message.reply_text(
-                "🎁 *Tarif berish*\n\n"
-                "User ID'sini bilib `/user <id>` yozing.\n"
-                "Ko'ringan ma'lumotning pastida tarif tugmalari chiqadi —\n"
-                "tugmani bosib darrov tarif beriladi.\n\n"
-                "*Misol:*\n"
-                "`/user 629686772`\n\n"
-                "Yoki to'g'ridan-to'g'ri:\n"
-                "`/grant <id> standart` yoki\n"
-                "`/grant <id> pro_max`",
-                parse_mode="Markdown",
-            )
+            await _send_admin_commands_list(update)
+        else:
+            await update.message.reply_text("⛔ Bu tugma faqat admin uchun.")
+        return
+    if text == "🎁 Tarif berish":
+        # Legacy — agar eski keyboard'da bo'lsa
+        if is_admin(update):
+            await _send_admin_commands_list(update)
         else:
             await update.message.reply_text("⛔ Bu tugma faqat admin uchun.")
         return
