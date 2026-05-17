@@ -99,6 +99,17 @@ PAYMENT_CURRENCY = os.getenv("PAYMENT_CURRENCY", "UZS")
 #   OPENAI_API_KEY=sk-...
 #   ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+
+def _ensure_openai_key():
+    """Env runtime'da qayta o'qish — Railway redeploy chog'ida cached qiymat o'tib ketmasligi uchun.
+    Agar env'da yangi qiymat bo'lsa, global OPENAI_API_KEY yangilanadi."""
+    global OPENAI_API_KEY
+    runtime_key = os.getenv("OPENAI_API_KEY", "").strip()
+    if runtime_key and runtime_key != OPENAI_API_KEY:
+        OPENAI_API_KEY = runtime_key
+        logging.info("🔑 OPENAI_API_KEY runtime'da yangilandi")
+    return OPENAI_API_KEY
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 # Tarjima narxi koeffitsienti — boshqa xizmatlar bilan teng (1 daq media = 1 daq tarif)
@@ -1769,13 +1780,7 @@ def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges
     failed_ranges_out: list pass qilsangiz, yiqilgan bo'lak vaqt oraliqlari to'ldiriladi:
         [(start_sec, end_sec, error), ...]
     """
-    # Env runtime'da qayta o'qish (Railway redeploy chog'ida cached qiymatdan o'tib ketmasligi uchun)
-    global OPENAI_API_KEY
-    runtime_key = os.getenv("OPENAI_API_KEY", "").strip()
-    if runtime_key and runtime_key != OPENAI_API_KEY:
-        OPENAI_API_KEY = runtime_key
-        logging.info("🔑 OPENAI_API_KEY runtime'da yangilandi")
-    if not OPENAI_API_KEY:
+    if not _ensure_openai_key():
         raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing — bot OpenAI'siz ishlamaydi.")
 
     # 1) STT — progress_cb ni transcribe_whisper'ga uzatamiz
@@ -2752,7 +2757,7 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
     HAR DOIM avval optimallashtirish (64kbps mono MP3) qilinadi — bu Whisper
     25 MB limitiga moslashish va arzonroq tarmoq trafigi uchun.
     progress_cb(current_chunk, total_chunks) — sync progress callback."""
-    if not OPENAI_API_KEY:
+    if not _ensure_openai_key():
         raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing.")
 
     try:
@@ -3074,7 +3079,7 @@ def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz")
 
     source_lang: manba til (yoki 'auto')
     target_lang: hosil til ('uz', 'ru', 'en', 'ar')"""
-    if not OPENAI_API_KEY:
+    if not _ensure_openai_key():
         raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing.")
 
     words = text.split()
