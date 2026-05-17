@@ -7183,7 +7183,15 @@ def _restore_lost_paid_users():
     """One-time migration: data yo'qolgandan keyin BARCHA 62 user'ni tiklash.
     Eski /stats matnidan olingan ma'lumotlar.
     Faqat ular hali yo'q bo'lsa qo'shiladi (mavjud data buzilmaydi).
+
+    XAVFSIZLIK: faqat BIR MARTA ishlaydi — marker fayl orqali. Aks holda
+    har deploy'da approve qilingan userlarning ishlatgan daqiqasi qaytariladi.
     """
+    # Marker tekshirish — bir marta ishlagan bo'lsa, qayta ishlamaydi
+    marker_path = DATA_FILE + ".migration_done"
+    if os.path.exists(marker_path):
+        logging.info("✓ Restore migration allaqachon bajarilgan — o'tkazib yuborildi")
+        return
     # 62 user — (user_id, "username yoki name", used_min, tariff_key)
     known_users = [
         (8128034276, "Ummu Soliha", 408.5, "free"),
@@ -7244,6 +7252,14 @@ def _restore_lost_paid_users():
         _save_user_data()
         logging.info(f"🔁 Tiklash tugadi: {restored_paid} tarif, {restored_info} user info")
 
+    # Marker fayl yaratish — qayta ishlamasligi uchun
+    try:
+        with open(marker_path, "w") as f:
+            f.write(f"done at {int(time.time())}")
+        logging.info(f"✓ Migration marker yaratildi: {marker_path}")
+    except Exception as e:
+        logging.warning(f"Marker yaratishda xato: {e}")
+
 
 def main():
     global bot_app
@@ -7256,6 +7272,20 @@ def main():
         _restore_lost_paid_users()
     except Exception as e:
         logging.warning(f"Auto-restore xato: {e}")
+
+    # ONE-TIME FIX (2026-05-17): Ummu Soliha (8128034276) — Pro Pro tasdiqlangan,
+    # ammo migration uning hisobini qaytarib qo'ydi. Tikla:
+    ummusoliha_fix_marker = DATA_FILE + ".ummusoliha_fix_done"
+    if not os.path.exists(ummusoliha_fix_marker):
+        try:
+            user_tariffs[8128034276] = "pro_max"
+            user_uzbek_usage[8128034276] = 0
+            _save_user_data()
+            with open(ummusoliha_fix_marker, "w") as f:
+                f.write(f"done at {int(time.time())}")
+            logging.info("✓ Ummu Soliha tariff fix: pro_max, usage=0")
+        except Exception as e:
+            logging.warning(f"Ummu Soliha fix xato: {e}")
 
     # Admin user ID env'dan o'qib ADMIN_CHAT_ID ga yozamiz (admin /start kutmasdan ishlasin)
     if ADMIN_USER_ID:
