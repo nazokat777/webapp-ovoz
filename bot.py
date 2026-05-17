@@ -505,7 +505,8 @@ def _replay_tariff_log():
         recovered = 0
         for uid, tariff in latest.items():
             if user_tariffs.get(uid) != tariff:
-                logging.warning(f"⚠️ Tariff mismatch: user_id={uid}, JSON={user_tariffs.get(uid, 'YO\\'Q')}, LOG={tariff} → LOG'dan tiklandi")
+                json_val = user_tariffs.get(uid, "NONE")
+                logging.warning(f"⚠️ Tariff mismatch: user_id={uid}, JSON={json_val}, LOG={tariff} - LOG'dan tiklandi")
                 user_tariffs[uid] = tariff
                 recovered += 1
         if recovered > 0:
