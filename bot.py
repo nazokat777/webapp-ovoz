@@ -3839,11 +3839,27 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
 
     if action == "paid_users":
         # Tarifli userlar ro'yxati — har biriga "Bekor qilish" tugmasi
-        # MUHIM: avval log'dan tariflarni yangilab olamiz (xotira yo'qolgan bo'lsa)
+        # MUHIM: diskdan to'g'ridan-to'g'ri o'qiymiz (memory bilan farq bo'lsa)
+        # Bu user_tariffs memory'da yo'qolgan yoki sync bo'lmagan bo'lsa ham ishlashini ta'minlaydi.
         try:
             _replay_tariff_log()
         except Exception as e:
             logging.warning(f"paid_users replay xato: {e}")
+        # Diskdan o'qib memory'ga to'ldirish
+        try:
+            if os.path.exists(DATA_FILE):
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    disk_data = json.load(f)
+                for k, v in (disk_data.get("tariffs") or {}).items():
+                    try:
+                        uid = int(k)
+                        if v in TARIFFS and uid not in user_tariffs:
+                            user_tariffs[uid] = v
+                            logging.info(f"📂 Disk'dan tariff tiklandi: {uid} → {v}")
+                    except Exception:
+                        pass
+        except Exception as e:
+            logging.warning(f"paid_users disk re-read xato: {e}")
         paid_list = [(uid, t) for uid, t in user_tariffs.items() if t != "free"]
         if not paid_list:
             back = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")]]
