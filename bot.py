@@ -228,12 +228,46 @@ _save_lock = threading.Lock()
 
 
 def _load_user_data():
-    """Bot ishga tushganda saqlangan usage, tariflar va admin_chat_id'ni yuklaydi."""
-    if not os.path.exists(DATA_FILE):
+    """Bot ishga tushganda saqlangan usage, tariflar va admin_chat_id'ni yuklaydi.
+    Agar asosiy fayl buzilgan/yo'q bo'lsa, .bak fayldan tiklab olishga urinadi.
+    """
+    # 1) Avval asosiy faylni urinish
+    data = None
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Validatsiya: minimal struktura tekshiruvi
+            if not isinstance(data, dict):
+                data = None
+                logging.warning(f"⚠️ {DATA_FILE} noto'g'ri formatda")
+        except Exception as e:
+            logging.warning(f"⚠️ {DATA_FILE} o'qishda xato: {e}")
+            data = None
+
+    # 2) Agar asosiy yiqilsa, .bak fayldan urinish
+    if data is None:
+        bak_path = DATA_FILE + ".bak"
+        if os.path.exists(bak_path):
+            try:
+                with open(bak_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    logging.warning(f"🔁 Asosiy fayl buzilgan — .bak'dan tiklandi: {bak_path}")
+                    # .bak'ni asosiy faylga tiklash
+                    try:
+                        shutil.copy2(bak_path, DATA_FILE)
+                    except Exception as e:
+                        logging.warning(f"Bak → asosiy copy xato: {e}")
+            except Exception as e:
+                logging.error(f"❌ .bak fayl ham buzilgan: {e}")
+                data = None
+
+    if data is None:
+        logging.warning("⚠️ Hech qaysi fayldan yukla bo'lmadi (yangi boshlash)")
         return
+
     try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
         for k, v in (data.get("usage") or {}).items():
             try:
                 user_uzbek_usage[int(k)] = int(v)
