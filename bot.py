@@ -890,6 +890,7 @@ def _run_yt_dlp(url, output_template, use_cookies=True, player_client=None):
     """yt-dlp ni har xil parametrlar bilan chaqiradi. Returnlar (returncode, stderr)."""
     cmd = [
         "yt-dlp", "-x",
+        "-f", "bestaudio/best",
         "--audio-format", "wav",
         "--no-playlist",
         "--no-warnings",
