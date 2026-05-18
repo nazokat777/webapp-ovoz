@@ -2616,14 +2616,18 @@ def _try_transcribe_audio_chat(chunk_path, source_lang, headers):
 
 def _try_transcribe(chunk_path, model, source_lang, url, headers, chunk_offset_sec=0):
     """Bitta bo'lakni belgilangan model bilan transkripsiya qilish.
-    3 marta retry (HTTP 429/500/502/503). Bo'sh natija ham xato.
+    7 marta retry (HTTP 429/500/502/503/504/timeout/connection errors).
+    Backoff: 1s, 2s, 4s, 8s, 15s, 30s, 60s — total ~120s max.
     whisper-1 uchun verbose_json + segments (timestamps) ishlatamiz.
     gpt-4o-transcribe uchun oddiy json (segments yo'q).
     Returnlar: (chunk_text yoki None, error_str yoki None)."""
     is_whisper1 = (model == "whisper-1")
     response_format = "verbose_json" if is_whisper1 else "json"
     last_error = None
-    for attempt in range(3):
+    # Kuchliroq retry: 7 marta, longer backoff
+    backoffs = [1, 2, 4, 8, 15, 30, 60]
+    MAX_RETRIES = 7
+    for attempt in range(MAX_RETRIES):
         try:
             with open(chunk_path, "rb") as f:
                 files = {"file": (os.path.basename(chunk_path), f, "application/octet-stream")}
@@ -2656,19 +2660,30 @@ def _try_transcribe(chunk_path, model, source_lang, url, headers, chunk_offset_s
             elif resp.status_code == 400:
                 err_text = resp.text[:200] if resp.text else "Unknown"
                 return None, f"HTTP 400: {err_text}"
-            elif resp.status_code in (429, 500, 502, 503):
-                last_error = f"HTTP {resp.status_code}"
-                time.sleep(2 ** attempt)
+            elif resp.status_code in (429, 500, 502, 503, 504):
+                last_error = f"HTTP {resp.status_code} (urinish {attempt+1}/{MAX_RETRIES})"
+                logging.warning(f"Whisper {last_error}, {backoffs[attempt]}s kutamiz")
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(backoffs[attempt])
             else:
-                return None, f"HTTP {resp.status_code}"
+                # Boshqa HTTP xato — bu ham retry qilamiz (bot detection, rate limit, etc.)
+                last_error = f"HTTP {resp.status_code}"
+                if attempt < MAX_RETRIES - 1:
+                    time.sleep(backoffs[attempt])
         except requests.exceptions.Timeout:
-            last_error = "Timeout"
-            if attempt < 2:
-                time.sleep(2 ** attempt)
+            last_error = f"Timeout (urinish {attempt+1}/{MAX_RETRIES})"
+            logging.warning(f"Whisper timeout, {backoffs[attempt]}s kutamiz")
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(backoffs[attempt])
+        except requests.exceptions.ConnectionError as e:
+            last_error = f"Connection error: {str(e)[:100]} (urinish {attempt+1}/{MAX_RETRIES})"
+            logging.warning(last_error)
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(backoffs[attempt])
         except Exception as e:
             last_error = str(e)[:200]
-            if attempt < 2:
-                time.sleep(2 ** attempt)
+            if attempt < MAX_RETRIES - 1:
+                time.sleep(backoffs[attempt])
     return None, last_error or "Noma'lum xato"
 
 
@@ -2948,6 +2963,53 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
             if best_overlap > 0:
                 text = text[best_overlap:].lstrip()
         results.append(text)
+
+    # FINAL PASS — yiqilgan bo'laklarni 60s dam keyin qayta urinish.
+    # Bu rate limit yoki vaqtinchalik server xatosini engadi.
+    if failed_chunks and len(failed_chunks) < total:  # Faqat qisman fail bo'lsa
+        logging.warning(f"🔁 FINAL PASS: {len(failed_chunks)} ta yiqilgan bo'lakni 60s kutib qayta urinish...")
+        time.sleep(60)
+        retry_failed = []
+        chunk_idx_to_path = {idx: path for idx, path in enumerate(chunks_to_process, 1)}
+        for failed_idx, _ in failed_chunks:
+            chunk_path = chunk_idx_to_path.get(failed_idx)
+            if not chunk_path:
+                continue
+            try:
+                ridx, rtext, rerr = _process_one_chunk((failed_idx, chunk_path))
+                if rtext:
+                    chunk_results[ridx] = rtext
+                    logging.info(f"✅ FINAL PASS: bo'lak {ridx} tiklandi")
+                    # failed_ranges_out'dan ham olib tashlash
+                    if failed_ranges_out is not None:
+                        start_sec = (ridx - 1) * WHISPER_CHUNK_SECONDS
+                        end_sec = ridx * WHISPER_CHUNK_SECONDS
+                        failed_ranges_out[:] = [r for r in failed_ranges_out if not (r[0] == start_sec and r[1] == end_sec)]
+                else:
+                    retry_failed.append((failed_idx, rerr))
+            except Exception as e:
+                retry_failed.append((failed_idx, str(e)[:200]))
+        failed_chunks = retry_failed
+        logging.info(f"FINAL PASS tugadi: {len(failed_chunks)} bo'lak hali ham yiqilgan")
+        # Qayta natijalarni yig'amiz
+        sorted_keys = sorted(chunk_results.keys())
+        results = []
+        for k in sorted_keys:
+            text = chunk_results[k]
+            if not text:
+                continue
+            if results and len(text) > 100:
+                prev_tail = results[-1][-150:].lower()
+                new_head = text[:200].lower()
+                best_overlap = 0
+                for size in range(min(150, len(new_head)), 20, -5):
+                    snippet = new_head[:size]
+                    if snippet in prev_tail:
+                        best_overlap = size
+                        break
+                if best_overlap > 0:
+                    text = text[best_overlap:].lstrip()
+            results.append(text)
 
     # Agar BARCHA bo'laklar yiqilgan bo'lsa — xato qaytaramiz
     if not results and failed_chunks:
