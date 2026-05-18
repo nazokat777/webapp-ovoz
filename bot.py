@@ -864,18 +864,26 @@ def convert_to_wav(input_path):
 
 
 def _prepare_cookies_file():
-    """YOUTUBE_COOKIES env'dan cookies.txt yaratadi (agar bo'lsa)."""
+    """YOUTUBE_COOKIES env'dan yoki /root/youtube_cookies.txt fayldan cookies oladi."""
+    # 1) Env'dan tekshirish
     cookies_text = os.getenv("YOUTUBE_COOKIES", "").strip()
-    if not cookies_text:
-        return None
-    cookies_path = os.path.join(tempfile.gettempdir(), "yt_cookies.txt")
-    try:
-        with open(cookies_path, "w", encoding="utf-8") as f:
-            f.write(cookies_text)
-        return cookies_path
-    except Exception as e:
-        logging.warning(f"Cookies fayl yaratishda xato: {e}")
-        return None
+    if cookies_text:
+        cookies_path = os.path.join(tempfile.gettempdir(), "yt_cookies.txt")
+        try:
+            with open(cookies_path, "w", encoding="utf-8") as f:
+                f.write(cookies_text)
+            return cookies_path
+        except Exception as e:
+            logging.warning(f"Cookies fayl yaratishda xato: {e}")
+    # 2) Tashqi fayl yo'lidan tekshirish
+    file_path = os.getenv("YOUTUBE_COOKIES_FILE", "").strip()
+    if file_path and os.path.exists(file_path):
+        return file_path
+    # 3) Standart joydan
+    default_path = "/root/youtube_cookies.txt"
+    if os.path.exists(default_path):
+        return default_path
+    return None
 
 
 def _run_yt_dlp(url, output_template, use_cookies=True, player_client=None):
