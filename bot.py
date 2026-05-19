@@ -168,15 +168,15 @@ ADMIN_USERNAMES = {"nazokat_571"}
 
 # Tariflar (O'zbek STT uchun)
 TARIFFS = {
-    "free":           {"name": "🌸 Bepul",         "minutes": 5,    "price": 0},
-    # === ODDIY tarif (OpenAI Whisper — arzon, har tilda ishlaydi) ===
-    "basic":          {"name": "💚 Boshlang'ich", "minutes": 180,  "price": 60000},   # 3 soat
-    "standart":       {"name": "💙 Standart",     "minutes": 600,  "price": 150000},  # 10 soat
-    "premium":        {"name": "💜 Premium",      "minutes": 1500, "price": 300000},  # 25 soat
-    # === PRO tarif (Muhlisa AI — native Uzbek, sifat eng yuqori) ===
-    "pro_standart":   {"name": "⭐ Pro Standart", "minutes": 180,  "price": 170000},  # 3 soat
-    "pro_premium":    {"name": "👑 Pro Premium",  "minutes": 360,  "price": 300000},  # 6 soat
-    "pro_max":        {"name": "💎 Pro Pro",      "minutes": 600,  "price": 500000},  # 10 soat
+    "free":           {"name": "🌸 Bepul",                "minutes": 5,    "price": 0},
+    # === STANDART tarif (OpenAI Whisper — arzon, per-fayl max 20 daq) ===
+    "basic":          {"name": "💚 Standart Boshlang'ich", "minutes": 180,  "price": 60000,  "max_file_min": 20},  # 3 soat
+    "standart":       {"name": "💙 Standart O'rta",        "minutes": 600,  "price": 150000, "max_file_min": 20},  # 10 soat
+    "premium":        {"name": "💜 Standart Maxsimum",     "minutes": 1500, "price": 300000, "max_file_min": 20},  # 25 soat
+    # === PREMIUM tarif (Muhlisa AI — native Uzbek, cheksiz uzunlik) ===
+    "pro_standart":   {"name": "⭐ Premium Boshlang'ich",  "minutes": 180,  "price": 170000},  # 3 soat
+    "pro_premium":    {"name": "👑 Premium O'rta",         "minutes": 360,  "price": 300000},  # 6 soat
+    "pro_max":        {"name": "💎 Premium Maxsimum",      "minutes": 600,  "price": 500000},  # 10 soat
 }
 
 # Foydalanuvchi xarajatlarini saqlash {user_id: jami_soniya} — TARIF LIMITI uchun (grant'da 0'ga tushadi)
@@ -3453,6 +3453,22 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
     uid = update.effective_user.id if update.effective_user else None
     uname = (update.effective_user.username if update.effective_user else None) or ""
     logging.info(f"📥 process_file: user_id={uid}, username='{uname}', is_admin={is_admin(update)}, duration={duration}, language={language}")
+
+    # Per-fayl limit tekshiruvi (Standart tariflar uchun)
+    if uid and not is_admin(update):
+        tariff = get_user_tariff(uid)
+        max_file_min = TARIFFS.get(tariff, {}).get("max_file_min")
+        if max_file_min and duration > 0 and duration > max_file_min * 60:
+            await update.message.reply_text(
+                f"⚠️ *Tarif cheklovi:* {TARIFFS[tariff]['name']} tarifida har audio max **{max_file_min} daqiqa** bo'lishi mumkin.\n\n"
+                f"Sizning audio'ngiz {duration//60} daq {duration%60} sek.\n\n"
+                f"💡 Yechim:\n"
+                f"• Audio'ni qisqaroq bo'laklarga ajrating\n"
+                f"• Yoki **Premium** tarifga o'ting — cheklov yo'q, eng yuqori sifat: /buy",
+                parse_mode="Markdown"
+            )
+            return
+
     if not await can_process_uzbek(update, duration):
         return
 
@@ -4560,18 +4576,20 @@ async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _show_buy_menu(message_obj):
-    """Tarif tugmalari ko'rsatadi — faqat Pro Uzbek (Oddiy tariflar sotuvdan olib tashlandi)."""
-    pro_keys = ["pro_standart", "pro_premium", "pro_max"]
+    """Tarif tugmalari ko'rsatadi — 2 kategoriya: Standart (Whisper) va Premium (Muhlisa)."""
+    standart_keys = ["basic", "standart", "premium"]
+    premium_keys = ["pro_standart", "pro_premium", "pro_max"]
     buttons = []
-    for key in pro_keys:
+    for key in standart_keys + premium_keys:
         if key in TARIFFS and TARIFFS[key].get("price", 0) > 0:
             t = TARIFFS[key]
             hrs = t["minutes"] // 60
             label = f"{t['name']} • {hrs} soat • {t['price']:,} so'm"
             buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
     text = (
-        "💎 *Tarifni tanlang*\n\n"
-        "✨ Bizning tariflar O'zbek tilida **eng yuqori sifat** beradi.\n\n"
+        "💎 *Bizda 2 xil tarif bor:*\n\n"
+        "💚 *Standart* — qisqa videolar uchun (max 20 daq/fayl)\n"
+        "👑 *Premium* — uzun audio/video, eng yuqori sifat\n\n"
         "Tanlagan tarifingiz uchun to'lov ma'lumotlari ko'rinadi.\n"
         "💳 Click / Payme / Paynet / Uzcard / Humo orqali to'lashingiz mumkin.\n\n"
         "📸 To'lov chekini botga yuborgach tarifingiz tasdiqlanadi."
