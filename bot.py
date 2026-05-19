@@ -7602,7 +7602,7 @@ async def serve_static(request):
 
 
 async def run_http_server():
-    web_app = web.Application(client_max_size=200 * 1024 * 1024)  # 200 MB
+    web_app = web.Application(client_max_size=1024 * 1024 * 1024)  # 1 GB
     web_app.router.add_get('/', serve_index)
     web_app.router.add_get('/index.html', serve_index)
     web_app.router.add_get('/static/{name}', serve_static)
