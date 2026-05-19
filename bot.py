@@ -169,11 +169,11 @@ ADMIN_USERNAMES = {"nazokat_571"}
 # Tariflar (O'zbek STT uchun)
 TARIFFS = {
     "free":           {"name": "🌸 Bepul",                "minutes": 5,    "price": 0},
-    # === STANDART tarif (OpenAI Whisper — arzon, per-fayl max 20 daq) ===
-    "basic":          {"name": "💚 Standart Boshlang'ich", "minutes": 180,  "price": 60000,  "max_file_min": 20},  # 3 soat
-    "standart":       {"name": "💙 Standart O'rta",        "minutes": 600,  "price": 150000, "max_file_min": 20},  # 10 soat
-    "premium":        {"name": "💜 Standart Maxsimum",     "minutes": 1500, "price": 300000, "max_file_min": 20},  # 25 soat
-    # === PREMIUM tarif (Muhlisa AI — native Uzbek, cheksiz uzunlik) ===
+    # === STANDART tarif (arzon, har qanday uzunlikda) ===
+    "basic":          {"name": "💚 Standart Boshlang'ich", "minutes": 180,  "price": 60000},   # 3 soat
+    "standart":       {"name": "💙 Standart O'rta",        "minutes": 600,  "price": 150000},  # 10 soat
+    "premium":        {"name": "💜 Standart Maxsimum",     "minutes": 1500, "price": 300000},  # 25 soat
+    # === PREMIUM tarif (eng yuqori sifat, har qanday uzunlikda) ===
     "pro_standart":   {"name": "⭐ Premium Boshlang'ich",  "minutes": 180,  "price": 170000},  # 3 soat
     "pro_premium":    {"name": "👑 Premium O'rta",         "minutes": 360,  "price": 300000},  # 6 soat
     "pro_max":        {"name": "💎 Premium Maxsimum",      "minutes": 600,  "price": 500000},  # 10 soat
@@ -777,15 +777,15 @@ def format_tariffs_text():
     if free_line:
         lines.append(free_line)
 
-    # Standart tariflar (qisqa videolar uchun)
-    lines.append("\n💚 *Standart* (qisqa videolar uchun, max 20 daq/fayl):")
+    # Standart tariflar (arzon)
+    lines.append("\n💚 *Standart* (arzon):")
     for k in ("basic", "standart", "premium"):
         line = _fmt(k)
         if line:
             lines.append(line)
 
-    # Premium tariflar (uzun audio/video uchun, eng yuqori sifat)
-    lines.append("\n👑 *Premium* (uzun audio/video, eng yuqori sifat):")
+    # Premium tariflar (eng yuqori sifat)
+    lines.append("\n👑 *Premium* (eng yuqori sifat):")
     for k in ("pro_standart", "pro_premium", "pro_max"):
         line = _fmt(k)
         if line:
@@ -4629,13 +4629,12 @@ async def _show_buy_menu(message_obj):
             buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
     text = (
         "💎 *Bizda 2 xil tarif bor:*\n\n"
-        "💚 *Standart* — qisqa videolar uchun (max 20 daq/fayl)\n"
-        "👑 *Premium* — uzun audio/video, eng yuqori sifat\n\n"
+        "💚 *Standart* — arzon\n"
+        "👑 *Premium* — eng yuqori sifat\n\n"
         "Tanlagan tarifingiz uchun to'lov ma'lumotlari ko'rinadi.\n"
         "💳 Click / Payme / Paynet / Uzcard / Humo orqali to'lashingiz mumkin.\n\n"
         "📸 To'lov chekini botga yuborgach tarifingiz tasdiqlanadi."
     )
-    # Bot ichki API texnologiyasini user'ga ko'rsatmaymiz
     if hasattr(message_obj, "edit_message_text"):
         try:
             await message_obj.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
