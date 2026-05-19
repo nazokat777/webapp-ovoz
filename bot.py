@@ -759,7 +759,7 @@ def format_tariffs_text():
     lines = ["💎 *Tariflar*\n"]
     lines.append("Tarif daqiqalari barcha xizmatlarga sarflanadi:")
     lines.append("• 🎤 Audio/video → matn (har qanday tilda)")
-    lines.append("• 📄 PDF → Audio (TTS)")
+    lines.append("• 📄 PDF → Audio")
     lines.append("")
 
     def _fmt(key):
