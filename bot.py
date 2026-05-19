@@ -1265,10 +1265,14 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
                     if failed_ranges_out is not None and start_sec >= 0 and end_sec > 0:
                         failed_ranges_out.append((start_sec, end_sec, err))
 
-        # FINAL PASS — yiqilgan bo'laklarni 60s kutib qayta urinish (Muhlisa server xato yo'qotsin)
-        if failed_chunks_muhlisa and len(failed_chunks_muhlisa) < total:
-            logging.warning(f"🔁 Muhlisa FINAL PASS: {len(failed_chunks_muhlisa)} yiqilgan bo'lakni 60s kutib qayta urinish...")
-            time.sleep(60)
+        # MULTI FINAL PASS — 3 marta, har biri ko'proq kutib
+        pass_waits = [60, 120, 300]  # 1min, 2min, 5min
+        for pass_num, wait_sec in enumerate(pass_waits, 1):
+            if not failed_chunks_muhlisa or len(failed_chunks_muhlisa) >= total:
+                break  # Hech narsa qoldimagan yoki hammasi yiqilgan — to'xtatamiz
+            logging.warning(f"🔁 Muhlisa FINAL PASS {pass_num}/3: {len(failed_chunks_muhlisa)} bo'lak, {wait_sec}s kutamiz...")
+            time.sleep(wait_sec)
+            still_failed = []
             for failed_idx, failed_info, _ in failed_chunks_muhlisa:
                 if not failed_info:
                     continue
@@ -1277,11 +1281,15 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
                     rtext, rerr = _transcribe_chunk_muhlisa(chunk_path_r)
                     if rtext:
                         chunk_results[failed_idx] = rtext
-                        logging.info(f"✅ Muhlisa FINAL PASS: bo'lak {failed_idx} tiklandi")
+                        logging.info(f"✅ Muhlisa FINAL PASS {pass_num}: bo'lak {failed_idx} tiklandi")
                         if failed_ranges_out is not None:
                             failed_ranges_out[:] = [r for r in failed_ranges_out if not (r[0] == start_r and r[1] == end_r)]
+                    else:
+                        still_failed.append((failed_idx, failed_info, rerr))
                 except Exception as e:
-                    logging.error(f"Muhlisa FINAL PASS xato: {e}")
+                    logging.error(f"Muhlisa FINAL PASS {pass_num} xato: {e}")
+                    still_failed.append((failed_idx, failed_info, str(e)[:100]))
+            failed_chunks_muhlisa = still_failed
     finally:
         # Bo'lak fayllarni o'chirish
         for ch in chunks:
@@ -2992,13 +3000,15 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
                 text = text[best_overlap:].lstrip()
         results.append(text)
 
-    # FINAL PASS — yiqilgan bo'laklarni 60s dam keyin qayta urinish.
-    # Bu rate limit yoki vaqtinchalik server xatosini engadi.
-    if failed_chunks and len(failed_chunks) < total:  # Faqat qisman fail bo'lsa
-        logging.warning(f"🔁 FINAL PASS: {len(failed_chunks)} ta yiqilgan bo'lakni 60s kutib qayta urinish...")
-        time.sleep(60)
+    # MULTI FINAL PASS — 3 marta, har biri ko'proq kutib
+    chunk_idx_to_path = {idx: path for idx, path in enumerate(chunks_to_process, 1)}
+    whisper_pass_waits = [60, 120, 300]  # 1min, 2min, 5min
+    for pass_num, wait_sec in enumerate(whisper_pass_waits, 1):
+        if not failed_chunks or len(failed_chunks) >= total:
+            break
+        logging.warning(f"🔁 Whisper FINAL PASS {pass_num}/3: {len(failed_chunks)} bo'lak, {wait_sec}s kutamiz...")
+        time.sleep(wait_sec)
         retry_failed = []
-        chunk_idx_to_path = {idx: path for idx, path in enumerate(chunks_to_process, 1)}
         for failed_idx, _ in failed_chunks:
             chunk_path = chunk_idx_to_path.get(failed_idx)
             if not chunk_path:
@@ -3007,8 +3017,7 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
                 ridx, rtext, rerr = _process_one_chunk((failed_idx, chunk_path))
                 if rtext:
                     chunk_results[ridx] = rtext
-                    logging.info(f"✅ FINAL PASS: bo'lak {ridx} tiklandi")
-                    # failed_ranges_out'dan ham olib tashlash
+                    logging.info(f"✅ Whisper FINAL PASS {pass_num}: bo'lak {ridx} tiklandi")
                     if failed_ranges_out is not None:
                         start_sec = (ridx - 1) * WHISPER_CHUNK_SECONDS
                         end_sec = ridx * WHISPER_CHUNK_SECONDS
@@ -3018,26 +3027,27 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
             except Exception as e:
                 retry_failed.append((failed_idx, str(e)[:200]))
         failed_chunks = retry_failed
-        logging.info(f"FINAL PASS tugadi: {len(failed_chunks)} bo'lak hali ham yiqilgan")
-        # Qayta natijalarni yig'amiz
-        sorted_keys = sorted(chunk_results.keys())
-        results = []
-        for k in sorted_keys:
-            text = chunk_results[k]
-            if not text:
-                continue
-            if results and len(text) > 100:
-                prev_tail = results[-1][-150:].lower()
-                new_head = text[:200].lower()
-                best_overlap = 0
-                for size in range(min(150, len(new_head)), 20, -5):
-                    snippet = new_head[:size]
-                    if snippet in prev_tail:
-                        best_overlap = size
-                        break
-                if best_overlap > 0:
-                    text = text[best_overlap:].lstrip()
-            results.append(text)
+        logging.info(f"Whisper FINAL PASS {pass_num} tugadi: {len(failed_chunks)} bo'lak hali yiqilgan")
+
+    # MULTI PASS'dan keyin natijalarni qayta yig'ish (yangi tiklangan chunklar bilan)
+    sorted_keys = sorted(chunk_results.keys())
+    results = []
+    for k in sorted_keys:
+        text = chunk_results[k]
+        if not text:
+            continue
+        if results and len(text) > 100:
+            prev_tail = results[-1][-150:].lower()
+            new_head = text[:200].lower()
+            best_overlap = 0
+            for size in range(min(150, len(new_head)), 20, -5):
+                snippet = new_head[:size]
+                if snippet in prev_tail:
+                    best_overlap = size
+                    break
+            if best_overlap > 0:
+                text = text[best_overlap:].lstrip()
+        results.append(text)
 
     # Agar BARCHA bo'laklar yiqilgan bo'lsa — xato qaytaramiz
     if not results and failed_chunks:
