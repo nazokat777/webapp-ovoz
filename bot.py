@@ -776,8 +776,16 @@ def format_tariffs_text():
     free_line = _fmt("free")
     if free_line:
         lines.append(free_line)
-    # Faqat Pro Uzbek tariflar — Oddiy (Whisper) sotuvdan olib tashlandi (sifat past edi)
-    lines.append("\n✨ *Tariflar* (O'zbek tili sifat eng yuqori):")
+
+    # Standart tariflar (qisqa videolar uchun)
+    lines.append("\n💚 *Standart* (qisqa videolar uchun, max 20 daq/fayl):")
+    for k in ("basic", "standart", "premium"):
+        line = _fmt(k)
+        if line:
+            lines.append(line)
+
+    # Premium tariflar (uzun audio/video uchun, eng yuqori sifat)
+    lines.append("\n👑 *Premium* (uzun audio/video, eng yuqori sifat):")
     for k in ("pro_standart", "pro_premium", "pro_max"):
         line = _fmt(k)
         if line:
