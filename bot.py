@@ -3280,37 +3280,60 @@ def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz")
 # ── BOT HELPERS ─────────────────────────────────────────────────────────────
 
 async def send_result(update, msg, text):
+    """Transkripsiya natijasini 2 ta PDF qilib yuborish (Lotin + Kirill).
+    TXT olib tashlandi. Tugma kerak emas — darrov yuboriladi."""
     if not text:
         await msg.edit_text("Matn aniqlanmadi.")
         return
 
     user_id = update.effective_user.id
-    # Matnni keyingi yuklab olishlar uchun saqlaymiz (PDF/TXT tugma)
+    # Matnni saqlash (fallback uchun)
     try:
         last_transcripts[int(user_id)] = {"text": text, "ts": time.time()}
-        _save_user_data()  # deploy'larda yo'qolmasin
+        _save_user_data()
     except Exception:
         pass
 
-    # Inline tugmalar — PDF, TXT, Yopish
-    keyboard = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("📥 PDF yuklab olish", callback_data="dl:pdf"),
-            InlineKeyboardButton("📥 TXT yuklab olish", callback_data="dl:txt"),
-        ],
-        [InlineKeyboardButton("✕ Yopish", callback_data="dl:close")],
-    ])
-
-    # Matn chatda ko'rsatilmaydi — faqat PDF/TXT tugmalari (user talabi)
     word_count = len(text.split())
     char_count = len(text)
+
     await msg.edit_text(
         f"✅ <b>Transkripsiya tayyor!</b>\n\n"
         f"📊 {word_count:,} ta so'z • {char_count:,} ta belgi\n\n"
-        f"📥 Quyidagi tugmalardan yuklab oling:",
+        f"📥 2 ta PDF tayyorlanmoqda (Lotin va Kirill)...",
         parse_mode="HTML",
-        reply_markup=keyboard,
     )
+
+    # 1) Lotin PDF
+    try:
+        latin_pdf = await asyncio.to_thread(make_pdf, text)
+        with open(latin_pdf, "rb") as f:
+            await update.message.reply_document(
+                document=f,
+                filename="mnsm-lotin.pdf",
+                caption="📄 Lotin alifbosida",
+            )
+        try: os.remove(latin_pdf)
+        except Exception: pass
+    except Exception as e:
+        logging.error(f"Lotin PDF xato: {e}")
+
+    # 2) Kirill PDF
+    try:
+        await update.message.reply_text("🔤 Kirill PDF tayyorlanmoqda...")
+        cyrillic_text = await asyncio.to_thread(convert_latin_to_cyrillic, text)
+        cyrillic_pdf = await asyncio.to_thread(make_pdf, cyrillic_text, "Audio & Konspekt — Кирилл")
+        with open(cyrillic_pdf, "rb") as f:
+            await update.message.reply_document(
+                document=f,
+                filename="mnsm-kirill.pdf",
+                caption="📄 Кирилл алифбосида",
+            )
+        try: os.remove(cyrillic_pdf)
+        except Exception: pass
+    except Exception as e:
+        logging.error(f"Kirill PDF xato: {e}")
+        await update.message.reply_text("⚠️ Kirill PDF tayyorlashda muammo bo'ldi, Lotin PDF yuborildi.")
 
 
 def make_progress_cb(loop, msg, base_label="🎙 Tanilmoqda"):
@@ -6629,9 +6652,67 @@ def _send_text_card(user_id, text, header="📝 <b>Matn:</b>"):
 
 
 def _send_text_and_pdf(user_id, text):
-    """Backwards-compatible wrapper — endi PDF avtomatik yuborilmaydi,
-    foydalanuvchi tugma bosishi orqali yuklaydi."""
-    _send_text_card(user_id, text, header="📝 <b>Matn:</b>")
+    """Yangi flow: 2 ta PDF avtomat yuboriladi (Lotin + Kirill).
+    TXT olib tashlandi (klient talabi).
+    text — Lotin alifbosida bo'lishi kutiladi."""
+    # Foydalanuvchini ogohlantirish (statistika)
+    word_count = len(text.split())
+    char_count = len(text)
+    url_msg = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    try:
+        requests.post(url_msg, json={
+            "chat_id": user_id,
+            "text": (
+                f"✅ <b>Transkripsiya tayyor!</b>\n\n"
+                f"📊 {word_count:,} ta so'z • {char_count:,} ta belgi\n\n"
+                f"📥 2 ta PDF yuboriladi (Lotin va Kirill)..."
+            ),
+            "parse_mode": "HTML",
+        }, timeout=30)
+    except Exception:
+        pass
+
+    # 1) Lotin PDF
+    try:
+        latin_pdf = make_pdf(text)
+        url_doc = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+        with open(latin_pdf, "rb") as f:
+            files = {"document": ("mnsm-lotin.pdf", f, "application/pdf")}
+            requests.post(url_doc, data={"chat_id": user_id, "caption": "📄 Lotin alifbosida"}, files=files, timeout=120)
+        try: os.remove(latin_pdf)
+        except Exception: pass
+    except Exception as e:
+        logging.error(f"Lotin PDF xato: {e}")
+
+    # 2) Kirill PDF
+    try:
+        requests.post(url_msg, json={
+            "chat_id": user_id,
+            "text": "🔤 Kirill PDF tayyorlanmoqda...",
+        }, timeout=30)
+        cyrillic_text = convert_latin_to_cyrillic(text)
+        cyrillic_pdf = make_pdf(cyrillic_text, title="Audio & Konspekt — Кирилл")
+        with open(cyrillic_pdf, "rb") as f:
+            files = {"document": ("mnsm-kirill.pdf", f, "application/pdf")}
+            requests.post(url_doc, data={"chat_id": user_id, "caption": "📄 Кирилл алифбосида"}, files=files, timeout=120)
+        try: os.remove(cyrillic_pdf)
+        except Exception: pass
+    except Exception as e:
+        logging.error(f"Kirill PDF xato: {e}")
+        try:
+            requests.post(url_msg, json={
+                "chat_id": user_id,
+                "text": "⚠️ Kirill PDF tayyorlashda muammo bo'ldi, Lotin PDF yuborildi."
+            }, timeout=30)
+        except Exception:
+            pass
+
+    # last_transcripts saqlash — kelajakda kerak bo'lsa
+    try:
+        last_transcripts[int(user_id)] = {"text": text, "ts": time.time()}
+        _save_user_data()
+    except Exception:
+        pass
 
 
 # ── HTTP/THREAD CONTEXT UCHUN LIMIT TEKSHIRUVI ─────────────────────────────
