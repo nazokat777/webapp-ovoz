@@ -4576,7 +4576,40 @@ async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _show_buy_menu(message_obj):
-    """Tarif tugmalari ko'rsatadi — 2 kategoriya: Standart (Whisper) va Premium (Muhlisa)."""
+    """Tarif tugmalari ko'rsatadi — 2 kategoriya: Standart va Premium.
+    Klient hozirgi tarifi tugashini kutishi kerak (almashish yo'q)."""
+    # User tariff tekshiruvi - agar paid tariff bo'lsa va daqiqa qolgan bo'lsa, kut deydi
+    user_id = None
+    if hasattr(message_obj, "from_user") and message_obj.from_user:
+        user_id = message_obj.from_user.id
+    elif hasattr(message_obj, "chat") and message_obj.chat:
+        user_id = message_obj.chat.id
+
+    if user_id:
+        current_tariff = get_user_tariff(user_id)
+        if current_tariff != "free":
+            t = TARIFFS.get(current_tariff, {})
+            used = get_user_usage_sec(user_id) / 60
+            limit = (t.get("minutes", 0) + get_user_bonus_min(user_id))
+            remaining = max(0, limit - used)
+            if remaining > 0.5:  # 30 soniyadan ko'p qolgan
+                wait_text = (
+                    f"⏳ *Sizning tarifingiz hali tugamagan*\n\n"
+                    f"🌸 Joriy tarif: *{t.get('name', current_tariff)}*\n"
+                    f"⏱ Qoldiq: *{remaining:.1f} daqiqa*\n\n"
+                    f"Yangi tarif olish uchun joriy tarifingiz tugashini kuting.\n"
+                    f"Tarif daqiqalaringiz tugagach yangisini sotib olishingiz mumkin.\n\n"
+                    f"📊 Hisobingiz: /balance"
+                )
+                if hasattr(message_obj, "edit_message_text"):
+                    try:
+                        await message_obj.edit_message_text(wait_text, parse_mode="Markdown")
+                    except BadRequest:
+                        pass
+                else:
+                    await message_obj.reply_text(wait_text, parse_mode="Markdown")
+                return
+
     standart_keys = ["basic", "standart", "premium"]
     premium_keys = ["pro_standart", "pro_premium", "pro_max"]
     buttons = []
@@ -4594,6 +4627,7 @@ async def _show_buy_menu(message_obj):
         "💳 Click / Payme / Paynet / Uzcard / Humo orqali to'lashingiz mumkin.\n\n"
         "📸 To'lov chekini botga yuborgach tarifingiz tasdiqlanadi."
     )
+    # Bot ichki API texnologiyasini user'ga ko'rsatmaymiz
     if hasattr(message_obj, "edit_message_text"):
         try:
             await message_obj.edit_message_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(buttons))
