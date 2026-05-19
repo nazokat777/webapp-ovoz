@@ -1290,6 +1290,26 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
                     logging.error(f"Muhlisa FINAL PASS {pass_num} xato: {e}")
                     still_failed.append((failed_idx, failed_info, str(e)[:100]))
             failed_chunks_muhlisa = still_failed
+
+        # CROSS-MODEL FALLBACK: Muhlisa hali qila olmagan chunklarni Whisper bilan urinish
+        # Bu chunk drop'ni butunlay yo'q qiladi — 2 ta turli AI ishlatamiz.
+        if failed_chunks_muhlisa and _ensure_openai_key():
+            logging.warning(f"🔄 CROSS-MODEL FALLBACK: {len(failed_chunks_muhlisa)} ta Muhlisa chunkni Whisper bilan urinamiz...")
+            url_w = "https://api.openai.com/v1/audio/transcriptions"
+            headers_w = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+            for failed_idx, failed_info, _ in failed_chunks_muhlisa:
+                if not failed_info:
+                    continue
+                chunk_path_r, start_r, end_r = failed_info
+                try:
+                    wtext, werr = _try_transcribe(chunk_path_r, "whisper-1", "uz", url_w, headers_w, start_r)
+                    if wtext:
+                        chunk_results[failed_idx] = wtext
+                        logging.info(f"✅ CROSS-MODEL: bo'lak {failed_idx} Whisper bilan tiklandi")
+                        if failed_ranges_out is not None:
+                            failed_ranges_out[:] = [r for r in failed_ranges_out if not (r[0] == start_r and r[1] == end_r)]
+                except Exception as e:
+                    logging.error(f"CROSS-MODEL Whisper xato: {e}")
     finally:
         # Bo'lak fayllarni o'chirish
         for ch in chunks:
