@@ -1234,6 +1234,10 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
     def _process_chunk(idx_data):
         idx, chunk_path, start_sec, end_sec = idx_data
         text, err = _transcribe_chunk_muhlisa(chunk_path)
+        # Hallucination tekshiruvi — agar Muhlisa bir so'zda qotib qolsa, fail deb belgilash
+        if text and _is_chunk_hallucinated(text, 50):
+            logging.warning(f"⚠️ Muhlisa bo'lak {idx} hallucination — fail deb belgilanmoqda")
+            return idx, None, "Hallucination", start_sec, end_sec
         return idx, text, err, start_sec, end_sec
 
     try:
@@ -1323,6 +1327,8 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
     # Natijalarni tartibda yig'ish
     results = [chunk_results[k] for k in sorted(chunk_results.keys())]
     final_text = " ".join(r for r in results if r).strip()
+    # Hallucination tozalash — bir so'z 80 marta qaytarilishini oldini oladi
+    final_text = _clean_whisper_hallucination(final_text)
     return final_text
 
 
