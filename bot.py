@@ -1159,10 +1159,12 @@ def _do_muxlisa_request(path, timeout=120):
         )
 
 
-def _transcribe_chunk_muhlisa(chunk_path, max_retries=3):
-    """Bitta bo'lakni Muhlisa AI orqali transkripsiya qiladi."""
+def _transcribe_chunk_muhlisa(chunk_path, max_retries=7):
+    """Bitta bo'lakni Muhlisa AI orqali transkripsiya qiladi.
+    7 marta retry — uzun audio chunklarning xatosini yo'q qilish uchun."""
     last_error = None
-    timeouts = [60, 90, 120]
+    timeouts = [60, 90, 120, 150, 180, 210, 240]
+    backoffs = [1, 2, 4, 8, 15, 30, 60]
     for attempt in range(max_retries):
         timeout = timeouts[min(attempt, len(timeouts) - 1)]
         try:
@@ -1176,13 +1178,18 @@ def _transcribe_chunk_muhlisa(chunk_path, max_retries=3):
             ):
                 # Fatal — retry foydasiz
                 return None, f"HTTP {response.status_code}: {err_text[:200]}"
-            last_error = f"HTTP {response.status_code}"
+            last_error = f"HTTP {response.status_code} (urinish {attempt+1}/{max_retries})"
+            logging.warning(f"Muhlisa {last_error}, {backoffs[attempt]}s kutamiz")
         except requests.exceptions.Timeout:
-            last_error = f"Timeout ({timeout}s)"
+            last_error = f"Timeout ({timeout}s) urinish {attempt+1}/{max_retries}"
+            logging.warning(f"Muhlisa timeout, {backoffs[attempt]}s kutamiz")
+        except requests.exceptions.ConnectionError as e:
+            last_error = f"Connection error: {str(e)[:100]} (urinish {attempt+1}/{max_retries})"
+            logging.warning(last_error)
         except Exception as e:
             last_error = str(e)[:200]
         if attempt < max_retries - 1:
-            time.sleep(1 + attempt)
+            time.sleep(backoffs[attempt])
     return None, last_error or "Noma'lum xato"
 
 
@@ -1219,6 +1226,8 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
     # 3) Parallel ishlash (4 worker)
     from concurrent.futures import ThreadPoolExecutor, as_completed
     chunk_results = {}
+    failed_chunks_muhlisa = []  # FINAL PASS uchun
+    ch_lookup = {i + 1: ch for i, ch in enumerate(chunks)}  # idx -> (path, start, end)
     completed = {"count": 0}
     completed_lock = threading.Lock()
 
@@ -1252,8 +1261,27 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
                     chunk_results[idx] = text
                 elif err:
                     logging.error(f"Muhlisa bo'lak {idx}/{total} yiqildi: {err}")
+                    failed_chunks_muhlisa.append((idx, ch_lookup.get(idx), err))
                     if failed_ranges_out is not None and start_sec >= 0 and end_sec > 0:
                         failed_ranges_out.append((start_sec, end_sec, err))
+
+        # FINAL PASS — yiqilgan bo'laklarni 60s kutib qayta urinish (Muhlisa server xato yo'qotsin)
+        if failed_chunks_muhlisa and len(failed_chunks_muhlisa) < total:
+            logging.warning(f"🔁 Muhlisa FINAL PASS: {len(failed_chunks_muhlisa)} yiqilgan bo'lakni 60s kutib qayta urinish...")
+            time.sleep(60)
+            for failed_idx, failed_info, _ in failed_chunks_muhlisa:
+                if not failed_info:
+                    continue
+                chunk_path_r, start_r, end_r = failed_info
+                try:
+                    rtext, rerr = _transcribe_chunk_muhlisa(chunk_path_r)
+                    if rtext:
+                        chunk_results[failed_idx] = rtext
+                        logging.info(f"✅ Muhlisa FINAL PASS: bo'lak {failed_idx} tiklandi")
+                        if failed_ranges_out is not None:
+                            failed_ranges_out[:] = [r for r in failed_ranges_out if not (r[0] == start_r and r[1] == end_r)]
+                except Exception as e:
+                    logging.error(f"Muhlisa FINAL PASS xato: {e}")
     finally:
         # Bo'lak fayllarni o'chirish
         for ch in chunks:
