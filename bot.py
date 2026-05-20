@@ -1613,18 +1613,38 @@ def extract_pdf_text(pdf_path, failed_pages_out=None):
         parts = []
         total_pages = len(reader.pages)
         for page_num, page in enumerate(reader.pages, 1):
-            # Har sahifa uchun 3 marta urinish (corrupt PDF qismlarni o'tkazib yuborish)
+            # Har sahifa uchun 7 marta urinish — turli usullar bilan
             extracted = None
-            for attempt in range(3):
+            for attempt in range(7):
                 try:
-                    t = page.extract_text() or ""
-                    extracted = t
-                    break
+                    # Har xil ekstrakt parametrlari bilan urinamiz
+                    if attempt < 3:
+                        t = page.extract_text() or ""
+                    elif attempt < 5:
+                        # Layout-aware mode (ba'zi PDF'larda yaxshiroq ishlaydi)
+                        t = page.extract_text(extraction_mode="layout") or ""
+                    else:
+                        # Visitor-based extraction (boshqa yo'l)
+                        chars = []
+                        def visit_text(text, cm, tm, fontDict, fontSize):
+                            chars.append(text)
+                        try:
+                            page.extract_text(visitor_text=visit_text)
+                            t = "".join(chars)
+                        except Exception:
+                            t = page.extract_text() or ""
+                    if t and t.strip():
+                        extracted = t
+                        break
+                    if attempt < 6:
+                        time.sleep(0.5)
                 except Exception as e:
-                    if attempt == 2:
-                        logging.warning(f"PDF sahifa {page_num}/{total_pages} ekstrakt xato: {e}")
+                    if attempt == 6:
+                        logging.warning(f"PDF sahifa {page_num}/{total_pages} 7 marta yiqildi: {e}")
                         if failed_pages_out is not None:
                             failed_pages_out.append(page_num)
+                    else:
+                        time.sleep(0.5)
             if extracted and extracted.strip():
                 # Sahifa boshiga marker qo'shamiz (tarjima chog'ida tushib qolsa aniqlash uchun)
                 parts.append(extracted.strip())
