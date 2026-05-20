@@ -1603,16 +1603,33 @@ def detect_lang(text):
     return "en"
 
 
-def extract_pdf_text(pdf_path):
-    """PDF faylidan matn ajratib oladi (bot sarlavhalari, fayl nomi tozalanadi)."""
+def extract_pdf_text(pdf_path, failed_pages_out=None):
+    """PDF faylidan matn ajratib oladi.
+    Har sahifa alohida ekstrakt qilinadi — bittasi yiqilsa boshqalari saqlanadi.
+    failed_pages_out: list pass qilsangiz, yiqilgan sahifa raqamlari to'ldiriladi.
+    """
     try:
         reader = pypdf.PdfReader(pdf_path)
         parts = []
-        for page in reader.pages:
-            t = page.extract_text() or ""
-            if t.strip():
-                parts.append(t.strip())
+        total_pages = len(reader.pages)
+        for page_num, page in enumerate(reader.pages, 1):
+            # Har sahifa uchun 3 marta urinish (corrupt PDF qismlarni o'tkazib yuborish)
+            extracted = None
+            for attempt in range(3):
+                try:
+                    t = page.extract_text() or ""
+                    extracted = t
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        logging.warning(f"PDF sahifa {page_num}/{total_pages} ekstrakt xato: {e}")
+                        if failed_pages_out is not None:
+                            failed_pages_out.append(page_num)
+            if extracted and extracted.strip():
+                # Sahifa boshiga marker qo'shamiz (tarjima chog'ida tushib qolsa aniqlash uchun)
+                parts.append(extracted.strip())
         full = "\n\n".join(parts)
+        logging.info(f"PDF ekstrakt: {total_pages} sahifa, {len(parts)} muvaffaqiyatli, {len(failed_pages_out or [])} yiqilgan")
         return _clean_pdf_text(full)
     except Exception as e:
         raise Exception(f"PDF o'qib bo'lmadi: {e}")
