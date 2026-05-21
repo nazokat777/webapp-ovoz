@@ -7331,19 +7331,7 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
         _send_text_card(user_id, translated, header=header)
         success = True
 
-        # 5) AUDIO — faqat Premium tarif (pro_*) uchun avtomat (Standart'da yo'q)
-        user_tariff = get_user_tariff(user_id)
-        is_premium = user_tariff.startswith("pro_") or user_tariff == "pro"
-        if is_premium:
-            try:
-                telegram_send_message(user_id, "🔊 Audio tayyorlanmoqda... (Premium tarif uchun)")
-                tts_path = make_tts(translated, target_lang)
-                if tts_path:
-                    telegram_send_voice(user_id, tts_path, caption=f"🔊 Audio versiya ({tgt_label})")
-                    try: os.remove(tts_path)
-                    except Exception: pass
-            except Exception as e:
-                logging.warning(f"PDF tarjima TTS xato: {e}")
+        # 5) Audio — endi avtomat YO'Q (klient talabi). Alohida xizmat sifatida bo'ladi keyin.
 
         # 6) Tarif daqiqalari
         if success and not _is_admin_id(user_id) and estimated_audio_sec > 0:
@@ -7628,9 +7616,10 @@ async def handle_webapp_upload(request):
                 args=(int(user_id), tmp_path, pdf_audio_lang),
                 daemon=True,
             ).start()
-        # === [TARJIMA] PDF + translation_lang/target -> PDF tarjima (matn+PDF+audio target tilda) ===
+        # === [TARJIMA] PDF + translation_lang -> PDF tarjima (har doim O'zbek tiliga) ===
         elif ext == ".pdf" and translation_lang:
-            threading.Thread(target=process_pdf_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang, output_alphabet), daemon=True).start()
+            # PDF tarjima uchun target HAR DOIM O'zbek (klient talabi)
+            threading.Thread(target=process_pdf_translation_for_user, args=(int(user_id), tmp_path, translation_lang, "uz", output_alphabet), daemon=True).start()
         # PDF tarjimasiz — oddiy PDF -> ovoz (default O'zbekcha)
         elif ext == ".pdf":
             threading.Thread(target=process_pdf_for_user, args=(int(user_id), tmp_path), daemon=True).start()
