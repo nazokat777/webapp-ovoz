@@ -6732,11 +6732,9 @@ def _send_quality_warning(user_id, text):
 
 
 def _send_text_card(user_id, text, header="📝 <b>Matn:</b>"):
-    """Matnni <pre> blokida + PDF/TXT/Yopish tugmalar bilan yuborish.
-    Telegram'ning copy tugmasi <pre> blokida avtomatik chiqadi.
-    Sync — async kontekstda ham xavfsiz ishlaydi (requests orqali).
-    Past sifat aniqlansa — oldindan ogohlantirish yuboriladi.
-    """
+    """Matnni 2 ta PDF (Lotin + Kirill) qilib avtomat yuborish.
+    Audio transkripsiya VA PDF tarjima uchun ishlatiladi.
+    Sync — async kontekstda ham xavfsiz ishlaydi (requests orqali)."""
     # Sifat tekshiruvi va ogohlantirish (faqat past sifat)
     _send_quality_warning(user_id, text)
 
@@ -6746,17 +6744,11 @@ def _send_text_card(user_id, text, header="📝 <b>Matn:</b>"):
     except Exception:
         pass
 
-    keyboard = {
-        "inline_keyboard": [
-            [
-                {"text": "📥 PDF yuklab olish", "callback_data": "dl:pdf"},
-                {"text": "📥 TXT yuklab olish", "callback_data": "dl:txt"},
-            ],
-            [{"text": "✕ Yopish", "callback_data": "dl:close"}],
-        ]
-    }
+    # 2 PDF avtomat yuborish (klient talabi)
+    _send_text_and_pdf(user_id, text)
+    return
 
-    # Matn chatda ko'rsatilmaydi — faqat PDF/TXT tugmalari (user talabi)
+    # ESKI KOD — saqlanyapti backward compat uchun (yetkilmaydi)
     word_count = len(text.split())
     char_count = len(text)
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
@@ -6769,7 +6761,6 @@ def _send_text_card(user_id, text, header="📝 <b>Matn:</b>"):
                 f"📥 Quyidagi tugmalardan yuklab oling:"
             ),
             "parse_mode": "HTML",
-            "reply_markup": keyboard,
         }, timeout=30)
     except Exception as e:
         logging.error(f"Tayyor xabar yuborish xato: {e}")
