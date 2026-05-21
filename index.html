@@ -1393,6 +1393,18 @@
         <span class="card-pill pill-blossom" data-i18n="pdf_pill">Yangi xizmat</span>
       </div>
     </div>
+    <!-- YANGI: PDF Tarjima (boshqa tildagi PDF → O'zbek matn) -->
+    <div class="pdf-card" onclick="selectType(this,'pdf-translate')" data-type="pdf-translate" style="margin-top: 12px;">
+      <div class="card-glow"></div>
+      <svg class="deco-flower md tr" style="animation-delay:0.6s"><use href="#sakura"/></svg>
+      <svg class="deco-flower sm bl faded" style="animation-delay:1.3s"><use href="#sakura"/></svg>
+      <div class="pdf-icon"><svg><use href="#i-pdf"/></svg></div>
+      <div class="pdf-info">
+        <div class="pdf-title">🌐 PDF Tarjima → 🇺🇿 O'zbek matn</div>
+        <div class="pdf-sub">Rus, Ingliz yoki Arab tilidagi PDF kitobni yuklang — biz uni O'zbekchaga tarjima qilib 2 PDF (Lotin va Kirill) beramiz.</div>
+        <span class="card-pill pill-blossom">Yangi</span>
+      </div>
+    </div>
     <!-- Yashirin tugmalar — JS uchun kerak (selectPdfLang) -->
     <div style="display: none;">
       <button id="pdflangUz"></button>
@@ -2283,7 +2295,15 @@
       uploadTitle.textContent = 'PDF faylni yuklash';
       uploadHint.innerHTML = '📄 PDF tanlang<br><span>Ovozli MP3 sifatida qaytariladi</span>';
       setMainBtn(selectedFile ? 'send' : 'mic');
-      // Sahifani PDF kartiga skroll
+      try { el.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch (e) {}
+    } else if (type === 'pdf-translate') {
+      // PDF tarjima — boshqa tildagi PDF → O'zbek matn
+      uploadZone.style.display = '';
+      urlZone.classList.remove('visible');
+      fileInput.accept = '.pdf,application/pdf';
+      uploadTitle.textContent = '🌐 PDF Tarjima — manba tilini tanlang';
+      uploadHint.innerHTML = 'Yuqorida 🇷🇺/🇬🇧/🇸🇦 tugmasini bosing, keyin PDF tanlang.<br><span>2 PDF qaytariladi (Lotin + Kirill)</span>';
+      setMainBtn(selectedFile ? 'send' : 'mic');
       try { el.scrollIntoView({behavior: 'smooth', block: 'center'}); } catch (e) {}
     } else if (type === 'voice') {
       // === Mikrofondan yozish — upload zonani yashirib, "Mikrofondan yozish" tugmasini ko'rsatamiz ===
@@ -2388,14 +2408,24 @@
       }
       // === [ALIFBO] O'zbek alifbosi (Lotin / Kirill) ===
       fd.append('output_alphabet', outputAlphabet || 'latin');
-      // === [PDF→MP3] PDF → O'zbek audio (avto-detect manba) ===
+      // === [PDF] PDF rejimi — pdf (→audio) yoki pdf-translate (→matn+PDF) ===
       const isPdfFile = (selectedFile.name || '').toLowerCase().endsWith('.pdf')
                          || (selectedFile.type || '').includes('pdf');
       if (isPdfFile) {
-        fd.append('pdf_audio_lang', 'uz');  // PDF audio doim O'zbek
-        if (!translateLang) {
-          fd.append('translation_lang', 'auto');
+        if (currentType === 'pdf-translate') {
+          // PDF Tarjima — boshqa tildagi PDF → O'zbek matn + 2 PDF
+          if (!translateLang) {
+            fd.append('translation_lang', 'auto');
+          }
           fd.append('target_lang', 'uz');
+          // pdf_audio_lang YUBORMAYMIZ — audio kerak emas
+        } else {
+          // PDF → O'zbek audio MP3 (oddiy PDF tugmasi)
+          fd.append('pdf_audio_lang', 'uz');
+          if (!translateLang) {
+            fd.append('translation_lang', 'auto');
+            fd.append('target_lang', 'uz');
+          }
         }
       }
       fd.append('file', selectedFile, selectedFile.name);
