@@ -6298,27 +6298,22 @@ async def translation_lang_callback(update: Update, context: ContextTypes.DEFAUL
     if choice not in TRANSLATION_LANGS:
         return
 
-    # 1-bosqich tamomlandi — manba til vaqtinchalik saqlanadi, target hali yo'q
-    pending_translations[user_id] = {"source": choice, "target": None}
+    # Target har doim O'zbek (klient talabi) - target tanlash bosqichi olib tashlandi
+    pending_translations[user_id] = {"source": choice, "target": "uz"}
     _save_user_data()
     src_label = TRANSLATION_LANGS[choice]
 
-    # 2-bosqich: Natija tilini tanlash
-    target_buttons = [
-        [InlineKeyboardButton("🇺🇿 O'zbek tiliga", callback_data="transltgt:uz")],
-        [InlineKeyboardButton("🇷🇺 Rus tiliga",    callback_data="transltgt:ru")],
-        [InlineKeyboardButton("🇬🇧 Ingliz tiliga", callback_data="transltgt:en")],
-        [InlineKeyboardButton("🇸🇦 Arab tiliga",   callback_data="transltgt:ar")],
-        [InlineKeyboardButton("❌ Bekor qilish",    callback_data="transltgt:cancel")],
-    ]
     await query.edit_message_text(
-        f"✅ Manba til: *{src_label}*\n\n"
-        f"🎯 *Natija tilini tanlang*\n\n"
-        f"Audio/video matni va PDF qaysi tilda chiqsin?\n"
-        f"📄 PDF va matn ham shu tilda tayyorlanadi.\n\n"
-        f"💡 1 daqiqa audio = 1 daqiqa tarifdan ayriladi.",
+        f"✅ *Tarjima sozlandi*\n\n"
+        f"📚 Manba: *{src_label}*\n"
+        f"🎯 Natija: 🇺🇿 O'zbek tilida\n\n"
+        f"📥 Endi quyidagilardan birini yuboring:\n"
+        f"• 🎤 Ovozli xabar / audio fayl\n"
+        f"• 🎬 Video / dumaloq video\n"
+        f"• 📄 PDF fayl\n\n"
+        f"💡 1 daqiqa = 1 daqiqa tarifdan ayriladi.\n"
+        f"Bekor qilish: /cancel",
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(target_buttons),
     )
 
 
