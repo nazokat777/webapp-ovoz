@@ -7328,26 +7328,23 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
             tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
         header = f"🌐 <b>PDF tarjima ({html.escape(tgt_label)}):</b>"
         _send_text_card(user_id, translated, header=header)
-        # 5) Audio (TTS target tilda) — bu asosiy natija, success bunga bog'liq
-        try:
-            tts_path = make_tts(translated, target_lang)
-            if tts_path:
-                telegram_send_voice(user_id, tts_path, caption=f"🔊 Audio versiya ({tgt_label})")
-                try: os.remove(tts_path)
-                except Exception: pass
-                success = True
-            else:
-                telegram_send_message(
-                    user_id,
-                    "⚠️ Audio yaratilmadi, lekin matn va PDF yetkazildi.\n💚 Daqiqa hisobingizdan yechilmadi."
-                )
-        except Exception as e:
-            logging.warning(f"PDF tarjima TTS xato: {e}")
-            telegram_send_message(
-                user_id,
-                f"⚠️ Audio yaratilmadi: {str(e)[:150]}\n💚 Daqiqa hisobingizdan yechilmadi."
-            )
-        # 6) Tarif daqiqalari — faqat audio yetkazilgan bo'lsa
+        success = True
+
+        # 5) AUDIO — faqat Premium tarif (pro_*) uchun avtomat (Standart'da yo'q)
+        user_tariff = get_user_tariff(user_id)
+        is_premium = user_tariff.startswith("pro_") or user_tariff == "pro"
+        if is_premium:
+            try:
+                telegram_send_message(user_id, "🔊 Audio tayyorlanmoqda... (Premium tarif uchun)")
+                tts_path = make_tts(translated, target_lang)
+                if tts_path:
+                    telegram_send_voice(user_id, tts_path, caption=f"🔊 Audio versiya ({tgt_label})")
+                    try: os.remove(tts_path)
+                    except Exception: pass
+            except Exception as e:
+                logging.warning(f"PDF tarjima TTS xato: {e}")
+
+        # 6) Tarif daqiqalari
         if success and not _is_admin_id(user_id) and estimated_audio_sec > 0:
             add_user_usage(user_id, estimated_audio_sec)
     except Exception as e:
