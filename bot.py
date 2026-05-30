@@ -2683,12 +2683,18 @@ def _cleanup_uzbek_transcript_chunk(text):
         resp = requests.post(url_api, headers=headers, json=payload, timeout=300)
         if resp.status_code == 200:
             cleaned = resp.json()["choices"][0]["message"]["content"].strip()
-            # Tekshiruv: tozalangan matn juda qisqarib ketmaganmi?
-            if cleaned and len(cleaned) >= len(text) * 0.5:
+            # Tekshiruv: tozalangan matn juda qisqarib YOKI juda shishib ketmaganmi?
+            # (GPT ba'zan takror/hallucination bilan matnni bir necha barobar shishiradi —
+            #  8002 → 44788 belgi kabi. Bunday natija buzuq, asl matnni qaytaramiz.)
+            if not cleaned:
+                logging.warning("Tozalangan matn bo'sh, asl matnni qaytaramiz")
+            elif len(cleaned) < len(text) * 0.5:
+                logging.warning(f"Tozalangan matn juda qisqa ({len(text)}→{len(cleaned)}), asl matnni qaytaramiz")
+            elif len(cleaned) > len(text) * 1.5:
+                logging.warning(f"Tozalangan matn juda shishgan ({len(text)}→{len(cleaned)}) — hallucination, asl matnni qaytaramiz")
+            else:
                 logging.info(f"✅ Uzbek matn tozalandi ({len(text)} → {len(cleaned)} belgi)")
                 return cleaned
-            else:
-                logging.warning(f"Tozalangan matn juda qisqa, asl matnni qaytaramiz")
     except Exception as e:
         logging.warning(f"Uzbek cleanup xato: {e}")
     return text
@@ -2797,7 +2803,10 @@ def _try_transcribe_audio_chat(chunk_path, source_lang, headers):
 
     url_api = "https://api.openai.com/v1/chat/completions"
     last_error = None
-    for attempt in range(2):  # 2 urinish (qimmat — ko'p urinmaymiz)
+    # 4 urinish: 520/429/5xx vaqtinchalik xatolar uchun — aks holda whisper-1 ga
+    # tez tushib, o'zbek matni ozarbayjon/turkchaga adashadi. gpt-audio sifati ustun.
+    backoffs = [2, 5, 12, 25]
+    for attempt in range(4):
         try:
             resp = requests.post(url_api, headers=headers, json=payload, timeout=600)
             if resp.status_code == 200:
@@ -2809,9 +2818,11 @@ def _try_transcribe_audio_chat(chunk_path, source_lang, headers):
             elif resp.status_code == 400:
                 # 400 — fayl format yoki yaxshi audio emas, qayta urinish foydasiz
                 return None, f"HTTP 400: {resp.text[:200]}"
-            elif resp.status_code in (429, 500, 502, 503):
+            elif resp.status_code in (429, 500, 502, 503, 504, 520, 522, 524, 529):
                 last_error = f"HTTP {resp.status_code}"
-                time.sleep(2 ** attempt)
+                logging.warning(f"gpt-audio {last_error} (urinish {attempt+1}/4), {backoffs[attempt]}s kutamiz")
+                if attempt < 3:
+                    time.sleep(backoffs[attempt])
             else:
                 return None, f"HTTP {resp.status_code}: {resp.text[:200]}"
         except requests.exceptions.Timeout:
@@ -3080,15 +3091,15 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
         def _is_good(text):
             return bool(text) and len(text) >= 20 and not _is_chunk_hallucinated(text, WHISPER_CHUNK_SECONDS)
 
-        # 1) gpt-4o-audio-preview (eng yaxshi sifat, qimmat ~$1.80/soat)
+        # 1) gpt-audio (eng yaxshi sifat, o'zbek uchun aniq)
         chunk_text, err1 = _try_transcribe_audio_chat(chunk_path, source_lang, headers)
         if _is_good(chunk_text):
             return idx, chunk_text, None
         if chunk_text:
-            logging.warning(f"Bo'lak {idx}/{total} audio-preview natija sifat past, fallback...")
+            logging.warning(f"Bo'lak {idx}/{total} gpt-audio natija sifat past, fallback...")
 
         # 2) whisper-1 fallback (so'zma-so'z, arzon)
-        logging.warning(f"Bo'lak {idx}/{total} audio-preview yiqildi/sifat past: {err1}. whisper-1 fallback...")
+        logging.warning(f"Bo'lak {idx}/{total} gpt-audio yiqildi/sifat past: {err1}. whisper-1 fallback...")
         chunk_text_w, err2 = _try_transcribe(
             chunk_path, "whisper-1", source_lang, url, headers, chunk_offset_sec=chunk_offset_sec
         )
