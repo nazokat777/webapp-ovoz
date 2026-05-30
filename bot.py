@@ -2140,13 +2140,7 @@ def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
     new_size_mb = os.path.getsize(recoded_path) / (1024 * 1024)
     logging.info(f"   ✅ qayta kodlangan: {new_size_mb:.1f}MB (orig {orig_size_mb:.1f}MB)")
 
-    # === Qadam 2: yangi fayl Whisper limitidan kichik bo'lsa, bitta fayl ===
-    if new_size_mb <= WHISPER_MAX_FILE_MB:
-        logging.info("   → 1 ta fayl yetarli")
-        return [recoded_path]
-
-    # === Qadam 3: Hali ham katta — vaqt bo'yicha bo'laklash ===
-    # ffprobe orqali aniq davomiylik (taxminiy hisoblash o'rniga — oxirgi bo'lak yo'qolmasligi uchun)
+    # Davomiylikni aniqlaymiz — bo'laklash QARORI uchun (size emas, VAQT muhim).
     duration_sec = 0
     try:
         p = subprocess.run(
@@ -2160,7 +2154,17 @@ def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
     if duration_sec <= 0:
         # Fallback: taxminiy (64kbps = 8 KB/sec)
         duration_sec = int(new_size_mb * 1024 / 8)
-    logging.info(f"   → katta fayl, vaqt bo'yicha bo'laklash (dur={duration_sec}s)")
+
+    # === Qadam 2: qisqa audio (<=chunk_seconds VA <=limit) — bitta fayl ===
+    # MUHIM: uzun audioni bitta so'rovda yuborish modelni to'liq transkripsiya
+    # qilishga majburlamaydi (oxirini tashlab ketadi). Shuning uchun VAQT bo'yicha
+    # ham bo'laklaymiz — har bo'lak alohida, ishonchli va to'liq tanilaadi.
+    if duration_sec <= chunk_seconds and new_size_mb <= WHISPER_MAX_FILE_MB:
+        logging.info(f"   → 1 ta fayl yetarli (dur={duration_sec}s)")
+        return [recoded_path]
+
+    # === Qadam 3: uzun yoki katta fayl — vaqt bo'yicha bo'laklash ===
+    logging.info(f"   → vaqt bo'yicha bo'laklash (dur={duration_sec}s, {new_size_mb:.1f}MB)")
     return _split_by_time(recoded_path, chunk_seconds, duration_sec)
 
 
@@ -2778,7 +2782,7 @@ def _try_transcribe_audio_chat(chunk_path, source_lang, headers):
     user_text = "Audio'ni o'zbek lotin alifbosida matn qiling. Faqat matn, izoh yo'q."
 
     payload = {
-        "model": "gpt-4o-audio-preview",
+        "model": "gpt-audio",  # gpt-4o-audio-preview GA nomi — eski nom 404 qaytaradi
         "modalities": ["text"],
         "messages": [
             {"role": "system", "content": system_msg},
