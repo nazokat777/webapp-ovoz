@@ -705,6 +705,33 @@ def add_user_usage(user_id, seconds):
         logging.warning(f"   ⚠️ seconds={seconds} musbat emas, daqiqa qo'shilmadi")
 
 
+def _activate_tariff_with_carryover(user_id, tariff_key, source):
+    """Yangi tarifni faollashtiradi va joriy tarifning ISHLATILMAGAN daqiqalarini
+    yangi tarifga qo'shadi (yo'qolib ketmaydi).
+
+    Hisob: qoldiq = (joriy_tarif_daqiqa + bonus) − ishlatilgan. Bu qoldiq yangi
+    bonus bo'lib o'rnatiladi (eski bonus allaqachon qoldiqqa kirgani uchun
+    OVERWRITE — qo'shish emas, aks holda ikki marta hisoblanadi).
+    'free' tarifdan o'tishda carryover yo'q (bepul daqiqa ko'chirilmaydi)."""
+    uid = int(user_id)
+    carry_min = 0
+    try:
+        if get_user_tariff(uid) != "free":
+            remaining_sec = get_user_limit_sec(uid) - get_user_usage_sec(uid)
+            carry_min = int(max(0, remaining_sec) // 60)
+    except Exception as e:
+        logging.warning(f"Carryover hisoblash xato (user {uid}): {e}")
+        carry_min = 0
+
+    user_tariffs[uid] = tariff_key
+    user_uzbek_usage[uid] = 0
+    user_bonus_minutes[uid] = carry_min
+    _append_tariff_log(uid, tariff_key, source=source)
+    if carry_min > 0:
+        logging.info(f"🎁 Carryover: user {uid} → yangi tarif '{tariff_key}' ga +{carry_min} daqiqa ko'chirildi ({source})")
+    return carry_min
+
+
 def _try_claim_referral_bonus(user_id):
     """User real foydalanish qilgach, taklif bonusi'ni faollashtirish.
     Bonus shu yerda beriladi (har ikkalasiga +REFERRAL_BONUS_MIN daqiqa).
@@ -1453,82 +1480,76 @@ def _enforce_alphabet_by_tariff(user_id, requested_alphabet):
     return "latin"
 
 
+# O'zbek Lotin → Kirill: ko'p belgili (digraf) tokenlar (o'/g' alohida ishlanadi)
+_UZ_CYR_MULTI = {
+    "sh": "ш", "ch": "ч",
+    "yo": "ё", "yu": "ю", "ya": "я", "ye": "е",
+    "ts": "ц",
+}
+# Bir belgili tokenlar ('e' kontekst bo'yicha alohida ishlanadi)
+_UZ_CYR_SINGLE = {
+    "a": "а", "b": "б", "c": "с", "d": "д", "f": "ф", "g": "г", "h": "ҳ",
+    "i": "и", "j": "ж", "k": "к", "l": "л", "m": "м", "n": "н", "o": "о",
+    "p": "п", "q": "қ", "r": "р", "s": "с", "t": "т", "u": "у", "v": "в",
+    "w": "в", "x": "х", "y": "й", "z": "з",
+}
+
+
+def _apply_cyr_case(latin_tok, cyr):
+    """Lotin tokenining katta-kichikligini Kirill ekvivalentiga ko'chiradi."""
+    if len(latin_tok) > 1 and latin_tok.isupper():
+        return cyr.upper()
+    if latin_tok[:1].isupper():
+        return cyr[:1].upper() + cyr[1:]
+    return cyr
+
+
 def convert_latin_to_cyrillic(text):
-    """O'zbek Lotin alifbosidagi matnni Kirill alifbosiga o'tkazish — GPT-4o orqali.
-    Yuqori sifat, imloviy xatolarsiz. Uzun matn 3000 so'zlik bo'laklarda ishlanadi.
+    """O'zbek Lotin alifbosidagi matnni Kirill alifbosiga DETERMINISTIK o'tkazadi.
+
+    Aniq qoidalar jadvali — bir zumda, bepul, hech qanday drift yo'q (GPT emas).
+    • o' → ў, g' → ғ (avval, 'yo'q' → йўқ to'g'ri chiqishi uchun)
+    • sh → ш, ch → ч, yo/yu/ya → ё/ю/я, ye → е, ts → ц
+    • 'e' so'z boshida → э, aks holda → е
+    • raqamlar, tinish belgilari, allaqachon kirill bo'lgan belgilar — o'zgarmaydi
     """
     if not text or not text.strip():
         return text
-    if not OPENAI_API_KEY:
-        logging.warning("OPENAI_API_KEY yo'q, Kirill konversiya imkonsiz")
-        return text
 
+    # 1) Apostroflarni standartlashtirish (tipografik variantlar → ASCII ')
     text = _normalize_uzbek_apostrophes(text)
-    words = text.split()
+    for ch in ("ʻ", "ʼ", "‘", "’", "´", "`"):
+        text = text.replace(ch, "'")
 
-    def _convert_chunk(chunk_text):
-        """Bitta bo'lakni GPT bilan kirillga o'tkazish."""
-        url_api = "https://api.openai.com/v1/chat/completions"
-        headers = {
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-            "Content-Type": "application/json",
-        }
-        system_prompt = (
-            "You are a PRECISE Uzbek alphabet converter. Convert the given Uzbek "
-            "LATIN text to Uzbek CYRILLIC alphabet (current official Uzbek Cyrillic).\n\n"
-            "STRICT RULES:\n"
-            "1) Keep meaning EXACTLY — do not translate, only transliterate.\n"
-            "2) Use correct Uzbek Cyrillic letters: а, б, в, г, ғ, д, е, ё, ж, з, и, й, "
-            "к, қ, л, м, н, нг, о, ў, п, р, с, т, у, ф, х, ҳ, ч, ш, ъ, э, ю, я.\n"
-            "3) Common conversions: o' → ў, g' → ғ, ch → ч, sh → ш, h → ҳ, x → х, "
-            "q → қ, ng → нг, yo → ё, yu → ю, ya → я, ts → ц.\n"
-            "4) 'e' at word start = 'э' (echki → эчки), inside word = 'е' (men → мен).\n"
-            "5) PRESERVE proper nouns (foreign names like London, Microsoft stay as-is).\n"
-            "6) PRESERVE numbers, dates, English/Arabic words unchanged.\n"
-            "7) PRESERVE punctuation and formatting.\n"
-            "8) NO spelling errors — use literary Uzbek Cyrillic norms.\n\n"
-            "Return ONLY the converted Cyrillic text, no explanations."
-        )
-        payload = {
-            "model": "gpt-4o",
-            "max_tokens": 16000,
-            "temperature": 0.0,  # eng aniq, ijodga ehtiyoj yo'q
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"Convert this Uzbek Latin text to Uzbek Cyrillic:\n\n{chunk_text}"},
-            ],
-        }
-        resp = requests.post(url_api, headers=headers, json=payload, timeout=300)
-        if resp.status_code != 200:
-            raise Exception(f"Kirill konversiya xatosi: HTTP {resp.status_code}")
-        data = resp.json()
-        return data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+    # 2) o'/g' ni OLDIN kirillga o'tkazamiz (digraf skanidan oldin)
+    text = (text.replace("O'", "Ў").replace("o'", "ў")
+                .replace("G'", "Ғ").replace("g'", "ғ"))
 
-    # Kichik matn — bir martada
-    CYR_CHUNK_WORDS = 3000
-    if len(words) <= CYR_CHUNK_WORDS:
-        try:
-            return _convert_chunk(text)
-        except Exception as e:
-            logging.error(f"Kirill konversiya xato: {e}")
-            return text  # asl matnni qaytarib, hech bo'lmaganda yetkazamiz
-
-    # Uzun matn — bo'laklarga
-    chunks = []
-    for i in range(0, len(words), CYR_CHUNK_WORDS):
-        chunks.append(" ".join(words[i:i + CYR_CHUNK_WORDS]))
-    logging.info(f"🔤 Kirill konversiya: {len(words)} so'z → {len(chunks)} bo'lak")
-
-    converted_parts = []
-    for idx, chunk in enumerate(chunks, 1):
-        try:
-            converted_parts.append(_convert_chunk(chunk))
-            logging.info(f"   ✅ bo'lak {idx}/{len(chunks)} kirillga o'tkazildi")
-        except Exception as e:
-            logging.warning(f"   ❌ bo'lak {idx} kirill konversiya xato: {e}")
-            converted_parts.append(chunk)  # asl bo'lakni qaytaramiz
-
-    return "\n\n".join(converted_parts)
+    # 3) Chapdan-o'ngga skanlash
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        two = text[i:i + 2].lower()
+        if two in _UZ_CYR_MULTI:
+            out.append(_apply_cyr_case(text[i:i + 2], _UZ_CYR_MULTI[two]))
+            i += 2
+            continue
+        ch = text[i]
+        low = ch.lower()
+        if low == "e":
+            prev = text[i - 1] if i > 0 else ""
+            word_initial = (i == 0) or (not prev.isalpha() and prev not in ("'", "ў", "ғ", "Ў", "Ғ"))
+            out.append(_apply_cyr_case(ch, "э" if word_initial else "е"))
+            i += 1
+            continue
+        if low in _UZ_CYR_SINGLE:
+            out.append(_apply_cyr_case(ch, _UZ_CYR_SINGLE[low]))
+            i += 1
+            continue
+        # noma'lum belgi (raqam, tinish, kirill, arab, h.k.) — o'zgarmaydi
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def make_pdf(text, title="Audio & Konspekt — Matn"):
@@ -1674,6 +1695,61 @@ def _clean_pdf_text(text):
     return "\n".join(cleaned).strip()
 
 
+def _concat_mp3(chunk_paths, out_path):
+    """Bir nechta MP3 bo'lakni BITTA to'g'ri MP3 faylga birlashtiradi.
+
+    Xom bayt-birlashtirish (write(read())) faylning duration sarlavhasini buzadi —
+    Telegram pleer faqat birinchi bo'lak davomiyligini o'qib, audioni o'rtasida
+    to'xtatadi. ffmpeg concat demuxer to'g'ri uzluksiz oqim va to'g'ri davomiylik
+    yozadi. ffmpeg bo'lmasa yoki xato bo'lsa — xom birlashtirishga qaytadi.
+    """
+    valid = [p for p in chunk_paths if p and os.path.exists(p) and os.path.getsize(p) > 0]
+    if not valid:
+        return False
+    if len(valid) == 1:
+        try:
+            shutil.copyfile(valid[0], out_path)
+            return True
+        except Exception:
+            pass
+
+    if have_cmd("ffmpeg"):
+        list_file = None
+        try:
+            with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False, encoding="utf-8") as lf:
+                list_file = lf.name
+                for p in valid:
+                    safe = p.replace("\\", "/").replace("'", "'\\''")
+                    lf.write(f"file '{safe}'\n")
+            # -c copy yetarli: hamma bo'lak bir xil edge-tts kodek/bitrate.
+            # Xavfsizlik uchun re-encode (libmp3lame) — har doim to'g'ri header beradi.
+            result = subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+                 "-i", list_file, "-c:a", "libmp3lame", "-q:a", "4", out_path],
+                capture_output=True, text=True, timeout=300
+            )
+            if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 100:
+                return True
+            logging.warning(f"ffmpeg concat xato (rc={result.returncode}): {(result.stderr or '')[:200]}")
+        except Exception as e:
+            logging.warning(f"ffmpeg concat istisno: {e}")
+        finally:
+            if list_file:
+                try: os.remove(list_file)
+                except Exception: pass
+
+    # Fallback — xom bayt-birlashtirish (duration buzilishi mumkin, lekin to'liq)
+    try:
+        with open(out_path, "wb") as out_f:
+            for p in valid:
+                with open(p, "rb") as in_f:
+                    out_f.write(in_f.read())
+        return os.path.getsize(out_path) > 100
+    except Exception as e:
+        logging.error(f"Xom MP3 birlashtirish xato: {e}")
+        return False
+
+
 def make_tts_edge(text, lang=None):
     """Matnni Edge TTS (Microsoft, bepul) bilan MP3 ga aylantiradi.
     Uzun matn 3000 belgili bo'laklarga ajratiladi va PARALLEL ishlanadi
@@ -1706,21 +1782,31 @@ def make_tts_edge(text, lang=None):
         logging.info(f"🔊 Edge TTS: {len(snippet)} belgi → {len(chunks)} bo'lak (PARALLEL)")
 
     async def _tts_chunk(idx, ch, semaphore):
-        """Bitta bo'lakni TTS qiladi va vaqtinchalik fayl yo'lini qaytaradi."""
+        """Bitta bo'lakni TTS qiladi va vaqtinchalik fayl yo'lini qaytaradi.
+        Edge API beqaror — har bo'lak 3 marta urinib ko'riladi. Aks holda
+        yiqilgan bo'lak jimgina tushib qolib, audio 'oxirigacha bormaydi'."""
         async with semaphore:
-            chunk_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
-            try:
-                comm = edge_tts.Communicate(ch, voice)
-                await asyncio.wait_for(comm.save(chunk_path), timeout=90)
-                if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 0:
-                    logging.info(f"   ✅ bo'lak {idx+1}/{len(chunks)} tayyor")
-                    return (idx, chunk_path)
-            except asyncio.TimeoutError:
-                logging.warning(f"   ⏱ bo'lak {idx+1} timeout (90s)")
-            except Exception as e:
-                logging.warning(f"   ❌ bo'lak {idx+1} xato: {e}")
-            try: os.remove(chunk_path)
-            except Exception: pass
+            for attempt in range(1, 4):
+                chunk_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
+                try:
+                    comm = edge_tts.Communicate(ch, voice)
+                    await asyncio.wait_for(comm.save(chunk_path), timeout=90)
+                    if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 0:
+                        if attempt > 1:
+                            logging.info(f"   ✅ bo'lak {idx+1}/{len(chunks)} tayyor ({attempt}-urinish)")
+                        else:
+                            logging.info(f"   ✅ bo'lak {idx+1}/{len(chunks)} tayyor")
+                        return (idx, chunk_path)
+                    raise Exception("bo'sh fayl (NoAudioReceived?)")
+                except asyncio.TimeoutError:
+                    logging.warning(f"   ⏱ bo'lak {idx+1} timeout (90s) — urinish {attempt}/3")
+                except Exception as e:
+                    logging.warning(f"   ❌ bo'lak {idx+1} xato (urinish {attempt}/3): {e}")
+                try: os.remove(chunk_path)
+                except Exception: pass
+                if attempt < 3:
+                    await asyncio.sleep(1.5 * attempt)
+            logging.error(f"   ⛔ bo'lak {idx+1}/{len(chunks)} 3 urinishdan keyin ham yiqildi")
             return (idx, None)
 
     async def _run():
@@ -1730,16 +1816,15 @@ def make_tts_edge(text, lang=None):
         results = await asyncio.gather(*tasks, return_exceptions=False)
         # Tartibni saqlab birlashtiramiz
         results.sort(key=lambda x: x[0])
-        with open(out_path, "wb") as out_f:
-            for idx, chunk_path in results:
-                if chunk_path and os.path.exists(chunk_path):
-                    try:
-                        with open(chunk_path, "rb") as in_f:
-                            out_f.write(in_f.read())
-                    except Exception as e:
-                        logging.warning(f"chunk read xato: {e}")
-                    try: os.remove(chunk_path)
-                    except Exception: pass
+        ok = sum(1 for _, cp in results if cp)
+        if ok < len(results):
+            logging.warning(f"⚠️ Edge TTS: {len(results)-ok}/{len(results)} bo'lak yiqildi — audio to'liq bo'lmasligi mumkin")
+        chunk_files = [cp for idx, cp in results if cp and os.path.exists(cp)]
+        # ffmpeg bilan to'g'ri birlashtirish (duration sarlavhasi buzilmaydi)
+        _concat_mp3(chunk_files, out_path)
+        for cp in chunk_files:
+            try: os.remove(cp)
+            except Exception: pass
 
     loop = asyncio.new_event_loop()
     try:
@@ -1816,20 +1901,25 @@ def make_tts_openai(text, lang=None):
             cur = end
 
     out_path = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
+    chunk_files = []
     try:
-        # Har bir bo'lakni TTS qilib, MP3 bytes'larni ketma-ket yozamiz
-        with open(out_path, "wb") as out_f:
-            for i, ch in enumerate(chunks, 1):
-                if not ch:
-                    continue
-                try:
-                    mp3_bytes = _openai_tts_chunk(ch, voice)
-                    out_f.write(mp3_bytes)
-                except Exception as e:
-                    logging.warning(f"OpenAI TTS bo'lak {i}/{len(chunks)} xato: {e}")
-                    # Agar 1 ta bo'lak buzilsa, qolganlari hali yozilgan
-                    if i == 1:
-                        raise  # birinchi bo'lak ham yiqilsa, butun fayl yo'q
+        # Har bir bo'lakni alohida MP3 faylga TTS qilamiz
+        for i, ch in enumerate(chunks, 1):
+            if not ch:
+                continue
+            try:
+                mp3_bytes = _openai_tts_chunk(ch, voice)
+                cf = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False).name
+                with open(cf, "wb") as f:
+                    f.write(mp3_bytes)
+                chunk_files.append(cf)
+            except Exception as e:
+                logging.warning(f"OpenAI TTS bo'lak {i}/{len(chunks)} xato: {e}")
+                # Agar 1 ta bo'lak buzilsa, qolganlari hali yoziladi
+                if i == 1:
+                    raise  # birinchi bo'lak ham yiqilsa, butun fayl yo'q
+        # ffmpeg bilan to'g'ri birlashtirish (duration sarlavhasi buzilmaydi)
+        _concat_mp3(chunk_files, out_path)
         # Tekshiramiz — fayl bo'sh emasmi
         if os.path.getsize(out_path) < 100:
             try: os.remove(out_path)
@@ -1841,6 +1931,10 @@ def make_tts_openai(text, lang=None):
         try: os.remove(out_path)
         except Exception: pass
         return None
+    finally:
+        for cf in chunk_files:
+            try: os.remove(cf)
+            except Exception: pass
 
 
 def make_tts(text, lang=None, force_engine=None):
@@ -2475,9 +2569,11 @@ def _cleanup_uzbek_transcript(text):
     """
     if not text or not OPENAI_API_KEY:
         return text
-    # Uzun matn — chunklash kerak
-    if len(text) > 30000:
-        # Juda uzun, chunklab tozalash
+    # Uzun matn — chunklash kerak.
+    # MUHIM: bitta gpt-4o chaqiruvi max 16k token chiqaradi. Uzun matnni butunlay
+    # yuborsak, chiqish kesilib darsning OXIRI yo'qoladi (audio ham kalta chiqadi).
+    # Shu sabab 9000 belgidan oshsa — bo'laklab tozalaymiz (har bo'lak xavfsiz sig'adi).
+    if len(text) > 9000:
         words = text.split()
         chunks = []
         cur, count = [], 0
@@ -2489,6 +2585,7 @@ def _cleanup_uzbek_transcript(text):
                 cur, count = [], 0
         if cur:
             chunks.append(" ".join(cur))
+        logging.info(f"🧹 Uzun matn ({len(text)} belgi) → {len(chunks)} bo'lakda tozalanadi")
         cleaned_parts = []
         for ch in chunks:
             cleaned_parts.append(_cleanup_uzbek_transcript_chunk(ch))
@@ -4625,14 +4722,17 @@ async def buy_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _show_buy_menu(message_obj):
     """Tarif tugmalari ko'rsatadi — 2 kategoriya: Standart va Premium.
-    Klient hozirgi tarifi tugashini kutishi kerak (almashish yo'q)."""
-    # User tariff tekshiruvi - agar paid tariff bo'lsa va daqiqa qolgan bo'lsa, kut deydi
+    Joriy tarif tugamagan bo'lsa ham yangi tarif olish mumkin — qolgan daqiqalar
+    yangi tarifga ko'chiriladi (yo'qolmaydi)."""
     user_id = None
     if hasattr(message_obj, "from_user") and message_obj.from_user:
         user_id = message_obj.from_user.id
     elif hasattr(message_obj, "chat") and message_obj.chat:
         user_id = message_obj.chat.id
 
+    # Joriy tarifda qolgan daqiqalar — bloklamaymiz, balki yangi tarifga
+    # ko'chirilishini eslatamiz (qoldiq yo'qolmaydi).
+    carryover_note = ""
     if user_id:
         current_tariff = get_user_tariff(user_id)
         if current_tariff != "free":
@@ -4641,22 +4741,11 @@ async def _show_buy_menu(message_obj):
             limit = (t.get("minutes", 0) + get_user_bonus_min(user_id))
             remaining = max(0, limit - used)
             if remaining > 0.5:  # 30 soniyadan ko'p qolgan
-                wait_text = (
-                    f"⏳ *Sizning tarifingiz hali tugamagan*\n\n"
-                    f"🌸 Joriy tarif: *{t.get('name', current_tariff)}*\n"
-                    f"⏱ Qoldiq: *{remaining:.1f} daqiqa*\n\n"
-                    f"Yangi tarif olish uchun joriy tarifingiz tugashini kuting.\n"
-                    f"Tarif daqiqalaringiz tugagach yangisini sotib olishingiz mumkin.\n\n"
-                    f"📊 Hisobingiz: /balance"
+                carryover_note = (
+                    f"♻️ *Qoldiq saqlanadi:* joriy *{t.get('name', current_tariff)}* "
+                    f"tarifingizda *{remaining:.1f} daqiqa* qolgan — yangi tarif "
+                    f"olsangiz, bu daqiqalar yo'qolmaydi, yangisiga *qo'shiladi*.\n\n"
                 )
-                if hasattr(message_obj, "edit_message_text"):
-                    try:
-                        await message_obj.edit_message_text(wait_text, parse_mode="Markdown")
-                    except BadRequest:
-                        pass
-                else:
-                    await message_obj.reply_text(wait_text, parse_mode="Markdown")
-                return
 
     standart_keys = ["basic", "standart", "premium"]
     premium_keys = ["pro_standart", "pro_premium", "pro_max"]
@@ -4668,6 +4757,7 @@ async def _show_buy_menu(message_obj):
             label = f"{t['name']} • {hrs} soat • {t['price']:,} so'm"
             buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
     text = (
+        carryover_note +
         "💎 *Bizda 2 xil tarif bor:*\n\n"
         "💚 *Standart* — arzon\n"
         "👑 *Premium* — eng yuqori sifat\n\n"
@@ -4812,9 +4902,7 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         logging.warning(f"Notanish tariff_key: {tariff_key}")
         return
 
-    user_tariffs[target_id] = tariff_key
-    user_uzbek_usage[target_id] = 0
-    _append_tariff_log(target_id, tariff_key, source="telegram_pay")
+    _activate_tariff_with_carryover(target_id, tariff_key, source="telegram_pay")
     _save_user_data()
 
     t = TARIFFS[tariff_key]
@@ -5227,9 +5315,7 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
         return False
 
     if action == "approve":
-        user_tariffs[target_id] = tariff_key
-        user_uzbek_usage[target_id] = 0
-        _append_tariff_log(target_id, tariff_key, source="approve")
+        _activate_tariff_with_carryover(target_id, tariff_key, source="approve")
         _save_user_data()
         await _send_backup_snapshot_to_admin(context.bot, source=f"approve {target_id}={tariff_key}")
         # Admin uchun aniq alert
@@ -5365,10 +5451,8 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Mavjud: pro_standart, pro_premium, pro_max, free"
         )
         return
-    user_tariffs[target_id] = tariff_key
-    # Yangi tarif berilganda ishlatilganlar tiklanadi
-    user_uzbek_usage[target_id] = 0
-    _append_tariff_log(target_id, tariff_key, source="grant_cmd")
+    # Yangi tarif berilganda ishlatilganlar tiklanadi + qoldiq daqiqa ko'chiriladi
+    _activate_tariff_with_carryover(target_id, tariff_key, source="grant_cmd")
     _save_user_data()
     await _send_backup_snapshot_to_admin(context.bot, source=f"grant {target_id}={tariff_key}")
     t = TARIFFS[tariff_key]
@@ -5721,8 +5805,14 @@ async def process_pdf_to_voice(update, context, file_id):
                     )
                     return
 
+        send_dur = actual_duration
+        if send_dur <= 0:
+            try: send_dur = int(await asyncio.to_thread(get_duration_or_estimate, tts_path))
+            except Exception: send_dur = 0
         with open(tts_path, "rb") as f:
-            await update.message.reply_voice(voice=f, caption="🔊 PDF ovoz shaklida")
+            await update.message.reply_voice(
+                voice=f, caption="🔊 PDF ovoz shaklida",
+                duration=send_dur if send_dur > 0 else None)
         await msg.edit_text("✅ Tayyor!")
 
         if not is_admin(update) and actual_duration > 0:
@@ -5852,8 +5942,14 @@ async def text_to_voice(update, context, text):
                     return
 
         await msg.edit_text("✅ Tayyor!")
+        send_dur = actual_duration
+        if send_dur <= 0:
+            try: send_dur = int(await asyncio.to_thread(get_duration_or_estimate, tts_path))
+            except Exception: send_dur = 0
         with open(tts_path, "rb") as f:
-            await update.message.reply_voice(voice=f, caption="🔊 Matn ovoz shaklida")
+            await update.message.reply_voice(
+                voice=f, caption="🔊 Matn ovoz shaklida",
+                duration=send_dur if send_dur > 0 else None)
 
         if not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
@@ -6655,12 +6751,22 @@ def telegram_send_voice(chat_id, file_path, caption=None):
         except Exception:
             pass
 
+        # Davomiylikni aniqlab, Telegram'ga uzatamiz — pleer audioni to'liq
+        # (oxirigacha) o'ynashi uchun. Aks holda ba'zi mijozlar erta to'xtaydi.
+        duration = 0
+        try:
+            duration = int(get_duration_or_estimate(file_path))
+        except Exception:
+            duration = 0
+
         # Katta fayl uchun sendAudio (1 MB dan oshsa)
         if size_mb > 1.0:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendAudio"
             with open(file_path, 'rb') as f:
                 files = {"audio": ("audio.mp3", f, "audio/mpeg")}
                 data = {"chat_id": chat_id, "title": "Audio"}
+                if duration > 0:
+                    data["duration"] = duration
                 if caption:
                     data["caption"] = caption
                 resp = requests.post(url, data=data, files=files, timeout=300)
@@ -6673,6 +6779,8 @@ def telegram_send_voice(chat_id, file_path, caption=None):
         with open(file_path, 'rb') as f:
             files = {"voice": ("voice.mp3", f, "audio/mpeg")}
             data = {"chat_id": chat_id}
+            if duration > 0:
+                data["duration"] = duration
             if caption:
                 data["caption"] = caption
             resp = requests.post(url, data=data, files=files, timeout=300)
