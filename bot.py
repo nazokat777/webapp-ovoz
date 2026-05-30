@@ -2661,14 +2661,16 @@ def _cleanup_uzbek_transcript_chunk(text):
 
         "9) PROPER PUNCTUATION + paragraphs.\n\n"
 
-        "10) DO NOT translate to other languages. DO NOT summarize. DO NOT invent NEW content.\n"
-        "    Just REWRITE the same meaning in proper Uzbek.\n\n"
+        "10) DO NOT translate to other languages. DO NOT summarize. DO NOT shorten. "
+        "    DO NOT invent NEW content. DO NOT omit ANY sentence.\n"
+        "    Just REWRITE the SAME meaning, SAME length, in proper Uzbek.\n\n"
 
-        "11) If a sentence is hopelessly garbled, write a brief sensible version "
-        "    based on surrounding context, OR omit if no recoverable meaning.\n\n"
+        "11) CRITICAL: Keep EVERY sentence. The output length MUST be close to the "
+        "    input length (NOT shorter). If a phrase is garbled, write the closest "
+        "    sensible Uzbek version from context — but NEVER drop or skip it.\n\n"
 
-        "OUTPUT ONLY the cleaned PURE Uzbek text. No commentary. "
-        "Output MUST read like a native Uzbek wrote it."
+        "OUTPUT ONLY the cleaned PURE Uzbek text, keeping ALL content. No commentary. "
+        "Output MUST read like a native Uzbek wrote it and be the SAME length as input."
     )
     payload = {
         "model": "gpt-4o",
@@ -2776,16 +2778,31 @@ def _try_transcribe_audio_chat(chunk_path, source_lang, headers):
     fmt = ext if ext in ("wav", "mp3", "flac", "m4a", "webm", "opus") else "mp3"
 
     system_msg = (
-        "You are an expert Uzbek language transcriber. Transcribe the audio "
-        "EXACTLY as spoken into clean Uzbek Latin text. "
-        "Do NOT translate, do NOT summarize, do NOT add commentary. "
-        "Output ONLY the spoken words in proper Uzbek Latin alphabet "
-        "(use o', g', sh, ch). For Quran verses or hadiths in Arabic, "
-        "transliterate to Latin Uzbek (e.g., 'Bismillahir Rohmanir Rohim'). "
+        "You are an expert UZBEK language transcriber. The speaker is speaking "
+        "UZBEK — NOT Azerbaijani, NOT Turkish, NOT Kazakh, NOT Turkmen. "
+        "Transcribe the audio EXACTLY as spoken into clean, standard Uzbek Latin text.\n\n"
+        "CRITICAL ALPHABET RULE: Output ONLY standard Uzbek Latin letters: "
+        "a b d e f g h i j k l m n o p q r s t u v x y z, plus the digraphs "
+        "o' g' sh ch ng. NEVER use the letters ə ı ş ç ğ ö ü — they DO NOT exist "
+        "in Uzbek. If you hear such sounds, write the Uzbek equivalent: "
+        "ş→sh, ç→ch, ə→a or e, ı→i, ğ→g', ö→o', ü→u.\n\n"
+        "Use correct Uzbek WORDS and grammar, not Azerbaijani/Turkish ones. "
+        "Examples: 'bo'lsa' (NOT 'bosa'), 'o'qimoqchi' (NOT 'oqmaqçi'), "
+        "'qaytmagan' (NOT 'qayıtməgən'), 'tashqariga' (NOT 'təşqəriyə'), "
+        "'kishi' (NOT 'kişi'), 'mazhab' (NOT 'məzhəb'), 'gan/kan' past tense "
+        "(NOT '-mış/-miş').\n\n"
+        "Do NOT translate, do NOT summarize, do NOT add commentary, do NOT omit "
+        "anything. For Quran verses or hadiths in Arabic, transliterate to Uzbek "
+        "Latin (e.g., 'Bismillahir Rohmanir Rohim'). "
         "Religious terms: payg'ambar, sallallohu alayhi va sallam (s.a.v.), "
-        "alhamdulillah, inshalloh, Allohga shukur, ulamolar, sahobalar."
+        "alhamdulillah, inshalloh, Allohga shukur, ulamolar, sahobalar, "
+        "Imom Buxoriy, Imom Abu Hanifa, Imom Shofiy, mazhab, fiqh, hadis."
     )
-    user_text = "Audio'ni o'zbek lotin alifbosida matn qiling. Faqat matn, izoh yo'q."
+    user_text = (
+        "Audio'ni STANDART o'zbek lotin alifbosida matn qiling. "
+        "Ozarbayjon/turk harflari (ə ı ş ç ğ) ISHLATMANG — faqat o'zbekcha. "
+        "Faqat matn, izoh yo'q."
+    )
 
     payload = {
         "model": "gpt-audio",  # gpt-4o-audio-preview GA nomi — eski nom 404 qaytaradi
