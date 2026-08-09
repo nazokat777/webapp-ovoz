@@ -6,6 +6,8 @@ os.environ["ADMIN_USER_ID"] = "111, 222"
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import bot
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 ok = fail = 0
 def check(name, cond, extra=""):
     global ok, fail
@@ -45,6 +47,18 @@ print("\n[4] _format_lost_chunks_text")
 txt = bot._format_lost_chunks_text([(3, 10)])
 check("yo'qolgan bo'laklar matni bor", txt and "3/10" in txt and "30%" in txt, txt)
 check("bo'sh ro'yxat -> None", bot._format_lost_chunks_text([]) is None)
+
+print("\n[22] md_escape — Markdown buzilmasin")
+check("_ qochiriladi", bot.md_escape("Ali_Vali") == r"Ali\_Vali", bot.md_escape("Ali_Vali"))
+check("* qochiriladi", bot.md_escape("Nodira*") == r"Nodira\*")
+check("` qochiriladi", bot.md_escape("a`b") == r"a\`b")
+check("[ qochiriladi", bot.md_escape("[Bek]") == r"\[Bek]")
+check("bo'sh -> bo'sh satr", bot.md_escape("") == "" and bot.md_escape(None) == "")
+check("oddiy matn o'zgarmaydi", bot.md_escape("Salom dunyo") == "Salom dunyo")
+check("raqam ham ishlaydi", bot.md_escape(123) == "123")
+src_bot = open(os.path.join(ROOT, "bot.py"), encoding="utf-8").read()
+check("qo'lda escape zanjirlari qolmadi",
+      src_bot.count('.replace("_", "\\\\_")') <= 1)  # faqat ADMIN_CONTACT_MD
 
 print("\n[5] _unclear_marker_note")
 check("[?] yo'q -> bo'sh", bot._unclear_marker_note("toza matn") == "")

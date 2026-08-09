@@ -324,6 +324,11 @@ DATA_FILE = _resolve_data_file()
 print(f"💾 DATA_FILE = {DATA_FILE}")  # Deploy logda ko'rinadi
 _save_lock = threading.Lock()
 
+# Oxirgi muvaffaqiyatli yozilgan yozuvlar soni. _save_user_data har chaqiruvda
+# butun JSON'ni qayta parse qilmasligi uchun (bu jarayon faylning yagona
+# yozuvchisi). "ready" False bo'lsa — hali diskdan o'qib tekshiramiz.
+_last_written_counts = {"tariffs": 0, "usage": 0, "info": 0, "ready": False}
+
 
 def _load_user_data():
     """Bot ishga tushganda saqlangan usage, tariflar va admin_chat_id'ni yuklaydi.
@@ -483,14 +488,35 @@ def _save_user_data():
             # XAVFSIZLIK 1: ENG QATTIQ himoya — memory diskdan KAMROQ bo'lsa darrov abort.
             # Bu kategoriyalar (tariffs, usage, info) faqat o'sadi, hech qachon kamaymaydi.
             # Shuning uchun memory < disk = ma'lumot yo'qolish belgisi.
+            # TEZLIK: bu jarayon faylning YAGONA yozuvchisi, shuning uchun
+            # oxirgi yozilgan sonlarni xotirada eslab qolamiz va har saqlashda
+            # butun JSON'ni qayta parse qilmaymiz. Kesh bo'sh bo'lsa (bot endi
+            # ishga tushgan) — bir marta diskdan o'qiymiz.
             if os.path.exists(DATA_FILE):
                 try:
-                    with open(DATA_FILE, "r", encoding="utf-8") as fexist:
-                        existing = json.load(fexist)
-                    existing_tariffs = len(existing.get("tariffs") or {})
-                    existing_usage = len(existing.get("usage") or {})
-                    existing_info = len(existing.get("user_info") or {})
+                    if _last_written_counts["ready"]:
+                        existing = None
+                        existing_tariffs = _last_written_counts["tariffs"]
+                        existing_usage = _last_written_counts["usage"]
+                        existing_info = _last_written_counts["info"]
+                    else:
+                        with open(DATA_FILE, "r", encoding="utf-8") as fexist:
+                            existing = json.load(fexist)
+                        existing_tariffs = len(existing.get("tariffs") or {})
+                        existing_usage = len(existing.get("usage") or {})
+                        existing_info = len(existing.get("user_info") or {})
                     # Har kategoriya: memory < disk → DARROV abort
+                    if (len(user_tariffs) < existing_tariffs or
+                        len(user_uzbek_usage) < existing_usage or
+                        len(user_info) < existing_info):
+                        # Keshga ishonib abort qilmaymiz — avval haqiqiy faylni
+                        # o'qib tasdiqlaymiz (kesh eskirgan bo'lishi mumkin).
+                        if existing is None:
+                            with open(DATA_FILE, "r", encoding="utf-8") as fexist:
+                                existing = json.load(fexist)
+                            existing_tariffs = len(existing.get("tariffs") or {})
+                            existing_usage = len(existing.get("usage") or {})
+                            existing_info = len(existing.get("user_info") or {})
                     if (len(user_tariffs) < existing_tariffs or
                         len(user_uzbek_usage) < existing_usage or
                         len(user_info) < existing_info):
@@ -544,7 +570,14 @@ def _save_user_data():
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
             os.replace(tmp_path, DATA_FILE)
-            logging.info(f"💾 user_data.json saqlandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif → {DATA_FILE}")
+            # Keshni yangilaymiz — keyingi saqlashda fayl qayta o'qilmaydi
+            _last_written_counts.update({
+                "tariffs": len(user_tariffs),
+                "usage": len(user_uzbek_usage),
+                "info": len(user_info),
+                "ready": True,
+            })
+            logging.debug(f"💾 user_data.json saqlandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif")
         except Exception as e:
             logging.error(f"❌ user_data.json yozishda xato: {e} | DATA_FILE={DATA_FILE}")
 
@@ -1573,6 +1606,22 @@ def _find_font(candidates=None):
         if os.path.exists(p):
             return p
     return None
+
+
+def md_escape(text):
+    """Telegram Markdown (V1) uchun maxsus belgilarni qochirish.
+
+    NEGA KERAK: foydalanuvchi ismi yoki matni escape'siz `parse_mode="Markdown"`
+    xabarga qo'yilsa, Telegram butun xabarni RAD ETADI ("Can't parse entities").
+    Ya'ni ismida `_` bo'lgan odam /start ololmasdi, `*` yuborgan odamning
+    murojaati adminga umuman yetmasdi — jimgina yo'qolardi.
+    """
+    if not text:
+        return ""
+    out = str(text)
+    for ch in ("_", "*", "`", "["):
+        out = out.replace(ch, "\\" + ch)
+    return out
 
 
 def _normalize_uzbek_apostrophes(text):
@@ -3812,16 +3861,24 @@ async def process_local_audio(update, context, file_path, duration=0, language="
                     )
                     return
 
-        loop = asyncio.get_running_loop()
-        cb = make_progress_cb(loop, msg)
-        failed_ranges = []
-        text = await asyncio.to_thread(transcribe_unified, file_path, cb, language, failed_ranges)
-        if failed_ranges:
-            await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
-        # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
-        delivered = await send_result(update, msg, text)
-        if delivered and not is_admin(update) and actual_duration > 0:
-            add_user_usage(update.effective_user.id, actual_duration)
+        # heavy_task: bitta user bir vaqtda bitta ish + umumiy parallellik cheklovi
+        async with heavy_task(update.effective_user.id) as slot:
+            if not slot.entered:
+                await msg.edit_text(
+                    "⏳ Sizning oldingi faylingiz hali tayyorlanmoqda.\n"
+                    "Iltimos tugashini kuting."
+                )
+                return
+            loop = asyncio.get_running_loop()
+            cb = make_progress_cb(loop, msg)
+            failed_ranges = []
+            text = await asyncio.to_thread(transcribe_unified, file_path, cb, language, failed_ranges)
+            if failed_ranges:
+                await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
+            # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
+            delivered = await send_result(update, msg, text)
+            if delivered and not is_admin(update) and actual_duration > 0:
+                add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
@@ -3899,16 +3956,24 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
                     )
                     return
 
-        loop = asyncio.get_running_loop()
-        cb = make_progress_cb(loop, msg)
-        failed_ranges = []
-        text = await asyncio.to_thread(transcribe_unified, tmp_path, cb, language, failed_ranges)
-        if failed_ranges:
-            await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
-        # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
-        delivered = await send_result(update, msg, text)
-        if delivered and not is_admin(update) and actual_duration > 0:
-            add_user_usage(update.effective_user.id, actual_duration)
+        # heavy_task: bitta user bir vaqtda bitta ish + umumiy parallellik cheklovi
+        async with heavy_task(update.effective_user.id) as slot:
+            if not slot.entered:
+                await msg.edit_text(
+                    "⏳ Sizning oldingi faylingiz hali tayyorlanmoqda.\n"
+                    "Iltimos tugashini kuting."
+                )
+                return
+            loop = asyncio.get_running_loop()
+            cb = make_progress_cb(loop, msg)
+            failed_ranges = []
+            text = await asyncio.to_thread(transcribe_unified, tmp_path, cb, language, failed_ranges)
+            if failed_ranges:
+                await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
+            # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
+            delivered = await send_result(update, msg, text)
+            if delivered and not is_admin(update) and actual_duration > 0:
+                add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
@@ -3984,16 +4049,24 @@ async def process_url(update, context, url, language="uz"):
 
         await msg.edit_text("✅ Yuklanidi! 🎙 Matn tanilmoqda...")
 
-        loop = asyncio.get_running_loop()
-        cb = make_progress_cb(loop, msg)
-        failed_ranges = []
-        text = await asyncio.to_thread(transcribe_unified, audio_path, cb, language, failed_ranges)
-        if failed_ranges:
-            await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
-        # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
-        delivered = await send_result(update, msg, text)
-        if delivered and not is_admin(update) and actual_duration > 0:
-            add_user_usage(update.effective_user.id, actual_duration)
+        # heavy_task: bitta user bir vaqtda bitta ish + umumiy parallellik cheklovi
+        async with heavy_task(update.effective_user.id) as slot:
+            if not slot.entered:
+                await msg.edit_text(
+                    "⏳ Sizning oldingi faylingiz hali tayyorlanmoqda.\n"
+                    "Iltimos tugashini kuting."
+                )
+                return
+            loop = asyncio.get_running_loop()
+            cb = make_progress_cb(loop, msg)
+            failed_ranges = []
+            text = await asyncio.to_thread(transcribe_unified, audio_path, cb, language, failed_ranges)
+            if failed_ranges:
+                await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
+            # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
+            delivered = await send_result(update, msg, text)
+            if delivered and not is_admin(update) and actual_duration > 0:
+                add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"URL xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
@@ -4096,7 +4169,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎁 *Bonus daqiqalar:* Do'st taklif qilsangiz ikkalangizgayam +5 daqiqa bepul!\n"
         "Tavsiya havolangizni olish: /tavsiya\n\n"
         "Quyidagi tugma orqali *Web ilovani* oching 👇".format(
-            update.effective_user.first_name
+            md_escape(update.effective_user.first_name)
         ),
         parse_mode="Markdown",
         reply_markup=webapp_keyboard(chat_id=chat_id, username=update.effective_user.username),
@@ -4115,7 +4188,15 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         logging.info(f"🎯 WebApp type={file_type}, url={url[:60] if url else ''}")
 
         if file_type == "url" and url:
-            url = extract_url(url) or url
+            # Faqat http(s). Ilgari bu yerda `extract_url(url) or url` edi —
+            # ya'ni havola bo'lmagan qiymat ham pastga o'tib ketardi.
+            clean_url = extract_url(url)
+            if not clean_url:
+                await update.message.reply_text(
+                    "❌ To'g'ri havola yuboring (http:// yoki https:// bilan boshlanishi kerak)."
+                )
+                return
+            url = clean_url
             url_lang = (data.get("language") or "").lower()
             if url_lang not in ("uz", "ru", "en"):
                 url_lang = _chat_lang(context, update)
@@ -4257,7 +4338,7 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if cnt > 0:
                 tariff_lines.append(f"• {t['name']}: {cnt} ta")
         tariff_text = "\n".join(tariff_lines) if tariff_lines else "• 🌸 Bepul (default): hamma"
-        admin_uname_md = (update.effective_user.username or "").replace("_", "\\_").replace("*", "\\*")
+        admin_uname_md = md_escape((update.effective_user.username or ""))
         # Tarifli userlar uchun "Bekor qilish" tugmalarini tayyorlash
         paid_users_list = [(uid, t) for uid, t in user_tariffs.items() if t != "free"]
         admin_buttons = []
@@ -4392,7 +4473,7 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         data_list = [(uid, user_uzbek_usage.get(uid, 0)) for uid in all_ids]
         data_list.sort(key=lambda x: x[1], reverse=True)
         for uid, sec in data_list[:30]:
-            label = _user_label(uid).replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+            label = md_escape(_user_label(uid))
             tariff_name = TARIFFS.get(get_user_tariff(uid), TARIFFS["free"])["name"]
             lines.append(f"• {label}\n  `{uid}` — {sec/60:.1f} daq — {tariff_name}")
         back = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")]]
@@ -4438,7 +4519,7 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
         buttons = []
         for uid, tkey in paid_list[:20]:
             tariff = TARIFFS.get(tkey, TARIFFS["free"])
-            label = _user_label(uid).replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+            label = md_escape(_user_label(uid))
             used = user_uzbek_usage.get(uid, 0) / 60
             text_lines.append(
                 f"• {label}\n  `{uid}` — {tariff['name']} ({used:.1f}/{tariff['minutes']} daq)"
@@ -4465,7 +4546,7 @@ async def admin_panel_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             return
         lines = ["💳 *Kutilayotgan to'lovlar:*\n"]
         for uid, tariff_key in list(pending_payments.items())[:20]:
-            label = _user_label(uid).replace("_", "\\_").replace("*", "\\*")
+            label = md_escape(_user_label(uid))
             tname = TARIFFS.get(tariff_key, {}).get("name", tariff_key)
             lines.append(f"• {label} → `{uid}` → *{tname}*")
         back = [[InlineKeyboardButton("⬅️ Orqaga", callback_data="adm:back")]]
@@ -4580,7 +4661,7 @@ async def admin_revoke_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("❌ Noto'g'ri user ID.")
         return
     old_tariff = TARIFFS.get(get_user_tariff(target_id), TARIFFS["free"])
-    label = _user_label(target_id).replace("_", "\\_").replace("*", "\\*")
+    label = md_escape(_user_label(target_id))
     user_tariffs[target_id] = "free"
     user_uzbek_usage[target_id] = 0
     _append_tariff_log(target_id, "free", source="revoke")
@@ -4720,7 +4801,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         current_sec = user_uzbek_usage.get(user_id, 0)
         label = _user_label(user_id)
         # Markdown'da xavfsiz qilamiz (underscore, asterisk)
-        safe_label = label.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`")
+        safe_label = md_escape(label)
         tariff_key = get_user_tariff(user_id)
         tariff_name = TARIFFS.get(tariff_key, TARIFFS["free"])["name"]
         # Jami ishlatgan | joriy davr | tarif
@@ -4761,7 +4842,7 @@ async def revoke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     old_tariff = TARIFFS.get(get_user_tariff(target_id), TARIFFS["free"])
     label = _user_label(target_id)
-    safe_label = label.replace("_", "\\_").replace("*", "\\*")
+    safe_label = md_escape(label)
     # Bepul tarifga qaytarish + daqiqalarni tiklash
     user_tariffs[target_id] = "free"
     user_uzbek_usage[target_id] = 0
@@ -4832,8 +4913,8 @@ async def user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fs = datetime.datetime.fromtimestamp(first_seen).strftime("%Y-%m-%d %H:%M") if first_seen else "noma'lum"
     ls = datetime.datetime.fromtimestamp(last_seen).strftime("%Y-%m-%d %H:%M") if last_seen else "noma'lum"
     # Markdown escape
-    uname_safe = uname.replace("_", "\\_") if uname != "(yo'q)" else uname
-    fname_safe = full_name.replace("_", "\\_").replace("*", "\\*") if full_name else "(yo'q)"
+    uname_safe = md_escape(uname) if uname != "(yo'q)" else uname
+    fname_safe = md_escape(full_name) if full_name else "(yo'q)"
     # Telegram URL (agar username bor bo'lsa)
     profile_url = f"https://t.me/{uname}" if uname not in ("(yo'q)", "") else None
     text = (
@@ -5413,8 +5494,8 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1]  # eng katta o'lchamdagi rasm
     username_raw = f"@{user.username}" if user.username else (user.first_name or "noma'lum")
     # Markdown'da pastki chiziq italic boshlovchi bo'lib qolmasin
-    username_safe = username_raw.replace("_", "\\_").replace("*", "\\*")
-    tariff_name_safe = t['name'].replace("_", "\\_").replace("*", "\\*")
+    username_safe = md_escape(username_raw)
+    tariff_name_safe = md_escape(t['name'])
 
     caption = (
         f"💸 *Yangi to'lov cheki*\n\n"
@@ -5807,6 +5888,9 @@ async def restore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_referral_minutes.clear()
         user_referrals.clear()
         user_referral_claimed.clear()
+        # Saqlash keshi endi eskirgan — /restore ataylab kamroq ma'lumot
+        # yuklashi mumkin, keyingi saqlash haqiqiy fayl bilan solishtirsin
+        _last_written_counts["ready"] = False
         _load_user_data()
 
         # MUHIM: tariff_log.jsonl append-only va get_user_tariff uni JSON'dan
@@ -6259,7 +6343,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=target_id,
-                text=f"💬 *Xizmatdan javob:*\n\n{text}",
+                text=f"💬 *Xizmatdan javob:*\n\n{md_escape(text)}",
                 parse_mode="Markdown"
             )
             await update.message.reply_text(
@@ -6514,9 +6598,9 @@ async def _send_feedback_to_admin(update: Update, context: ContextTypes.DEFAULT_
             chat_id=ADMIN_CHAT_ID["id"],
             text=(
                 f"📩 *Foydalanuvchi murojaati*\n\n"
-                f"👤 Kim: {username.replace('_', chr(92)+'_')}\n"
+                f"👤 Kim: {md_escape(username)}\n"
                 f"🆔 ID: `{user_id}`\n\n"
-                f"💬 Xabar:\n{msg_text}\n\n"
+                f"💬 Xabar:\n{md_escape(msg_text)}\n\n"
                 f"━━━━━━━━━━━━━━\n"
                 f"💡 Javob berish uchun pastdagi tugmani bosing 👇"
             ),
@@ -6588,7 +6672,7 @@ async def reply_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await context.bot.send_message(
             chat_id=target_id,
-            text=f"💬 *Xizmatdan javob:*\n\n{msg_text}",
+            text=f"💬 *Xizmatdan javob:*\n\n{md_escape(msg_text)}",
             parse_mode="Markdown"
         )
         await update.message.reply_text(f"✅ Javob foydalanuvchiga (`{target_id}`) yuborildi.", parse_mode="Markdown")
@@ -7367,16 +7451,10 @@ def process_pdf_for_user(user_id, pdf_path):
 def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="latin"):
     """WebApp orqali yuborilgan audio'ni matnga aylantirish — tarif limiti qo'llanadi.
     XAVFSIZ TO'LOV: daqiqa faqat muvaffaqiyatli natija yuborilgandan keyin yechiladi.
-    output_alphabet: 'latin' yoki 'cyrillic' — O'zbek matni alifbosi."""
-    # Duplicate click himoyasi
-    if _is_user_processing(user_id):
-        telegram_send_message(user_id,
-            "⏳ Sizning oldingi audio'ngiz hali tayyorlanmoqda.\n"
-            "Iltimos tugashini kuting (daqiqalar ortiqcha yechilmasligi uchun).")
-        try: os.remove(file_path)
-        except Exception: pass
-        return
-    _mark_processing(user_id)
+    output_alphabet: 'latin' yoki 'cyrillic' — O'zbek matni alifbosi.
+
+    Eslatma: duplicate-click himoyasi va _unmark_processing endi submit_job
+    ichida — barcha og'ir oqimlar (tarjima, URL, PDF) uchun bir xil ishlaydi."""
     success = False  # natija userga yetkazilganmi
     typing = TypingPing(user_id)
     typing.start()
@@ -7444,8 +7522,7 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
             f"💚 Daqiqa hisobingizdan yechilmadi."
         )
     finally:
-        # MUHIM: belgini olib tashlash — aks holda user 30 daqiqaga bloklanib qoladi
-        _unmark_processing(user_id)
+        # _unmark_processing submit_job'ning finally blokida (barcha oqim uchun)
         typing.stop()
         if file_path and os.path.exists(file_path):
             try:
@@ -7987,6 +8064,54 @@ def _job_slots_info():
         return _job_stats["running"], _job_stats["queued"]
 
 
+# Telegram'ga to'g'ridan-to'g'ri yuborilgan fayllar (voice/audio/video/PDF)
+# submit_job'dan o'tmaydi — ular asyncio handler'ida ishlanadi. Ular ham
+# cheklanmasa, 5 ta ovozli xabar ketma-ket yuborilganda 5 ta parallel
+# transkripsiya boshlanib ketardi. Shuning uchun alohida async semafor.
+_async_job_semaphore = None
+
+
+def _get_async_job_semaphore():
+    """asyncio.Semaphore'ni birinchi ishlatishda yaratamiz (event loop kerak)."""
+    global _async_job_semaphore
+    if _async_job_semaphore is None:
+        _async_job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
+    return _async_job_semaphore
+
+
+class heavy_task:
+    """Telegram handler'lari uchun `async with heavy_task(user_id):`.
+
+    Ikki ish qiladi:
+      1) Bitta foydalanuvchi bir vaqtda bitta og'ir ish (duplicate himoyasi)
+      2) Umumiy parallellikni MAX_CONCURRENT_JOBS bilan cheklaydi
+
+    Band bo'lsa `entered` False bo'ladi va handler darrov chiqib ketishi kerak."""
+
+    def __init__(self, user_id):
+        self.user_id = user_id
+        self.entered = False
+
+    async def __aenter__(self):
+        if _is_user_processing(self.user_id):
+            self.entered = False
+            return self
+        _mark_processing(self.user_id)
+        try:
+            await _get_async_job_semaphore().acquire()
+        except Exception:
+            _unmark_processing(self.user_id)
+            raise
+        self.entered = True
+        return self
+
+    async def __aexit__(self, *exc):
+        if self.entered:
+            _get_async_job_semaphore().release()
+            _unmark_processing(self.user_id)
+        return False
+
+
 def submit_job(user_id, target, args=(), label="ish", cleanup_path=None):
     """Og'ir ishni navbatga qo'yadi. Returns True — qabul qilindi.
 
@@ -8000,6 +8125,23 @@ def submit_job(user_id, target, args=(), label="ish", cleanup_path=None):
     MUHIM: bu funksiya aiohttp event loop thread'idan chaqiriladi, shuning uchun
     ichida bloklaydigan I/O YO'Q — hisoblash tez, xabar yuborish esa alohida
     thread'da."""
+    # Bitta foydalanuvchi bir vaqtda bitta og'ir ish. Ilgari bu himoya faqat
+    # process_audio_for_user ichida edi — tarjima, URL va PDF oqimlarida yo'q edi,
+    # ya'ni tugmani bir necha marta bosgan foydalanuvchi bir necha ish ochib,
+    # navbatni band qilib, ortiqcha API xarajati keltirardi.
+    if _is_user_processing(user_id):
+        if cleanup_path:
+            try: os.remove(cleanup_path)
+            except Exception: pass
+        threading.Thread(
+            target=telegram_send_message,
+            args=(user_id,
+                  "⏳ Sizning oldingi faylingiz hali tayyorlanmoqda.\n"
+                  "Iltimos tugashini kuting — daqiqalar ortiqcha yechilmasligi uchun."),
+            daemon=True,
+        ).start()
+        return False
+
     with _job_counter_lock:
         if _job_stats["queued"] >= MAX_QUEUED_JOBS:
             logging.warning(
@@ -8019,6 +8161,8 @@ def submit_job(user_id, target, args=(), label="ish", cleanup_path=None):
             ).start()
             return False
         _job_stats["queued"] += 1
+    # Navbatga qo'yilgan paytdan belgilaymiz — kutayotgan ish ham "band" hisoblanadi
+    _mark_processing(user_id)
 
     def _runner():
         waited_notice_sent = False
@@ -8050,6 +8194,8 @@ def submit_job(user_id, target, args=(), label="ish", cleanup_path=None):
             with _job_counter_lock:
                 _job_stats["running"] -= 1
             _job_semaphore.release()
+            # MUHIM: belgini olib tashlash — aks holda user 30 daqiqaga bloklanadi
+            _unmark_processing(user_id)
 
     threading.Thread(target=_runner, daemon=True, name=f"job-{label}-{user_id}").start()
     return True

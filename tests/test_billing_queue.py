@@ -80,14 +80,16 @@ check(f"hajm <= {bot.LAST_TRANSCRIPTS_MAX}",
       len(bot.last_transcripts) <= bot.LAST_TRANSCRIPTS_MAX, len(bot.last_transcripts))
 check("eng yangisi saqlandi", 99999 in bot.last_transcripts)
 
-print("\n[16] Job navbati")
+print("\n[16] Job navbati — parallellik cheklovi")
 bot._job_stats.update({"running": 0, "queued": 0})
+bot.processing_users.clear()
 done = []
 gate = threading.Event()
 def slow(tag):
     gate.wait(5); done.append(tag)
-accepted = [bot.submit_job(1, slow, (i,), label="t") for i in range(5)]
-check("hammasi qabul qilindi (navbat limitidan kam)", all(accepted))
+# HAR BIR ish boshqa foydalanuvchidan — duplicate guard xalaqit qilmasin
+accepted = [bot.submit_job(1000 + i, slow, (i,), label="t") for i in range(5)]
+check("5 xil userdan hammasi qabul qilindi", all(accepted), accepted)
 time.sleep(0.4)
 run, q = bot._job_slots_info()
 check(f"bir vaqtda <= {bot.MAX_CONCURRENT_JOBS} ishlayapti",
@@ -99,16 +101,66 @@ for _ in range(60):
 check("hamma ish yakunlandi", len(done) == 5, len(done))
 run, q = bot._job_slots_info()
 check("hisoblagichlar 0 ga qaytdi", (run, q) == (0, 0), (run, q))
+check("processing belgilari tozalandi", not bot.processing_users, bot.processing_users)
+
+print("\n[20] Duplicate-click himoyasi (barcha oqim uchun)")
+bot._job_stats.update({"running": 0, "queued": 0})
+bot.processing_users.clear()
+gate2 = threading.Event()
+done2 = []
+def slow2():
+    gate2.wait(5); done2.append(1)
+first = bot.submit_job(2000, slow2, (), label="t")
+check("1-ish qabul qilindi", first is True)
+dup_tmp = os.path.join(d, "dup.tmp")
+open(dup_tmp, "w").write("x")
+second = bot.submit_job(2000, slow2, (), label="t", cleanup_path=dup_tmp)
+check("2-ish (shu user) rad etildi", second is False)
+time.sleep(0.2)
+check("rad etilgan ishning fayli o'chirildi", not os.path.exists(dup_tmp))
+other = bot.submit_job(2001, slow2, (), label="t")
+check("boshqa user bloklanmaydi", other is True)
+gate2.set()
+for _ in range(60):
+    if len(done2) == 2: break
+    time.sleep(0.1)
+check("tugagach belgi olib tashlandi", not bot._is_user_processing(2000))
 
 print("\n[16b] Navbat to'lganda rad etish + fayl tozalash")
 bot._job_stats.update({"running": 0, "queued": bot.MAX_QUEUED_JOBS})
+bot.processing_users.clear()
 tmpf = os.path.join(d, "rad.tmp")
 open(tmpf, "w").write("x")
-res = bot.submit_job(1, lambda: None, (), label="t", cleanup_path=tmpf)
+res = bot.submit_job(3000, lambda: None, (), label="t", cleanup_path=tmpf)
 check("to'la navbat rad etadi", res is False)
 time.sleep(0.2)
 check("vaqtinchalik fayl o'chirildi", not os.path.exists(tmpf))
 bot._job_stats.update({"running": 0, "queued": 0})
+
+print("\n[21] Saqlash keshi — xavfsizlik kafolati buzilmagan")
+bot.user_tariffs.clear(); bot.user_uzbek_usage.clear(); bot.user_info.clear()
+bot._last_written_counts["ready"] = False
+bot.user_tariffs.update({1: "basic", 2: "premium"})
+bot.user_uzbek_usage.update({1: 10, 2: 20})
+bot.user_info.update({1: {"a": 1}, 2: {"a": 2}})
+bot._save_user_data()
+check("kesh to'ldi", bot._last_written_counts["ready"] is True)
+check("kesh sonlari to'g'ri", bot._last_written_counts["tariffs"] == 2)
+
+# O'sish — o'tishi kerak
+bot.user_tariffs[3] = "basic"; bot.user_uzbek_usage[3] = 5; bot.user_info[3] = {"a": 3}
+bot._save_user_data()
+disk = json.load(open(bot.DATA_FILE, encoding="utf-8"))
+check("o'sish saqlandi", len(disk["tariffs"]) == 3, len(disk["tariffs"]))
+
+# Kamayish — abort qilib, xotirani diskdan to'ldirishi kerak
+bot.user_tariffs.pop(3); bot.user_uzbek_usage.pop(3); bot.user_info.pop(3)
+bot._save_user_data()
+check("kamayish abort qilindi va tiklandi",
+      3 in bot.user_tariffs and len(bot.user_tariffs) == 3, len(bot.user_tariffs))
+disk = json.load(open(bot.DATA_FILE, encoding="utf-8"))
+check("diskdagi ma'lumot yo'qolmadi", len(disk["tariffs"]) == 3)
+check("JSON'da last_transcripts yo'q", "last_transcripts" not in disk)
 
 print("\n[17] Retry kutish vaqti")
 src = open(r"D:\webapp ovoz\bot.py", encoding="utf-8").read()
