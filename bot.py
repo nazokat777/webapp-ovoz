@@ -17,6 +17,9 @@ import shutil
 import requests
 import re
 import html
+import hmac
+import hashlib
+import urllib.parse
 import asyncio
 import threading
 from telegram import (
@@ -32,7 +35,6 @@ from telegram.ext import (
 from telegram.error import BadRequest
 from aiohttp import web
 import edge_tts
-import speech_recognition as sr
 import pypdf
 
 # TTS voices (Edge TTS — Microsoft, BEPUL)
@@ -54,16 +56,17 @@ TRANSLATION_TARGETS = {
 }
 TRANSLATION_TARGET_NAMES = {"uz": "O'zbek", "ru": "rus", "en": "ingliz", "ar": "arab", "auto": "asl"}
 
-# STT lang codes (Google Speech uchun)
-GOOGLE_LANG = {
-    "ru": "ru-RU",
-    "uz": "uz-UZ",
-    "en": "en-US",
-}
-
-_sr_recognizer = sr.Recognizer()
-
-BOT_TOKEN   = os.getenv("BOT_TOKEN", "8502384684:AAETKbx4YBtiQ9W7PRTWUeVumwwnG-lH9R8")
+# MUHIM: token HECH QACHON kodga yozilmaydi — faqat env orqali.
+# Railway/Fly/Docker: BOT_TOKEN=... env qo'shing. Lokal sinov: .env yoki eksport.
+BOT_TOKEN   = os.getenv("BOT_TOKEN", "").strip()
+if not BOT_TOKEN:
+    print(
+        "❌ BOT_TOKEN env o'rnatilmagan.\n"
+        "   Railway → Variables → BOT_TOKEN qo'shing.\n"
+        "   Lokal: set BOT_TOKEN=... (Windows) yoki export BOT_TOKEN=... (Linux/mac)",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 # Muhlisa AI — Pro Uzbek tarifi uchun (premium sifat, Uzbek native STT)
 # Bu kalitni Railway env vars'ga MUXLISA_KEY nomi bilan qo'shish kerak.
 MUXLISA_KEY = os.getenv("MUXLISA_KEY", "")
@@ -78,13 +81,21 @@ ADMIN_CONTACT_MD = ADMIN_CONTACT.replace("_", "\\_")
 # Foydalanuvchilarga ko'rsatiladigan neutral nom (admin username yashiriladi)
 SUPPORT_NAME = os.getenv("SUPPORT_NAME", "Audio Bot Yordam markazi")
 
-# Admin Telegram user ID — agar sozlangan bo'lsa, bot startup'da ADMIN_CHAT_ID ga yoziladi.
-# Bu admin /start yubormay turib ham chek xabarlarini olish imkonini beradi.
-try:
-    _admin_id_env = os.getenv("ADMIN_USER_ID", "").strip()
-    ADMIN_USER_ID = int(_admin_id_env) if _admin_id_env else None
-except ValueError:
-    ADMIN_USER_ID = None
+# Admin Telegram user ID(lar). ASOSIY autentifikatsiya manbai — username emas!
+# Username Telegram'da bo'shatilishi va boshqa odam tomonidan egallanishi mumkin,
+# user ID esa hech qachon o'zgarmaydi.
+# Bir nechta admin uchun vergul bilan: ADMIN_USER_ID=123,456
+ADMIN_USER_IDS = set()
+for _piece in os.getenv("ADMIN_USER_ID", "").replace(";", ",").split(","):
+    _piece = _piece.strip()
+    if not _piece:
+        continue
+    try:
+        ADMIN_USER_IDS.add(int(_piece))
+    except ValueError:
+        logging.warning(f"ADMIN_USER_ID noto'g'ri qiymat, o'tkazib yuborildi: {_piece!r}")
+# Backward-compat: eski kod bitta ADMIN_USER_ID kutadi
+ADMIN_USER_ID = next(iter(sorted(ADMIN_USER_IDS)), None)
 
 # Telegram Payments — BotFather'dan olingan provider token (Click/Stripe/etc.)
 # BotFather → /mybots → bot tanlang → Payments → provayder ulang → token nusxalang
@@ -93,11 +104,11 @@ PAYMENT_PROVIDER_TOKEN = os.getenv("PAYMENT_PROVIDER_TOKEN", "")
 # Telegram Payments valyutasi (UZS yoki test uchun USD)
 PAYMENT_CURRENCY = os.getenv("PAYMENT_CURRENCY", "UZS")
 
-# === [TARJIMA MODULI — YANGI] ====================================================
-# Whisper (OpenAI) + GPT-4o (Anthropic) orqali xorijiy tildan tarjima
-# Railway'da quyidagi env'larni qo'shing:
-#   OPENAI_API_KEY=sk-...
-#   ANTHROPIC_API_KEY=sk-ant-...
+# === [TARJIMA MODULI] ===========================================================
+# STT (Whisper/gpt-audio), matn tozalash va tarjima — hammasi OpenAI orqali.
+# Railway env: OPENAI_API_KEY=sk-...
+# Eslatma: ilgari bu yerda ANTHROPIC_API_KEY ham bor edi, lekin kodda hech qachon
+# ishlatilmagan (translate_with_claude nomi qolgan, ichida GPT-4o chaqiriladi).
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 
@@ -110,7 +121,6 @@ def _ensure_openai_key():
         OPENAI_API_KEY = runtime_key
         logging.info("🔑 OPENAI_API_KEY runtime'da yangilandi")
     return OPENAI_API_KEY
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 # Tarjima narxi koeffitsienti — boshqa xizmatlar bilan teng (1 daq media = 1 daq tarif)
 TRANSLATION_MULTIPLIER = 1
@@ -148,6 +158,21 @@ WEBAPP_URL = _resolve_webapp_url()
 print(f"🔗 WEBAPP_URL = {WEBAPP_URL}")  # Deploy logda ko'rinadi
 # Railway/Heroku PORT env, lokal sinov uchun HTTP_PORT yoki default 8000
 HTTP_PORT  = int(os.getenv("HTTP_PORT") or os.getenv("PORT") or 8000)
+
+# WebApp yuklama chegarasi. Server 512 MB RAM bilan ishlaydi, shuning uchun
+# fayl RAM'ga emas, bo'lak-bo'lak diskka yoziladi va hajmi cheklanadi.
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "300"))
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+# Bir vaqtda nechta og'ir ish (STT/tarjima/TTS) bajarilishi mumkin.
+# Har ish ichida yana 4 ta parallel Whisper so'rovi va ffmpeg jarayoni bo'ladi,
+# shuning uchun bu son kichik bo'lishi kerak. Ilgari cheklov umuman yo'q edi:
+# 10 ta bir vaqtdagi foydalanuvchi 50+ thread va 10 ta ffmpeg ochib,
+# 512 MB / 1 vCPU mashinani OOM qilardi.
+MAX_CONCURRENT_JOBS = int(os.getenv("MAX_CONCURRENT_JOBS", "3"))
+# Navbatda kutayotganlar chegarasi — undan oshsa foydalanuvchiga darrov
+# "hozir band" deb aytamiz (soatlab kutib o'tirmasin).
+MAX_QUEUED_JOBS = int(os.getenv("MAX_QUEUED_JOBS", "12"))
 
 # Muhlisa AI STT endpoint — Pro Uzbek tarifi uchun
 MUXLISA_URL = "https://service.muxlisa.uz/api/v2/stt"
@@ -193,9 +218,36 @@ pending_payments = {}
 pending_translations = {}
 # === [USERS] Admin ko'rishi uchun user info: {user_id: {"username": "@x", "first_name": "Ali", "last_seen": 1234567890}} ===
 user_info = {}
-# === [TXT export] Oxirgi transkripsiya matni — TXT yuklab olish uchun ===
-# {user_id: {"text": "...", "ts": timestamp}} — RAM'da saqlanadi (qisqa muddatli)
+# === [TXT export] Oxirgi transkripsiya matni — TXT/PDF tugmasi uchun ===
+# {user_id: {"text": "...", "ts": timestamp}}
+#
+# FAQAT RAM. Ilgari bu user_data.json'ga ham yozilardi va natijada har
+# transkripsiyada butun JSON (barcha foydalanuvchilarning to'liq matnlari bilan)
+# qayta yozilardi — bir necha yuz foydalanuvchida fayl o'nlab MB bo'lib,
+# har saqlash sekinlashardi. Matnlar baribir 24 soatlik vaqtinchalik kesh,
+# tarif/usage kabi qimmatli ma'lumot emas.
 last_transcripts = {}
+LAST_TRANSCRIPTS_MAX = 200      # RAM'da ko'pi bilan shuncha yozuv
+LAST_TRANSCRIPTS_TTL = 24 * 3600
+_transcripts_lock = threading.Lock()
+
+
+def remember_transcript(user_id, text):
+    """Oxirgi matnni RAM'da eslab qolish + eskilarini tozalash."""
+    if not text:
+        return
+    now = time.time()
+    with _transcripts_lock:
+        last_transcripts[int(user_id)] = {"text": text, "ts": now}
+        # Eskirganlarni olib tashlash
+        for uid in [u for u, v in last_transcripts.items()
+                    if now - v.get("ts", 0) > LAST_TRANSCRIPTS_TTL]:
+            last_transcripts.pop(uid, None)
+        # Hajm chegarasi — eng eskilaridan boshlab qisqartiramiz
+        if len(last_transcripts) > LAST_TRANSCRIPTS_MAX:
+            for uid, _ in sorted(last_transcripts.items(), key=lambda kv: kv[1].get("ts", 0))[
+                    :len(last_transcripts) - LAST_TRANSCRIPTS_MAX]:
+                last_transcripts.pop(uid, None)
 
 # === [PROCESSING TRACKER] User aynan hozir audio yuborganmi (duplicate click oldini olish) ===
 # {user_id: start_timestamp}
@@ -231,8 +283,10 @@ def _unmark_processing(user_id):
 REFERRAL_BONUS_MIN = 5         # Har taklif uchun har ikkalasiga +5 daqiqa
 MAX_REFERRALS_PER_USER = 3     # Bitta user max 3 ta odam taklif qila oladi (anti-abuse)
 # Ma'lumotlar:
-# {user_id: extra_min} — referral va boshqa bonus daqiqalar (tarif daqiqalariga qo'shiladi)
+# {user_id: extra_min} — KO'CHIRILGAN qoldiq (carryover) daqiqalar (tarif almashganda)
 user_bonus_minutes = {}
+# {user_id: extra_min} — faqat DO'ST TAKLIF (referral) bonus daqiqalari (alohida hisob)
+user_referral_minutes = {}
 # {invited_user_id: inviter_user_id} — kim kimni taklif qilgan (bir marta)
 user_referrals = {}
 # {invited_user_id: True} — taklif qilingan user bonus'ini olgan bo'lsa (real foydalanish tasdiq)
@@ -368,22 +422,18 @@ def _load_user_data():
                     user_info[int(k)] = v
             except (ValueError, TypeError):
                 pass
-        # === [TXT/PDF cache] last_transcripts — PDF/TXT tugma uchun ===
-        # 24 soatdan eski transkripsiyalar yuklanmaydi (xotira tejash)
-        try:
-            now_ts = time.time()
-            cutoff = now_ts - 24 * 3600
-            for k, v in (data.get("last_transcripts") or {}).items():
-                if isinstance(v, dict) and v.get("text"):
-                    ts = v.get("ts", 0)
-                    if ts and ts >= cutoff:
-                        last_transcripts[int(k)] = {"text": v["text"], "ts": ts}
-        except Exception as e:
-            logging.warning(f"last_transcripts yuklash xato: {e}")
+        # last_transcripts endi diskda SAQLANMAYDI (faqat RAM) — pastdagi
+        # remember_transcript izohiga qarang. Eski fayllarda bu maydon bo'lishi
+        # mumkin, ataylab e'tiborsiz qoldiramiz.
         # === [REFERRAL] bonus daqiqalar va taklif tizimi ===
         for k, v in (data.get("user_bonus_minutes") or {}).items():
             try:
                 user_bonus_minutes[int(k)] = int(v)
+            except (ValueError, TypeError):
+                pass
+        for k, v in (data.get("user_referral_minutes") or {}).items():
+            try:
+                user_referral_minutes[int(k)] = int(v)
             except (ValueError, TypeError):
                 pass
         for k, v in (data.get("user_referrals") or {}).items():
@@ -422,12 +472,9 @@ def _save_user_data():
                 "pending_payments": {str(k): v for k, v in pending_payments.items()},
                 "pending_translations": {str(k): v for k, v in pending_translations.items()},
                 "user_info": {str(k): v for k, v in user_info.items()},
-                "last_transcripts": {
-                    str(k): {"text": v["text"], "ts": v.get("ts", 0)}
-                    for k, v in last_transcripts.items()
-                    if isinstance(v, dict) and v.get("text") and (time.time() - v.get("ts", 0)) < 24 * 3600
-                },
+                # last_transcripts ATAYLAB yo'q — u faqat RAM'da (fayl shishmasin)
                 "user_bonus_minutes": {str(k): int(v) for k, v in user_bonus_minutes.items()},
+                "user_referral_minutes": {str(k): int(v) for k, v in user_referral_minutes.items()},
                 "user_referrals": {str(k): int(v) for k, v in user_referrals.items()},
                 "user_referral_claimed": {str(k): True for k in user_referral_claimed},
                 "runtime_settings": dict(runtime_settings),
@@ -563,20 +610,7 @@ def _replay_tariff_log():
     if not os.path.exists(TARIFF_LOG_FILE):
         return 0
     try:
-        latest = {}  # {user_id: tariff_key} — eng so'nggi
-        with open(TARIFF_LOG_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                    uid = int(entry["uid"])
-                    tariff = entry["tariff"]
-                    if tariff in TARIFFS:
-                        latest[uid] = tariff
-                except Exception:
-                    continue
+        latest = _get_tariff_log_map()  # {user_id: tariff_key} — eng so'nggi
         # Faqat JSON'dagi tarif farq qilsa, jurnal'dan tiklash
         recovered = 0
         for uid, tariff in latest.items():
@@ -594,6 +628,32 @@ def _replay_tariff_log():
     except Exception as e:
         logging.error(f"❌ Tariff log replay xato: {e}")
         return 0
+
+
+def _reconcile_tariff_log_with_memory(source="restore"):
+    """Xotiradagi tariflarni jurnalga YAKUNIY holat sifatida yozadi.
+
+    Nega kerak: get_user_tariff jurnalni JSON'dan ustun qo'yadi (deploy chog'ida
+    tarif yo'qolmasligi uchun). Ammo /restore JSON'ni almashtirsa-yu jurnalga
+    tegmasa, jurnal eski tarifni qaytarib qo'yadi va tiklash bekor bo'ladi.
+    Shu funksiya faqat FARQ qiladigan yozuvlarni jurnalga qo'shadi.
+
+    Returns: yozilgan yozuvlar soni."""
+    log_map = _get_tariff_log_map()
+    written = 0
+    # 1) Xotirada bor, jurnalda boshqacha
+    for uid, tariff in list(user_tariffs.items()):
+        if log_map.get(uid) != tariff:
+            _append_tariff_log(uid, tariff, source=source)
+            written += 1
+    # 2) Jurnalda pullik, xotirada umuman yo'q → backup'da o'chirilgan demak
+    for uid, tariff in log_map.items():
+        if tariff != "free" and uid not in user_tariffs:
+            _append_tariff_log(uid, "free", source=f"{source}_removed")
+            written += 1
+    if written:
+        logging.info(f"🗂 Tariff jurnali moslashtirildi ({source}): {written} yozuv")
+    return written
 
 
 def track_user(update):
@@ -626,21 +686,90 @@ def track_user(update):
             _save_user_data()
 
 
+def _is_admin_user(user):
+    """Telegram User obyekti adminmi. YAGONA manba — is_admin va
+    _is_admin_callback ikkalasi ham shu funksiyaga tayanadi.
+
+    Tartib:
+      1) ADMIN_USER_IDS env sozlangan bo'lsa — FAQAT user.id bo'yicha.
+      2) Sozlanmagan bo'lsa — eski username xatti-harakati (backward compat),
+         lekin log'da ogohlantirish chiqadi.
+    """
+    if not user:
+        return False
+    if ADMIN_USER_IDS:
+        return user.id in ADMIN_USER_IDS
+    # Fallback — xavfsiz emas: username bo'shatilsa boshqa odam egallashi mumkin
+    uname = (user.username or "").lower().lstrip("@")
+    if uname in ADMIN_USERNAMES:
+        logging.warning(
+            "⚠️ Admin username orqali tasdiqlandi. ADMIN_USER_ID env'ni "
+            f"sozlang (bu foydalanuvchining ID'si: {user.id})"
+        )
+        return True
+    return False
+
+
 def is_admin(update):
-    """Foydalanuvchi adminmi tekshiradi (username asosida)."""
+    """Foydalanuvchi adminmi tekshiradi (user.id — birlamchi, username — zaxira)."""
     track_user(update)  # === [USERS] Har chaqiruvda user'ni saqlaymiz ===
     if not update or not getattr(update, "effective_user", None):
         return False
-    uname = (update.effective_user.username or "").lower()
-    if uname in ADMIN_USERNAMES:
-        # Admin chat_id'ini eslab qolamiz — to'lov xabarnomalari uchun
-        new_id = update.effective_user.id
-        if ADMIN_CHAT_ID["id"] != new_id:
-            ADMIN_CHAT_ID["id"] = new_id
-            _save_user_data()  # Doimiy saqlash — deploy'lardan o'tib ham qolsin
-            logging.info(f"👑 ADMIN_CHAT_ID saqlandi: {new_id}")
-        return True
-    return False
+    if not _is_admin_user(update.effective_user):
+        return False
+    # Admin chat_id'ini eslab qolamiz — to'lov xabarnomalari uchun
+    new_id = update.effective_user.id
+    if ADMIN_CHAT_ID["id"] != new_id:
+        ADMIN_CHAT_ID["id"] = new_id
+        _save_user_data()  # Doimiy saqlash — deploy'lardan o'tib ham qolsin
+        logging.info(f"👑 ADMIN_CHAT_ID saqlandi: {new_id}")
+    return True
+
+
+# === [TARIFF LOG KESH] =========================================================
+# Ilgari get_user_tariff HAR chaqiruvda butun tariff_log.jsonl faylini o'qirdi.
+# Bu funksiya get_user_limit_sec, check_limit_by_user_id, _transcribe_for_user
+# ichida, /stats va /openai esa uni HAR user uchun tsiklda chaqiradi —
+# ya'ni O(userlar × log qatorlari). Log append-only bo'lgani uchun vaqt o'tgani
+# sari sekinlashib borardi.
+#
+# Endi log bir marta xotiraga o'qiladi va faqat fayl o'zgarganda (mtime/size)
+# qayta o'qiladi.
+_tariff_log_cache = {"mtime": None, "size": None, "map": {}}
+_tariff_log_lock = threading.Lock()
+
+
+def _get_tariff_log_map():
+    """{user_id: oxirgi_tarif} — log fayldan, keshlab. Fayl o'zgarsa yangilanadi."""
+    try:
+        st = os.stat(TARIFF_LOG_FILE)
+    except OSError:
+        return {}
+    with _tariff_log_lock:
+        if (_tariff_log_cache["mtime"] == st.st_mtime_ns
+                and _tariff_log_cache["size"] == st.st_size):
+            return _tariff_log_cache["map"]
+        latest = {}
+        try:
+            with open(TARIFF_LOG_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                        if entry["tariff"] in TARIFFS:
+                            latest[int(entry["uid"])] = entry["tariff"]
+                    except Exception:
+                        continue
+        except Exception as e:
+            logging.error(f"Tariff log o'qishda xato: {e}")
+            return _tariff_log_cache["map"]
+        _tariff_log_cache["mtime"] = st.st_mtime_ns
+        _tariff_log_cache["size"] = st.st_size
+        _tariff_log_cache["map"] = latest
+        logging.info(f"🗂 Tariff log keshi yangilandi: {len(latest)} user")
+        return latest
 
 
 def get_user_tariff(user_id):
@@ -652,33 +781,21 @@ def get_user_tariff(user_id):
     # Agar memory'da paid tariff bo'lsa, darrov qaytaramiz
     if mem_tariff != "free":
         return mem_tariff
-    # Memory'da 'free' yoki yo'q — log'dan tekshirish
-    try:
-        if os.path.exists(TARIFF_LOG_FILE):
-            latest_tariff = None
-            with open(TARIFF_LOG_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entry = json.loads(line)
-                        if int(entry["uid"]) == uid and entry["tariff"] in TARIFFS:
-                            latest_tariff = entry["tariff"]
-                    except Exception:
-                        continue
-            if latest_tariff and latest_tariff != "free":
-                logging.warning(f"🔁 Tariff log'dan tiklandi: user_id={uid} → {latest_tariff} (memory'da {mem_tariff} edi)")
-                user_tariffs[uid] = latest_tariff
-                return latest_tariff
-    except Exception as e:
-        logging.error(f"Tariff log o'qishda xato: {e}")
+    # Memory'da 'free' yoki yo'q — log'dan (keshdan) tekshirish
+    latest_tariff = _get_tariff_log_map().get(uid)
+    if latest_tariff and latest_tariff != "free":
+        logging.warning(
+            f"🔁 Tariff log'dan tiklandi: user_id={uid} → {latest_tariff} "
+            f"(memory'da {mem_tariff} edi)"
+        )
+        user_tariffs[uid] = latest_tariff
+        return latest_tariff
     return "free"
 
 
 def get_user_bonus_min(user_id):
-    """Referral va boshqa bonus daqiqalar (tarif daqiqalariga qo'shimcha)."""
-    return int(user_bonus_minutes.get(user_id, 0))
+    """Jami qo'shimcha daqiqalar = ko'chirilgan qoldiq (carryover) + do'st taklif (referral)."""
+    return int(user_bonus_minutes.get(user_id, 0)) + int(user_referral_minutes.get(user_id, 0))
 
 
 def get_user_limit_sec(user_id):
@@ -705,20 +822,58 @@ def add_user_usage(user_id, seconds):
         logging.warning(f"   ⚠️ seconds={seconds} musbat emas, daqiqa qo'shilmadi")
 
 
-def _activate_tariff_with_carryover(user_id, tariff_key, source):
+# Bir xil grant ikki marta qo'llanmasligi uchun deduplikatsiya oynasi.
+# Admin "Tasdiqlash" tugmasini ikki marta bosса (yoki tarmoq qayta yuborsa),
+# _activate_tariff_with_carryover ikkinchi marta ishlab, joriy tarifning TO'LIQ
+# qoldig'ini carryover sifatida qo'shardi — ya'ni foydalanuvchi ikki barobar
+# daqiqa olardi. Endi shu oyna ichidagi takroriy grant e'tiborsiz qoldiriladi.
+GRANT_DEDUPE_WINDOW_SEC = 300  # 5 daqiqa
+_recent_grants = {}            # {(uid, tariff_key): timestamp}
+_grant_lock = threading.Lock()
+
+
+def _is_duplicate_grant(user_id, tariff_key):
+    """Shu user'ga shu tarif yaqinda berilganmi? Berilgan bo'lsa True."""
+    key = (int(user_id), tariff_key)
+    now = time.time()
+    with _grant_lock:
+        # Eskirgan yozuvlarni tozalash (dict cheksiz o'smasin)
+        for k in [k for k, ts in _recent_grants.items() if now - ts > GRANT_DEDUPE_WINDOW_SEC]:
+            _recent_grants.pop(k, None)
+        prev = _recent_grants.get(key)
+        if prev is not None and now - prev <= GRANT_DEDUPE_WINDOW_SEC:
+            return True
+        _recent_grants[key] = now
+        return False
+
+
+def _activate_tariff_with_carryover(user_id, tariff_key, source, force=False):
     """Yangi tarifni faollashtiradi va joriy tarifning ISHLATILMAGAN daqiqalarini
     yangi tarifga qo'shadi (yo'qolib ketmaydi).
 
     Hisob: qoldiq = (joriy_tarif_daqiqa + bonus) − ishlatilgan. Bu qoldiq yangi
     bonus bo'lib o'rnatiladi (eski bonus allaqachon qoldiqqa kirgani uchun
     OVERWRITE — qo'shish emas, aks holda ikki marta hisoblanadi).
-    'free' tarifdan o'tishda carryover yo'q (bepul daqiqa ko'chirilmaydi)."""
+    'free' tarifdan o'tishda carryover yo'q (bepul daqiqa ko'chirilmaydi).
+
+    Returns: carry_min (int) yoki None — takroriy grant deb rad etilgan bo'lsa.
+    force=True — deduplikatsiyani chetlab o'tish (admin ataylab qayta bersa)."""
     uid = int(user_id)
+    if not force and _is_duplicate_grant(uid, tariff_key):
+        logging.warning(
+            f"🛑 Takroriy grant e'tiborsiz qoldirildi: user={uid}, tarif={tariff_key}, "
+            f"manba={source} (oxirgi {GRANT_DEDUPE_WINDOW_SEC}s ichida allaqachon berilgan)"
+        )
+        return None
     carry_min = 0
     try:
         if get_user_tariff(uid) != "free":
             remaining_sec = get_user_limit_sec(uid) - get_user_usage_sec(uid)
-            carry_min = int(max(0, remaining_sec) // 60)
+            remaining_min = int(max(0, remaining_sec) // 60)
+            # Referral bonusi alohida saqlanadi va o'z bucket'ida qoladi —
+            # carryover'dan ayiramiz, aks holda ikki marta hisoblanadi.
+            ref_min = int(user_referral_minutes.get(uid, 0))
+            carry_min = max(0, remaining_min - ref_min)
     except Exception as e:
         logging.warning(f"Carryover hisoblash xato (user {uid}): {e}")
         carry_min = 0
@@ -757,9 +912,9 @@ def _try_claim_referral_bonus(user_id):
         user_referral_claimed[user_id] = True  # Belgilab qo'yamiz, qayta sinab ko'rmasin
         return
 
-    # Bonus berish — har ikkalasi uchun
-    user_bonus_minutes[user_id] = user_bonus_minutes.get(user_id, 0) + REFERRAL_BONUS_MIN
-    user_bonus_minutes[inviter_id] = user_bonus_minutes.get(inviter_id, 0) + REFERRAL_BONUS_MIN
+    # Bonus berish — har ikkalasi uchun (referral bucket'ga, carryover'dan alohida)
+    user_referral_minutes[user_id] = user_referral_minutes.get(user_id, 0) + REFERRAL_BONUS_MIN
+    user_referral_minutes[inviter_id] = user_referral_minutes.get(inviter_id, 0) + REFERRAL_BONUS_MIN
     user_referral_claimed[user_id] = True
     logging.info(f"🎁 Referral bonus: +{REFERRAL_BONUS_MIN} daqiqa user_id={user_id} va inviter={inviter_id}")
     # Userlarga xabar
@@ -819,6 +974,11 @@ def format_tariffs_text():
         if line:
             lines.append(line)
 
+    lines.append(
+        "\nℹ️ Daqiqalar bir marta beriladi va tugaguncha amal qiladi "
+        "(oylik yangilanish yo'q). Yangi tarif olsangiz, eski tarifdagi "
+        "ishlatilmagan daqiqalar yangisiga qo'shiladi."
+    )
     lines.append("\n💎 Tarif sotib olish uchun pastdagi tugmani bosing 👇")
     return "\n".join(lines)
 
@@ -940,7 +1100,9 @@ def _run_yt_dlp(url, output_template, use_cookies=True, player_client=None):
             cmd.extend(["--cookies", cookies_path])
     if player_client:
         cmd.extend(["--extractor-args", f"youtube:player_client={player_client}"])
-    cmd.extend(["-o", output_template, url])
+    # `--` — undan keyingi hamma narsa argument emas, URL deb qabul qilinadi.
+    # Busiz "--config-location=..." kabi qiymat yt-dlp parametri bo'lib ketardi.
+    cmd.extend(["-o", output_template, "--", url])
     # Timeout 10 daqiqa — uzun videolar uchun yetarli, lekin cheksiz osilib qolmasin
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -955,6 +1117,11 @@ def _run_yt_dlp(url, output_template, use_cookies=True, player_client=None):
 
 
 def download_audio_from_url(url):
+    # Xavfsizlik: faqat http/https. Boshqa sxema (file://, - bilan boshlanuvchi
+    # argument va h.k.) yt-dlp'ga umuman yetib bormasin.
+    if not isinstance(url, str) or not re.match(r"^https?://", url.strip(), re.I):
+        raise Exception("Faqat http:// yoki https:// havolalar qabul qilinadi.")
+    url = url.strip()
     if not have_cmd("yt-dlp"):
         raise Exception("yt-dlp o'rnatilmagan. Terminalda: pip install -U yt-dlp")
     if not have_cmd("ffmpeg"):
@@ -1136,16 +1303,6 @@ def get_duration_or_estimate(path):
     est = estimate_duration_from_size(path)
     logging.warning(f"⏱ Duration probe FAIL, fayl o'lchami taxmini = {est}s, path={path}")
     return est
-
-
-def fmt_time(seconds):
-    """Sekundlarni 'M:SS' yoki 'H:MM:SS' formatga aylantiradi."""
-    s = int(seconds)
-    h, rem = divmod(s, 3600)
-    m, s = divmod(rem, 60)
-    if h > 0:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
 
 
 def split_audio(wav_path):
@@ -1368,17 +1525,23 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
     return final_text
 
 
+# Muhlisa (~500 so'm/daq) Whisper'dan (~75 so'm/daq) ~7 barobar qimmat.
+# Shuning uchun u FAQAT Premium (pro_*) tariflar uchun — ular buning uchun to'lagan.
+# Ilgari bepul userlar ham Muhlisa'ga tushardi: har bepul user ~2500 so'm zarar,
+# pullik Standart userlar esa arzon engine olardi. Bu teskari mantiq edi.
+# Kerak bo'lsa eski holatga qaytarish: MUXLISA_FOR_FREE=1 env qo'shing.
+MUXLISA_FOR_FREE = os.getenv("MUXLISA_FOR_FREE", "").strip().lower() in ("1", "true", "yes")
+
+
 def _transcribe_for_user(user_id, file_path, language="uz", progress_cb=None, failed_ranges_out=None):
     """User tarifiga qarab to'g'ri STT'ga yo'naltiradi.
-    BEPUL + PRO tarif (pro_*) + Uzbek → Muhlisa AI (eng yuqori sifat).
-    Eski Oddiy tarif (basic/standart/premium) → Whisper (saqlanadi, narx oshmasin).
-    Boshqa til → Whisper.
+    PREMIUM tarif (pro_*) + Uzbek → Muhlisa AI (eng yuqori sifat, qimmat).
+    Qolgan hamma holat → OpenAI Whisper.
     """
     tariff = get_user_tariff(user_id)
     is_pro_tariff = tariff.startswith("pro_") or tariff == "pro"
-    is_free_tariff = tariff == "free"
-    # Muhlisa: Bepul + Pro tariflar + Uzbek (sifat eng yuqori, user xursand)
-    if (is_pro_tariff or is_free_tariff) and language == "uz" and MUXLISA_KEY:
+    use_muxlisa = is_pro_tariff or (MUXLISA_FOR_FREE and tariff == "free")
+    if use_muxlisa and language == "uz" and MUXLISA_KEY:
         logging.info(f"🌟 Muhlisa STT (tarif={tariff}) user_id={user_id}")
         try:
             return transcribe_muhlisa(file_path, progress_cb, failed_ranges_out)
@@ -1386,15 +1549,6 @@ def _transcribe_for_user(user_id, file_path, language="uz", progress_cb=None, fa
             logging.error(f"Muhlisa STT yiqildi: {e}. OpenAI Whisper fallback...")
     return transcribe_unified(file_path, progress_cb, language, failed_ranges_out)
 # === [/PRO UZBEK STT] =================================================
-
-
-FATAL_KEYWORDS = ("balance", "insufficient", "credit", "payment", "quota",
-                  "limit reach", "unauthorized", "forbidden", "401", "402", "403")
-
-
-def _is_fatal_error(err_str):
-    s = err_str.lower()
-    return any(k in s for k in FATAL_KEYWORDS)
 
 
 # Eski transcribe() funksiyasi olib tashlandi — endi faqat OpenAI Whisper ishlatamiz.
@@ -1412,15 +1566,6 @@ FONT_CANDIDATES = [
     # macOS fallback
     r"/Library/Fonts/Arial.ttf",
 ]
-
-# Arabcha matn uchun alohida font (DejaVu arabcha qo'llab-quvvatlamasa, Noto Naskh)
-ARABIC_FONT_CANDIDATES = [
-    r"/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf",
-    r"/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
-    r"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",  # qisman arabcha bor
-    r"C:\Windows\Fonts\arial.ttf",
-]
-
 
 def _find_font(candidates=None):
     cands = candidates if candidates is not None else FONT_CANDIDATES
@@ -1561,17 +1706,13 @@ def make_pdf(text, title="Audio & Konspekt — Matn"):
     pdf.add_page()
     pdf.set_title(title)
 
+    # Eslatma: ilgari bu yerda alohida "Arabic" font ham qo'shilardi, lekin
+    # pdf.set_font("Arabic") hech qachon chaqirilmasdi — ya'ni foydasiz edi.
+    # Arab yozuvi DejaVu/Noto ichidagi qamrov bilan chiqadi.
     body_font = _find_font()
-    arabic_font = _find_font(ARABIC_FONT_CANDIDATES)
 
     if body_font:
         pdf.add_font("Body", "", body_font)
-        # Agar arabcha font alohida bo'lsa, qo'shib qo'yamiz
-        if arabic_font and arabic_font != body_font:
-            try:
-                pdf.add_font("Arabic", "", arabic_font)
-            except Exception:
-                pass
         pdf.set_font("Body", size=14)
         pdf.cell(0, 12, title, new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
         pdf.ln(4)
@@ -1937,6 +2078,23 @@ def make_tts_openai(text, lang=None):
             except Exception: pass
 
 
+def estimate_tts_duration_sec(text):
+    """Matndan hosil bo'ladigan audio davomiyligini OLDINDAN baholaydi.
+
+    Nega kerak: ilgari avval TTS to'liq generatsiya qilinar, KEYIN limit
+    tekshirilardi. Limitga sig'masa foydalanuvchidan yechilmasdi, lekin
+    OpenAI TTS puli allaqachon sarflangan bo'lardi — daqiqasi tugagan
+    foydalanuvchi katta matnlarni qayta-qayta yuborib xarajat keltira olardi.
+
+    Baho: ~14 belgi/sekund (o'rtacha nutq tezligi, o'zbek/rus uchun mos).
+    Ataylab ehtiyotkor (past) baho — real audio biroz uzunroq chiqishi mumkin,
+    yakuniy aniq hisob baribir yuborishdan keyin qilinadi.
+    """
+    if not text:
+        return 0
+    return max(1, int(len(text.strip()) / 14))
+
+
 def make_tts(text, lang=None, force_engine=None):
     """Matnni ovozli MP3 ga aylantiradi.
     Strategiya:
@@ -1993,36 +2151,6 @@ def save_base64_audio(data, suffix='.webm'):
 # Muxlisa o'rniga ham, Google STT o'rniga ham Whisper ishlatiladi.
 # Sabab: Whisper arzonroq ($0.006/daq), barcha tillarni qo'llab-quvvatlaydi,
 # va sifati yuqori. Bitta model bilan ish soddaroq.
-
-def _uzbek_transcription_quality(text):
-    """O'zbek transkripsiyaning sifatini 0.0-1.0 oraliqda baholaydi.
-    Past ball — sifat past, Muxlisa fallback'ga arziydi.
-
-    Tekshiriladi:
-      • Kirill harflari ulushi (uzbek lotin alifbosi — kirill bo'lmasligi kerak)
-      • So'roq belgisi `?` ulushi (Whisper biror so'zni o'qiy olmasa shu chiqaradi)
-      • Lotin harflari ulushi (juda kam bo'lsa, transkripsiya buzuq)
-      • o'/g' apostroflarning normal nisbat
-    """
-    if not text or len(text) < 20:
-        return 0.0  # juda qisqa — ishonchsiz
-    total = len(text)
-    cyrillic = sum(1 for ch in text if 'Ѐ' <= ch <= 'ӿ' or 'а' <= ch <= 'я' or 'А' <= ch <= 'Я')
-    qmarks = text.count('?')
-    latin = sum(1 for ch in text if ('a' <= ch <= 'z') or ('A' <= ch <= 'Z'))
-
-    score = 1.0
-    # Kirill harflari ko'p bo'lsa, lotin alifbo o'zbekcha buzuq deb hisoblanadi
-    if cyrillic / total > 0.20:
-        score -= 0.5
-    # So'roq belgilari haddan tashqari ko'p bo'lsa
-    if qmarks / total > 0.05:
-        score -= 0.3
-    # Lotin harflari juda kam (matn bo'sh yoki belgilar)
-    if latin / total < 0.40:
-        score -= 0.3
-    return max(0.0, score)
-
 
 def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges_out=None):
     """Audio/video'ni matnga aylantirish — FAQAT Whisper/gpt-4o-transcribe (OpenAI) orqali.
@@ -2168,6 +2296,10 @@ def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
     return _split_by_time(recoded_path, chunk_seconds, duration_sec)
 
 
+# Audio qancha bo'lakka bo'linishi mumkin. 180 sek chunk bilan 100 ta = 5 soat.
+MAX_AUDIO_CHUNKS = 100
+
+
 def _split_by_time(file_path, chunk_seconds, total_dur):
     """Audio'ni vaqt bo'yicha bo'laklarga ajratish (overlap bilan).
     Har bo'lak `chunk_seconds + WHISPER_CHUNK_OVERLAP` davom etadi.
@@ -2175,7 +2307,16 @@ def _split_by_time(file_path, chunk_seconds, total_dur):
     Bu — keyingi bo'lak chetida kesilgan so'zlar to'liq saqlanadi.
     Eslatma: file_path AVVAL qayta kodlangan bo'lishi kerak (64kbps mono)."""
     n_chunks = int(total_dur // chunk_seconds) + (1 if total_dur % chunk_seconds > 0 else 0)
-    n_chunks = max(1, min(n_chunks, 100))  # max 100 ta bo'lak (~16 soat)
+    # Xavfsizlik chegarasi: max 100 bo'lak. 180 sek chunk bilan bu = 5 soat.
+    # Undan uzun audio KESILADI — buni jimgina qilmaymiz, chaqiruvchi
+    # foydalanuvchini ogohlantirishi uchun global holatga yozib qo'yamiz.
+    if n_chunks > MAX_AUDIO_CHUNKS:
+        covered_sec = MAX_AUDIO_CHUNKS * chunk_seconds
+        logging.warning(
+            f"⚠️ Audio juda uzun ({total_dur/3600:.1f} soat) — faqat birinchi "
+            f"{covered_sec/3600:.1f} soat qayta ishlanadi"
+        )
+    n_chunks = max(1, min(n_chunks, MAX_AUDIO_CHUNKS))
     chunks = []
     tmp_dir = tempfile.mkdtemp(prefix="whisper_chunks_")
     logging.info(f"🔪 vaqt bo'yicha bo'laklash: {n_chunks} ta bo'lak (overlap {WHISPER_CHUNK_OVERLAP}s)")
@@ -2608,69 +2749,67 @@ def _cleanup_uzbek_transcript_chunk(text):
         "Authorization": f"Bearer {OPENAI_API_KEY}",
         "Content-Type": "application/json",
     }
+    # MUHIM (xavfsizlik): bu prompt ATAYLAB konservativ.
+    # Ilgari u modelga "if a word makes no sense, REPLACE with sensible Uzbek word",
+    # "use context to reconstruct meaning" deb ochiq ruxsat berardi va ayni paytda
+    # "output length MUST be close to input" deb talab qilardi — ya'ni model
+    # tushunmagan joyni O'YLAB TOPIB to'ldirishga majbur bo'lardi.
+    # Bu bot asosan diniy ma'ruzalar (hadis, oyat, ulamo nomlari) bilan ishlaydi;
+    # o'ylab topilgan so'z hadis matniga aylanib qolishi mumkin edi va
+    # foydalanuvchi buni asl matndan ajrata olmasdi.
+    # Endi model FAQAT orfografiya/alifbo/tinish belgilarini tuzatadi,
+    # tushunarsiz joyni esa [?] bilan belgilaydi — o'ylab topmaydi.
     system_prompt = (
-        "You are a NATIVE Uzbek speaker and professional editor. Your job: take a "
-        "broken speech-to-text output and produce CLEAN, NATURAL, READABLE Uzbek "
-        "Latin text. The input may look like Turkish or Kazakh because Whisper "
-        "confused the language — you MUST aggressively rewrite it into proper Uzbek.\n\n"
+        "You are a careful Uzbek proofreader working on speech-to-text output of "
+        "religious lectures. Your ONLY job is orthography, script and punctuation. "
+        "You are NOT allowed to rewrite content or guess missing words.\n\n"
 
-        "═══ CRITICAL RULES ═══\n"
-        "1) Output is 100% NATURAL UZBEK that a regular Uzbek reader would understand.\n"
-        "2) AGGRESSIVELY rewrite Turkish/Kazakh grammar into Uzbek:\n"
-        "   • Turkish '-mış/-miş' (past) → Uzbek '-gan/-kan'\n"
-        "   • Turkish '-ır/-er' (present) → Uzbek '-adi/-ydi'\n"
-        "   • Turkish '-ken' (while) → Uzbek '-kan paytda/vaqtida'\n"
-        "   • Turkish '-dır/-dir' (is/are) → Uzbek (remove or '-dir' Uzbek form)\n"
-        "   • Turkish 'edirken/ederken' → Uzbek 'qilardi/qilayotgan paytda'\n"
-        "   • Turkish '-masidan' → Uzbek '-masdan'\n"
-        "   • Turkish 'şu/şuncha' → Uzbek 'shu/shuncha'\n"
-        "   • Turkish letters ş→sh, ç→ch, ı→i, ö→o', ü→u, ğ→g'\n"
-        "   • Kazakh қ→q, ң→ng, ы→i, ә→a\n\n"
-
-        "3) NONSENSE WORDS (gibberish Whisper invented):\n"
-        "   • If a word makes no sense in context, REPLACE with sensible Uzbek word\n"
-        "   • Example: 'misqamendir' → likely should be 'mendir' or 'mendan' (context)\n"
-        "   • Example: 'edishkan' → 'qilardi' or 'edi'\n"
-        "   • Example: 'ele saham' → likely 'shu kishi' or skip\n"
-        "   • Use context to reconstruct meaning.\n\n"
-
-        "4) FEW-SHOT EXAMPLES:\n"
-        "   INPUT:  'Talabalar edishkanlar ki kelashga'\n"
-        "   OUTPUT: 'Talabalar kelishni hohlardi'\n\n"
-        "   INPUT:  'Shofii qonunlari og'ir tutmasidan keserlendiradi'\n"
-        "   OUTPUT: 'Shofiy qonunlari og'ir bo'lmasa keskinlashtiradi'\n\n"
-        "   INPUT:  'Şu kişi muhalifni dushman ko'rmaydi'\n"
-        "   OUTPUT: 'Bu kishi muxolifni dushman ko'rmaydi'\n\n"
-        "   INPUT:  'İmom Şofii kelayotganda ediskanlar'\n"
-        "   OUTPUT: 'Imom Shofiy kelayotgan paytda qilardilar'\n\n"
-
-        "5) ARAB SCRIPT → LATIN UZBEK transliteration:\n"
+        "═══ WHAT YOU MUST DO ═══\n"
+        "1) SCRIPT/SPELLING FIXES ONLY. Whisper often emits Turkish/Kazakh letters "
+        "for Uzbek sounds — normalise the CHARACTERS, not the words:\n"
+        "   • ş→sh, ç→ch, ı→i, ö→o', ü→u, ğ→g'\n"
+        "   • Kazakh қ→q, ң→ng, ы→i, ә→a\n"
+        "   • Cyrillic Uzbek → Latin Uzbek (same words, different script)\n"
+        "2) PROPER UZBEK APOSTROPHES: o', g' (not o`, ó, oʻ, ‘).\n"
+        "3) ARABIC SCRIPT → standard Uzbek Latin transliteration of well-known "
+        "formulas ONLY:\n"
         "   • 'بسم الله' → 'Bismillahir Rohmanir Rohim'\n"
         "   • 'الله اكبر' → 'Allohu akbar', 'سبحان الله' → 'Subhanalloh'\n"
-        "   • 'الحمد لله' → 'Alhamdulillah'\n\n"
+        "   • 'الحمد لله' → 'Alhamdulillah'\n"
+        "   If an Arabic passage is NOT a well-known formula, KEEP IT AS IS.\n"
+        "4) RELIGIOUS NAMES/TERMS — fix only the SPELLING to the Uzbek standard, "
+        "never swap one name for another:\n"
+        "   payg'ambar, sallallohu alayhi va sallam, Imom Buxoriy, Imom Muslim, "
+        "Imom Shofiy, Imom Abu Hanifa, sahobalar, ulamolar, shariat, hadis, "
+        "tafsir, fiqh, aqida, Allohu taolo, inshalloh, alhamdulillah.\n"
+        "5) PUNCTUATION and paragraph breaks where sentences clearly end.\n"
+        "6) If the SAME phrase repeats 3+ times in a row (a known Whisper glitch), "
+        "keep ONE copy.\n\n"
 
-        "6) PROPER UZBEK APOSTROPHES: o', g' (not o`, ó, oʻ).\n\n"
+        "═══ WHAT YOU MUST NEVER DO ═══\n"
+        "7) NEVER invent, guess or 'reconstruct' words. If a fragment is garbled and "
+        "you cannot fix it by spelling alone, KEEP THE ORIGINAL and append [?] "
+        "right after it. Example: 'misqamendir[?]'. An unreadable word marked [?] "
+        "is CORRECT output — a plausible-sounding invented word is a SERIOUS ERROR.\n"
+        "8) NEVER rephrase, modernise or 'improve' grammar. Keep the speaker's own "
+        "words and word order, even if colloquial or clumsy.\n"
+        "9) NEVER translate, summarise, shorten, expand or add commentary.\n"
+        "10) NEVER add sentences that are not in the input. Do not pad the text to "
+        "make it longer.\n"
+        "11) NEVER change numbers, dates, names, quantities or Qur'an/hadith "
+        "quotations in any way.\n\n"
 
-        "7) RELIGIOUS TERMS — Uzbek standard:\n"
-        "   • payg'ambar, sallallohu alayhi va sallam (s.a.v.)\n"
-        "   • Imom Buxoriy, Imom Muslim, Imom Shofiy, Imom Abu Hanifa\n"
-        "   • sahobalar, ulamolar, shariat, hadis, tafsir, fiqh, aqida\n"
-        "   • Allohu taolo, Allohga shukur, inshalloh, alhamdulillah\n\n"
+        "═══ EXAMPLES ═══\n"
+        "INPUT:  'Şu kişi muhalifni dushman ko'rmaydi'\n"
+        "OUTPUT: 'Shu kishi muhalifni dushman ko'rmaydi'\n"
+        "  (only letters fixed; 'muhalif' NOT changed to 'muxolif' by guessing)\n\n"
+        "INPUT:  'İmom Şofii kelayotganda ediskanlar'\n"
+        "OUTPUT: 'Imom Shofiy kelayotganda ediskanlar[?]'\n"
+        "  ('ediskanlar' is garbled — marked, NOT replaced with a guess)\n\n"
+        "INPUT:  'ele saham dedi'\n"
+        "OUTPUT: 'ele saham[?] dedi'\n\n"
 
-        "8) REMOVE REPETITIONS: if same phrase appears 3+ times in row → keep ONE.\n\n"
-
-        "9) PROPER PUNCTUATION + paragraphs.\n\n"
-
-        "10) DO NOT translate to other languages. DO NOT summarize. DO NOT shorten. "
-        "    DO NOT invent NEW content. DO NOT omit ANY sentence.\n"
-        "    Just REWRITE the SAME meaning, SAME length, in proper Uzbek.\n\n"
-
-        "11) CRITICAL: Keep EVERY sentence. The output length MUST be close to the "
-        "    input length (NOT shorter). If a phrase is garbled, write the closest "
-        "    sensible Uzbek version from context — but NEVER drop or skip it.\n\n"
-
-        "OUTPUT ONLY the cleaned PURE Uzbek text, keeping ALL content. No commentary. "
-        "Output MUST read like a native Uzbek wrote it and be the SAME length as input."
+        "OUTPUT ONLY the corrected text. No commentary, no preamble, no notes."
     )
     payload = {
         "model": "gpt-4o",
@@ -2700,11 +2839,6 @@ def _cleanup_uzbek_transcript_chunk(text):
     except Exception as e:
         logging.warning(f"Uzbek cleanup xato: {e}")
     return text
-
-
-# Eski nom uchun backward-compat (boshqa joylarda chaqiriladi)
-def _cleanup_mixed_uzbek_arabic(text):
-    return _cleanup_uzbek_transcript(text)
 
 
 def _get_whisper_prompt(source_lang):
@@ -2963,7 +3097,7 @@ def _format_failed_ranges_text(failed_ranges):
     merged = _merge_failed_ranges(failed_ranges)
     if not merged:
         return ""
-    lines = ["⚠️ <b>Eslatma:</b> quyidagi vaqt oraliqlari transkripsiya qilinmadi (server xato):"]
+    lines = ["⚠️ <b>Eslatma:</b> quyidagi vaqt oraliqlari transkripsiya qilinmadi:"]
     for s, e in merged:
         lines.append(f"• <code>{_format_time_range(s, e)}</code>")
     lines.append("\n💡 Bu qismlarni qayta olish uchun: audio'ni o'sha vaqtdan kesib qayta yuboring.")
@@ -3079,6 +3213,21 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
     if chunks_to_process and chunks_to_process[0] != file_path:
         chunk_dir_to_cleanup = os.path.dirname(chunks_to_process[0])
         logging.info(f"   → {len(chunks_to_process)} ta bo'lak tayyor")
+
+    # Audio MAX_AUDIO_CHUNKS chegarasiga tegib kesilganmi? Agar shunday bo'lsa,
+    # kesilgan oraliqni failed_ranges'ga qo'shamiz — foydalanuvchi qaysi
+    # daqiqadan keyingi qism yo'qligini aniq ko'radi. Ilgari bu JIMGINA
+    # sodir bo'lar, lekin daqiqa to'liq uzunlik bo'yicha yechilardi.
+    if failed_ranges_out is not None and len(chunks_to_process) >= MAX_AUDIO_CHUNKS:
+        covered_sec = MAX_AUDIO_CHUNKS * WHISPER_CHUNK_SECONDS
+        try:
+            real_dur = int(get_duration_or_estimate(file_path))
+        except Exception:
+            real_dur = 0
+        if real_dur > covered_sec + 30:
+            failed_ranges_out.append(
+                (covered_sec, real_dur, f"audio {covered_sec/3600:.1f} soatdan uzun — kesildi")
+            )
 
     # Har bir bo'lakni Whisper'ga yuborish
     url = "https://api.openai.com/v1/audio/transcriptions"
@@ -3201,9 +3350,14 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
                 text = text[best_overlap:].lstrip()
         results.append(text)
 
-    # MULTI FINAL PASS — 3 marta, har biri ko'proq kutib
+    # MULTI FINAL PASS — yiqilgan bo'laklarni qayta urinish.
+    # Kutish vaqtlari qisqartirildi: ilgari [60, 120, 300] edi — bitta bo'lak
+    # yiqilsa foydalanuvchi 8 daqiqa ortiqcha kutar, thread esa shuncha vaqt
+    # band turardi (navbatdagilar ham kutib qolardi). _try_transcribe ichida
+    # allaqachon o'z retry/backoff'i bor, shuning uchun bu yerda uzoq kutish
+    # ortiqcha edi.
     chunk_idx_to_path = {idx: path for idx, path in enumerate(chunks_to_process, 1)}
-    whisper_pass_waits = [60, 120, 300]  # 1min, 2min, 5min
+    whisper_pass_waits = [15, 45, 90]  # jami ~2.5 daqiqa (avval ~8 daqiqa)
     for pass_num, wait_sec in enumerate(whisper_pass_waits, 1):
         if not failed_chunks or len(failed_chunks) >= total:
             break
@@ -3421,11 +3575,16 @@ def _gpt_translate_with_retry(chunk, source_lang, target_lang, max_retries=3):
     raise last_err or Exception("GPT 3 marta yiqildi")
 
 
-def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz"):
+def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz",
+                          lost_chunks_out=None):
     """Tarjima — OpenAI GPT-4o orqali.
     Uzun matn 3000 so'zlik bo'laklarga ajratiladi va har biri 3 marta urinish bilan
-    tarjima qilinadi. Agar bir bo'lak 3 marta ham yiqilsa — butun tarjima xato qaytaradi
-    (qisman natija bilan emas, to'liq xato bilan).
+    tarjima qilinadi. Bo'laklarning 30% dan ko'pi yiqilsa — butun tarjima xato.
+
+    lost_chunks_out: ro'yxat bersangiz, yo'qolgan bo'laklar (idx, jami) to'ldiriladi.
+      Chaqiruvchi buni foydalanuvchiga ogohlantirish uchun ishlatadi — ilgari
+      matnning 30% gacha qismi JIMGINA yo'qolib ketardi va foydalanuvchi
+      to'liq tarjima olgan deb o'ylardi.
 
     source_lang: manba til (yoki 'auto')
     target_lang: hosil til ('uz', 'ru', 'en', 'ar')"""
@@ -3474,7 +3633,24 @@ def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz")
     result = "\n\n".join([t for t in translations if t])
     if failed_chunks:
         logging.warning(f"⚠️ {len(failed_chunks)} bo'lak yo'qoldi, lekin asosiy tarjima yetkazildi")
+        if lost_chunks_out is not None:
+            lost_chunks_out.append((len(failed_chunks), len(chunks)))
     return result
+
+
+def _format_lost_chunks_text(lost_chunks):
+    """Yo'qolgan tarjima bo'laklari haqida foydalanuvchiga ogohlantirish matni."""
+    if not lost_chunks:
+        return None
+    failed, total = lost_chunks[0]
+    percent = int(failed / max(1, total) * 100)
+    return (
+        f"⚠️ Diqqat: tarjimaning {failed}/{total} bo'lagi ({percent}%) "
+        f"texnik sabablarga ko'ra tayyorlanmadi.\n\n"
+        f"Quyidagi matn TO'LIQ EMAS — taxminan {percent}% qismi yetishmaydi. "
+        f"To'liq natija uchun faylni qaytadan yuboring yoki qisqaroq "
+        f"bo'laklarga bo'lib yuboring."
+    )
 # === [/TARJIMA MODULI — API HELPERS] ============================================
 
 
@@ -3482,18 +3658,16 @@ def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz")
 
 async def send_result(update, msg, text):
     """Transkripsiya natijasini 2 ta PDF qilib yuborish (Lotin + Kirill).
-    TXT olib tashlandi. Tugma kerak emas — darrov yuboriladi."""
+
+    Returns True — kamida bitta PDF (yoki fallback matn) haqiqatan yetkazilgan
+    bo'lsa. Chaqiruvchi shu qiymatga qarab tarif daqiqasini yechadi."""
     if not text:
-        await msg.edit_text("Matn aniqlanmadi.")
-        return
+        await msg.edit_text("Matn aniqlanmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi.")
+        return False
 
     user_id = update.effective_user.id
-    # Matnni saqlash (fallback uchun)
-    try:
-        last_transcripts[int(user_id)] = {"text": text, "ts": time.time()}
-        _save_user_data()
-    except Exception:
-        pass
+    # Matnni RAM'da eslab qolish (diskka yozilmaydi — fayl shishmasin)
+    remember_transcript(user_id, text)
 
     word_count = len(text.split())
     char_count = len(text)
@@ -3501,40 +3675,69 @@ async def send_result(update, msg, text):
     await msg.edit_text(
         f"✅ <b>Transkripsiya tayyor!</b>\n\n"
         f"📊 {word_count:,} ta so'z • {char_count:,} ta belgi\n\n"
-        f"📥 2 ta PDF tayyorlanmoqda (Lotin va Kirill)...",
+        f"📥 2 ta PDF tayyorlanmoqda (Lotin va Kirill)..."
+        + html.escape(_unclear_marker_note(text)),
         parse_mode="HTML",
     )
 
     # 1) Lotin PDF
+    latin_ok = False
     try:
         latin_pdf = await asyncio.to_thread(make_pdf, text)
-        with open(latin_pdf, "rb") as f:
-            await update.message.reply_document(
-                document=f,
-                filename="mnsm-lotin.pdf",
-                caption="📄 Lotin alifbosida",
-            )
-        try: os.remove(latin_pdf)
-        except Exception: pass
+        try:
+            with open(latin_pdf, "rb") as f:
+                await update.message.reply_document(
+                    document=f,
+                    filename="mnsm-lotin.pdf",
+                    caption="📄 Lotin alifbosida",
+                )
+            latin_ok = True
+        finally:
+            try: os.remove(latin_pdf)
+            except Exception: pass
     except Exception as e:
         logging.error(f"Lotin PDF xato: {e}")
 
     # 2) Kirill PDF
+    cyrillic_ok = False
     try:
         await update.message.reply_text("🔤 Kirill PDF tayyorlanmoqda...")
         cyrillic_text = await asyncio.to_thread(convert_latin_to_cyrillic, text)
         cyrillic_pdf = await asyncio.to_thread(make_pdf, cyrillic_text, "Audio & Konspekt — Кирилл")
-        with open(cyrillic_pdf, "rb") as f:
-            await update.message.reply_document(
-                document=f,
-                filename="mnsm-kirill.pdf",
-                caption="📄 Кирилл алифбосида",
-            )
-        try: os.remove(cyrillic_pdf)
-        except Exception: pass
+        try:
+            with open(cyrillic_pdf, "rb") as f:
+                await update.message.reply_document(
+                    document=f,
+                    filename="mnsm-kirill.pdf",
+                    caption="📄 Кирилл алифбосида",
+                )
+            cyrillic_ok = True
+        finally:
+            try: os.remove(cyrillic_pdf)
+            except Exception: pass
     except Exception as e:
         logging.error(f"Kirill PDF xato: {e}")
-        await update.message.reply_text("⚠️ Kirill PDF tayyorlashda muammo bo'ldi, Lotin PDF yuborildi.")
+        await update.message.reply_text("⚠️ Kirill PDF tayyorlashda muammo bo'ldi.")
+
+    if latin_ok or cyrillic_ok:
+        return True
+
+    # Hech qaysi PDF yetkazilmadi — matnni xabar sifatida berishga urinamiz
+    logging.error(f"⛔ send_result: hech qanday PDF yetkazilmadi (user {user_id})")
+    try:
+        for i in range(0, len(text), 4000):
+            await update.message.reply_text(text[i:i + 4000])
+        return True
+    except Exception as e:
+        logging.error(f"Fallback matn ham yetkazilmadi: {e}")
+        try:
+            await update.message.reply_text(
+                "❌ Natijani yetkazib bo'lmadi (texnik nosozlik).\n\n"
+                "💚 Daqiqa hisobingizdan yechilmadi. Iltimos qayta urinib ko'ring."
+            )
+        except Exception:
+            pass
+        return False
 
 
 def make_progress_cb(loop, msg, base_label="🎙 Tanilmoqda"):
@@ -3615,8 +3818,9 @@ async def process_local_audio(update, context, file_path, duration=0, language="
         text = await asyncio.to_thread(transcribe_unified, file_path, cb, language, failed_ranges)
         if failed_ranges:
             await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
-        await send_result(update, msg, text)
-        if not is_admin(update) and actual_duration > 0:
+        # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
+        delivered = await send_result(update, msg, text)
+        if delivered and not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
@@ -3701,8 +3905,9 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
         text = await asyncio.to_thread(transcribe_unified, tmp_path, cb, language, failed_ranges)
         if failed_ranges:
             await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
-        await send_result(update, msg, text)
-        if not is_admin(update) and actual_duration > 0:
+        # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
+        delivered = await send_result(update, msg, text)
+        if delivered and not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
@@ -3785,8 +3990,9 @@ async def process_url(update, context, url, language="uz"):
         text = await asyncio.to_thread(transcribe_unified, audio_path, cb, language, failed_ranges)
         if failed_ranges:
             await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
-        await send_result(update, msg, text)
-        if not is_admin(update) and actual_duration > 0:
+        # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
+        delivered = await send_result(update, msg, text)
+        if delivered and not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration)
     except Exception as e:
         logging.error(f"URL xato: {e}")
@@ -3797,12 +4003,10 @@ async def process_url(update, context, url, language="uz"):
 
 
 def webapp_keyboard(chat_id=None, username=None):
-    # Cache buster + chat_id (iMe va boshqa Telegram fork'lari uchun fallback)
+    # Cache buster. `user=` parametri OLIB TASHLANDI — u autentifikatsiyani
+    # chetlab o'tish yo'li edi. Endi user_id faqat imzolangan initData'dan olinadi.
     sep = "&" if "?" in WEBAPP_URL else "?"
-    parts = [f"v={int(time.time())}"]
-    if chat_id is not None:
-        parts.append(f"user={chat_id}")
-    url = f"{WEBAPP_URL}{sep}{'&'.join(parts)}"
+    url = f"{WEBAPP_URL}{sep}v={int(time.time())}"
 
     rows = [
         [KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))],
@@ -3811,12 +4015,14 @@ def webapp_keyboard(chat_id=None, username=None):
         [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="❓ Yordam")],
         [KeyboardButton(text="💬 Murojaat"), KeyboardButton(text="🔄 /start")],
     ]
-    # Admin tekshiruvi — chat_id YOKI username orqali
-    is_admin_user = False
-    if chat_id is not None and ADMIN_CHAT_ID["id"] is not None and chat_id == ADMIN_CHAT_ID["id"]:
-        is_admin_user = True
-    elif username and username.lower().lstrip("@") in ADMIN_USERNAMES:
-        is_admin_user = True
+    # Admin tugmalarini ko'rsatish (kosmetik — buyruqlar baribir is_admin bilan himoyalangan)
+    if ADMIN_USER_IDS:
+        is_admin_user = chat_id in ADMIN_USER_IDS
+    else:
+        is_admin_user = bool(
+            (chat_id is not None and ADMIN_CHAT_ID["id"] is not None and chat_id == ADMIN_CHAT_ID["id"])
+            or (username and username.lower().lstrip("@") in ADMIN_USERNAMES)
+        )
     if is_admin_user:
         rows.append([KeyboardButton(text="👥 Userlar"), KeyboardButton(text="📖 Buyruqlar")])
         rows.append([KeyboardButton(text="🔐 Admin panel")])
@@ -3827,11 +4033,9 @@ def webapp_keyboard(chat_id=None, username=None):
 # ── BOT HANDLERS ────────────────────────────────────────────────────────────
 
 def fresh_webapp_url(chat_id=None):
+    # chat_id argumenti backward-compat uchun qoldirildi, lekin URL'ga qo'shilmaydi.
     sep = "&" if "?" in WEBAPP_URL else "?"
-    parts = [f"v={int(time.time())}"]
-    if chat_id is not None:
-        parts.append(f"user={chat_id}")
-    return f"{WEBAPP_URL}{sep}{'&'.join(parts)}"
+    return f"{WEBAPP_URL}{sep}v={int(time.time())}"
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3945,14 +4149,6 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ Web App dan ma'lumot xato keldi.")
 
 
-def _pop_translation_lang(user_id):
-    """=== [TARJIMA] Eski helper — source_lang ni qaytaradi va state'ni o'chiradi. ==="""
-    state = _pop_translation_state(user_id)
-    if state:
-        return state.get("source")
-    return None
-
-
 def _pop_translation_state(user_id):
     """=== [TARJIMA] User tarjima rejimida bo'lsa {source, target} qaytaradi. ===
     Backward compat: agar eski format (string) bo'lsa, target='uz' deb qaytariladi.
@@ -3964,16 +4160,6 @@ def _pop_translation_state(user_id):
             return val
         if isinstance(val, str):
             return {"source": val, "target": "uz"}
-    return None
-
-
-def _peek_translation_state(user_id):
-    """Holatni o'chirmasdan qaytaradi (faqat o'qish)."""
-    val = pending_translations.get(user_id)
-    if isinstance(val, dict):
-        return val
-    if isinstance(val, str):
-        return {"source": val, "target": "uz"}
     return None
 
 
@@ -4101,11 +4287,16 @@ async def balance_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     limit = get_user_limit_sec(user_id)
     rem = max(0, limit - used) / 60
     tariff = TARIFFS[get_user_tariff(user_id)]
-    bonus_min = get_user_bonus_min(user_id)
-    bonus_line = f"🎁 Bonus: +{bonus_min} daqiqa (do'st taklif)\n" if bonus_min > 0 else ""
+    carry_min = int(user_bonus_minutes.get(user_id, 0))
+    ref_min = int(user_referral_minutes.get(user_id, 0))
+    bonus_line = ""
+    if ref_min > 0:
+        bonus_line += f"🎁 Do'st taklif bonusi: +{ref_min} daqiqa\n"
+    if carry_min > 0:
+        bonus_line += f"🔄 Ko'chirilgan qoldiq: +{carry_min} daqiqa\n"
     await update.message.reply_text(
         f"📊 *Sizning hisobingiz*\n\n"
-        f"🌸 Tarif: *{tariff['name']}* ({tariff['minutes']} daqiqa/oy)\n"
+        f"🌸 Tarif: *{tariff['name']}* ({tariff['minutes']} daqiqa)\n"
         f"{bonus_line}"
         f"⏱ Ishlatilgan: {used/60:.1f} daqiqa\n"
         f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
@@ -4400,7 +4591,7 @@ async def admin_revoke_callback(update: Update, context: ContextTypes.DEFAULT_TY
         f"👤 {label}\n"
         f"🆔 `{target_id}`\n"
         f"❌ Eski: {old_tariff['name']}\n"
-        f"🌸 Yangi: Bepul (3 daq)\n"
+        f"🌸 Yangi: Bepul (5 daqiqa)\n"
         f"⏱ Daqiqalar tiklandi: 0",
         parse_mode="Markdown",
         reply_markup=InlineKeyboardMarkup(back),
@@ -4411,7 +4602,7 @@ async def admin_revoke_callback(update: Update, context: ContextTypes.DEFAULT_TY
             chat_id=target_id,
             text=(
                 "ℹ️ *Tarifingiz yangilandi*\n\n"
-                "Hozir 🌸 Bepul tarifdasiz (3 daqiqa/oy).\n"
+                "Hozir 🌸 Bepul tarifdasiz (5 daqiqa).\n"
                 "Yangi tarif olish: /tariflar"
             ),
             parse_mode="Markdown",
@@ -4549,7 +4740,7 @@ async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def revoke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Admin: /revoke <user_id> — foydalanuvchining tarifini bekor qilish.
-    Foydalanuvchi Bepul tarifga qaytariladi (3 daqiqa). Test uchun bergan tariflarni qaytarish uchun."""
+    Foydalanuvchi Bepul tarifga qaytariladi (5 daqiqa). Test uchun bergan tariflarni qaytarish uchun."""
     if not is_admin(update):
         await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
         return
@@ -4581,7 +4772,7 @@ async def revoke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 Foydalanuvchi: {safe_label}\n"
         f"🆔 ID: `{target_id}`\n"
         f"❌ Eski tarif: {old_tariff['name']} ({old_tariff['minutes']} daq)\n"
-        f"🌸 Yangi tarif: 🌸 Bepul (3 daq)\n"
+        f"🌸 Yangi tarif: 🌸 Bepul (5 daqiqa)\n"
         f"⏱ Ishlatilgan: 0 daqiqa (tiklandi)",
         parse_mode="Markdown"
     )
@@ -4591,7 +4782,7 @@ async def revoke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=target_id,
             text=(
                 "ℹ️ *Tarifingiz yangilandi*\n\n"
-                "Hozir 🌸 Bepul tarifdasiz (3 daqiqa/oy).\n"
+                "Hozir 🌸 Bepul tarifdasiz (5 daqiqa).\n"
                 "Yangi tarif olish uchun: /tariflar"
             ),
             parse_mode="Markdown"
@@ -4651,7 +4842,7 @@ async def user_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 Ism: *{fname_safe}*\n"
         f"📛 Username: @{uname_safe}\n"
         f"🌐 Til kodi: {lang_code}\n\n"
-        f"🌸 Tarif: *{tariff['name']}* ({tariff['minutes']} daqiqa/oy)\n"
+        f"🌸 Tarif: *{tariff['name']}* ({tariff['minutes']} daqiqa)\n"
         f"⏱ Ishlatilgan: *{used_sec/60:.1f} daqiqa*\n"
         f"📉 Qoldiq: *{max(0, tariff['minutes']*60 - used_sec)/60:.1f} daqiqa*\n\n"
         f"📅 Birinchi marta: {fs}\n"
@@ -4727,7 +4918,7 @@ async def tavsiya_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ref == user_id and invited in user_referral_claimed
     )
     bonus_earned = claimed_count * REFERRAL_BONUS_MIN
-    bonus_current = get_user_bonus_min(user_id)
+    bonus_current = int(user_referral_minutes.get(user_id, 0))
     remaining_slots = max(0, MAX_REFERRALS_PER_USER - claimed_count)
 
     text = (
@@ -4839,7 +5030,7 @@ async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = (
             f"💳 *To'lov*\n\n"
             f"🌸 Tarif: *{t['name']}*\n"
-            f"⏱ Limit: *{t['minutes']} daqiqa/oy* ({t['minutes']//60} soat)\n"
+            f"⏱ Limit: *{t['minutes']} daqiqa* ({t['minutes']//60} soat)\n"
             f"💰 To'lov miqdori: *{t['price']:,} so'm*\n\n"
             f"━━━━━━━━━━━━━━━━━\n"
             f"📋 *Karta raqami:*\n`{card}`\n"
@@ -4861,7 +5052,7 @@ async def buy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     payload = f"tariff:{tariff_key}:{user.id}"
     title = f"{t['name']} tarif"
     description = (
-        f"{t['minutes']} daqiqa/oy ({t['minutes']//60} soat) "
+        f"{t['minutes']} daqiqa ({t['minutes']//60} soat) "
         f"O'zbek tilida ovoz/videoni matnga aylantirish."
     )
     # Telegram Payments narxni eng kichik valyuta birligida kutadi.
@@ -4934,14 +5125,17 @@ async def successful_payment_handler(update: Update, context: ContextTypes.DEFAU
         logging.warning(f"Notanish tariff_key: {tariff_key}")
         return
 
-    _activate_tariff_with_carryover(target_id, tariff_key, source="telegram_pay")
+    # force=True — real to'lov HAR DOIM hisobga olinadi. Foydalanuvchi bir xil
+    # tarifni ketma-ket ikki marta sotib olsa, ikkalasi ham berilishi kerak.
+    # Takrorlanishni Telegram o'zi provider_payment_charge_id bilan kafolatlaydi.
+    _activate_tariff_with_carryover(target_id, tariff_key, source="telegram_pay", force=True)
     _save_user_data()
 
     t = TARIFFS[tariff_key]
     await update.message.reply_text(
         f"✅ *To'lov muvaffaqiyatli!*\n\n"
         f"🌸 Tarif: *{t['name']}*\n"
-        f"⏱ Limit: *{t['minutes']} daqiqa/oy* ({t['minutes']//60} soat)\n"
+        f"⏱ Limit: *{t['minutes']} daqiqa* ({t['minutes']//60} soat)\n"
         f"💰 To'langan: {sp.total_amount//100:,} {sp.currency}\n\n"
         f"Tarifingiz faollashdi. Endi audio yuborishingiz mumkin 🎙",
         parse_mode="Markdown"
@@ -5227,7 +5421,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👤 Foydalanuvchi: {username_safe}\n"
         f"🆔 ID: `{user.id}`\n"
         f"🌸 Tarif: *{tariff_name_safe}*\n"
-        f"⏱ Limit: {t['minutes']} daqiqa/oy\n"
+        f"⏱ Limit: {t['minutes']} daqiqa\n"
         f"💰 Miqdor: *{t['price']:,} so'm*"
     )
     keyboard = InlineKeyboardMarkup([
@@ -5253,7 +5447,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👤 Foydalanuvchi: {username_raw}\n"
                 f"🆔 ID: {user.id}\n"
                 f"🌸 Tarif: {t['name']}\n"
-                f"⏱ Limit: {t['minutes']} daqiqa/oy\n"
+                f"⏱ Limit: {t['minutes']} daqiqa\n"
                 f"💰 Miqdor: {t['price']:,} so'm"
             )
             await context.bot.send_photo(
@@ -5283,11 +5477,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def _is_admin_callback(query):
-    """Callback adminmi tekshirish."""
-    user = query.from_user
-    if user.username and user.username.lower() in ADMIN_USERNAMES:
+    """Callback adminmi tekshirish — is_admin bilan bir xil qoida."""
+    user = getattr(query, "from_user", None)
+    if _is_admin_user(user):
         return True
-    if ADMIN_CHAT_ID["id"] and user.id == ADMIN_CHAT_ID["id"]:
+    # ADMIN_USER_IDS sozlanmagan bo'lsa, saqlangan admin chat_id ham qabul qilinadi
+    if not ADMIN_USER_IDS and user and ADMIN_CHAT_ID["id"] and user.id == ADMIN_CHAT_ID["id"]:
         return True
     return False
 
@@ -5347,7 +5542,16 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
         return False
 
     if action == "approve":
-        _activate_tariff_with_carryover(target_id, tariff_key, source="approve")
+        carry = _activate_tariff_with_carryover(target_id, tariff_key, source="approve")
+        if carry is None:
+            # Takroriy bosish — tarif allaqachon berilgan, ikkinchi marta bermaymiz
+            await query.answer(
+                f"ℹ️ Bu tarif allaqachon berilgan ({t['name']}). "
+                f"Ikkinchi marta berilmadi.",
+                show_alert=True,
+            )
+            await _update_admin_message("\n\n↩️ *Takroriy bosish e'tiborsiz qoldirildi*")
+            return
         _save_user_data()
         await _send_backup_snapshot_to_admin(context.bot, source=f"approve {target_id}={tariff_key}")
         # Admin uchun aniq alert
@@ -5366,7 +5570,7 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
                 text=(
                     f"✅ *To'lovingiz tasdiqlandi!*\n\n"
                     f"🌸 Tarif: *{t['name']}*\n"
-                    f"⏱ Limit: *{t['minutes']} daqiqa/oy* ({t['minutes']//60} soat)\n\n"
+                    f"⏱ Limit: *{t['minutes']} daqiqa* ({t['minutes']//60} soat)\n\n"
                     f"Tarifingiz faollashdi. Endi audio yuborishingiz mumkin 🎙"
                 ),
                 parse_mode="Markdown"
@@ -5484,7 +5688,20 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     # Yangi tarif berilganda ishlatilganlar tiklanadi + qoldiq daqiqa ko'chiriladi
-    _activate_tariff_with_carryover(target_id, tariff_key, source="grant_cmd")
+    # `force` — ataylab qayta berish (deduplikatsiyani chetlab o'tish)
+    force = len(args) > 3 and args[3].lower() in ("force", "majburiy")
+    carry = _activate_tariff_with_carryover(
+        target_id, tariff_key, source="grant_cmd", force=force
+    )
+    if carry is None:
+        await update.message.reply_text(
+            f"ℹ️ Bu tarif shu foydalanuvchiga yaqinda ({GRANT_DEDUPE_WINDOW_SEC // 60} daqiqa "
+            f"ichida) allaqachon berilgan — takroriy berilmadi.\n\n"
+            f"Ataylab qayta bermoqchi bo'lsangiz:\n"
+            f"`/grant {target_id} {tariff_key} force`",
+            parse_mode="Markdown",
+        )
+        return
     _save_user_data()
     await _send_backup_snapshot_to_admin(context.bot, source=f"grant {target_id}={tariff_key}")
     t = TARIFFS[tariff_key]
@@ -5492,7 +5709,7 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ *Tarif berildi!*\n\n"
         f"👤 User ID: `{target_id}`\n"
         f"🌸 Tarif: {t['name']}\n"
-        f"⏱ Limit: {t['minutes']} daqiqa/oy\n"
+        f"⏱ Limit: {t['minutes']} daqiqa\n"
         f"💰 Narx: {t['price']:,} so'm\n\n"
         f"Limitlar tiklandi (0 dan boshlanadi).",
         parse_mode="Markdown"
@@ -5503,7 +5720,7 @@ async def grant_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=target_id,
             text=f"🎉 *Tabriklaymiz!*\n\n"
                  f"Sizga yangi tarif berildi: {t['name']}\n"
-                 f"⏱ Limit: {t['minutes']} daqiqa/oy\n\n"
+                 f"⏱ Limit: {t['minutes']} daqiqa\n\n"
                  f"Hisobingizni ko'rish: /balance",
             parse_mode="Markdown"
         )
@@ -5587,13 +5804,22 @@ async def restore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pending_translations.clear()
         last_transcripts.clear()
         user_bonus_minutes.clear()
+        user_referral_minutes.clear()
         user_referrals.clear()
         user_referral_claimed.clear()
         _load_user_data()
+
+        # MUHIM: tariff_log.jsonl append-only va get_user_tariff uni JSON'dan
+        # USTUN qo'yadi. Shuning uchun log'ga tegmasak, backup'dagi tarif darrov
+        # log tomonidan qayta yozilardi — ya'ni /restore tarifni pasaytira olmasdi.
+        # Backup holatini log'ga yakuniy yozuv sifatida qo'shamiz.
+        reconciled = _reconcile_tariff_log_with_memory(source="restore")
+
         await update.message.reply_text(
             f"✅ *Data tiklandi!*\n\n"
             f"👥 Userlar: *{len(user_uzbek_usage)}*\n"
-            f"💎 Paid: *{sum(1 for t in user_tariffs.values() if t != 'free')}*\n\n"
+            f"💎 Paid: *{sum(1 for t in user_tariffs.values() if t != 'free')}*\n"
+            f"🗂 Jurnal moslashtirildi: *{reconciled}* ta yozuv\n\n"
             f"Tekshirish: /stats",
             parse_mode="Markdown",
         )
@@ -5628,6 +5854,17 @@ async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• pending_payments: {len(pending_payments)} ta user",
         f"• admin_chat_id: {ADMIN_CHAT_ID['id']}",
         f"• payment_card: {card_status}",
+        f"• last_transcripts (RAM): {len(last_transcripts)} ta",
+        "",
+        "🚦 Navbat:",
+        f"• Ishlayapti: {_job_stats['running']} / {MAX_CONCURRENT_JOBS}",
+        f"• Kutmoqda: {_job_stats['queued']} / {MAX_QUEUED_JOBS}",
+        f"• Faol thread: {threading.active_count()}",
+        "",
+        "🔐 Sozlamalar:",
+        f"• ADMIN_USER_IDS: {sorted(ADMIN_USER_IDS) or 'sozlanmagan (username fallback!)'}",
+        "• Muxlisa bepulga: " + ("ha" if MUXLISA_FOR_FREE else "yo'q"),
+        f"• Max yuklama: {MAX_UPLOAD_MB} MB",
         "",
     ]
     if user_uzbek_usage:
@@ -5807,6 +6044,13 @@ async def process_pdf_to_voice(update, context, file_id):
             await msg.edit_text("❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).")
             return
 
+        # MUHIM: limit TTS'dan OLDIN — aks holda limitga sig'masa ham TTS
+        # xarajati sarflanardi.
+        if not is_admin(update):
+            if not await can_process_uzbek(update, estimate_tts_duration_sec(text)):
+                await msg.delete()
+                return
+
         tts_path = await asyncio.to_thread(make_tts, text)
         if not tts_path:
             await msg.edit_text("❌ Ovoz yaratib bo'lmadi.")
@@ -5895,7 +6139,12 @@ async def process_translation(update, context, file_path, duration_sec, source_l
             translated = original_text  # asl matnda qoldiramiz
             audio_lang = "uz"  # default TTS uchun (manba tilini bilmasak)
         else:
-            translated = await asyncio.to_thread(translate_with_claude, original_text, source_lang, None, target_lang)
+            lost_chunks = []
+            translated = await asyncio.to_thread(
+                translate_with_claude, original_text, source_lang, None, target_lang, lost_chunks
+            )
+            if lost_chunks:
+                await update.message.reply_text(_format_lost_chunks_text(lost_chunks))
             audio_lang = target_lang
         if not translated or not translated.strip():
             await msg.edit_text("❌ Tarjima bo'sh qaytdi.")
@@ -5906,10 +6155,12 @@ async def process_translation(update, context, file_path, duration_sec, source_l
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
         src_label = TRANSLATION_LANGS.get(source_lang, source_lang) if source_lang else "🌐 Avto"
         header = f"🌐 <b>Tarjima ({html.escape(src_label)} → {html.escape(tgt_label)}):</b>"
-        await asyncio.to_thread(_send_text_card, update.effective_user.id, translated, header)
+        delivered = await asyncio.to_thread(
+            _send_text_card, update.effective_user.id, translated, header
+        )
 
-        # 5) Tarif daqiqalari
-        if not is_admin(update) and actual_duration > 0:
+        # 5) Tarif daqiqalari — faqat natija yetkazilgan bo'lsa
+        if delivered and not is_admin(update) and actual_duration > 0:
             add_user_usage(update.effective_user.id, actual_duration * TRANSLATION_MULTIPLIER)
     except Exception as e:
         logging.error(f"Tarjima xato: {e}")
@@ -5935,9 +6186,11 @@ async def process_translation_from_file_id(update, context, file_id, suffix, dur
 async def text_to_voice(update, context, text):
     """Berilgan matnni ovozli MP3 ga aylantirib yuboradi.
     Tarif limiti qo'llanadi — natija audio davomiyligi ishlatilgan daqiqaga qo'shiladi."""
-    # Adminda limit yo'q
+    # Adminda limit yo'q. MUHIM: limit TTS'dan OLDIN tekshiriladi — aks holda
+    # daqiqasi tugagan foydalanuvchi cheksiz OpenAI TTS xarajati keltira olardi.
     if not is_admin(update):
-        if not await can_process_uzbek(update, 0):
+        estimated_sec = estimate_tts_duration_sec(text)
+        if not await can_process_uzbek(update, estimated_sec):
             return
 
     msg = await update.message.reply_text("🔊 Matn ovozga aylantirilmoqda...")
@@ -6523,26 +6776,15 @@ async def ai_tools_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.debug(f"Yopish xato: {e}")
         return
 
-    # PDF/TXT — matn kerak
+    # PDF/TXT — matn kerak. Matnlar faqat RAM'da (24 soat), bot qayta
+    # ishga tushsa yo'qoladi — bu normal, chunki natija allaqachon PDF
+    # ko'rinishida yuborilgan.
     record = last_transcripts.get(user_id)
-    # Fallback: agar memory'da yo'q bo'lsa, diskdan o'qib ko'ramiz
-    if not record or not record.get("text"):
-        try:
-            if os.path.exists(DATA_FILE):
-                with open(DATA_FILE, "r", encoding="utf-8") as f:
-                    disk_data = json.load(f)
-                disk_transcripts = disk_data.get("last_transcripts") or {}
-                disk_record = disk_transcripts.get(str(user_id))
-                if disk_record and disk_record.get("text"):
-                    record = disk_record
-                    last_transcripts[user_id] = disk_record
-                    logging.info(f"📂 last_transcripts diskdan tiklandi: user_id={user_id}")
-        except Exception as e:
-            logging.warning(f"last_transcripts disk fallback xato: {e}")
     if not record or not record.get("text"):
         await context.bot.send_message(
             chat_id=user_id,
-            text="⚠️ Saqlangan matn yo'q. Avval audio/video yuboring.",
+            text="⚠️ Saqlangan matn yo'q (24 soatdan oshgan bo'lishi mumkin).\n"
+                 "Iltimos audio/videoni qayta yuboring.",
         )
         return
     text = record["text"]
@@ -6574,17 +6816,41 @@ async def ai_tools_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ── HTTP API (WebApp uchun) ─────────────────────────────────────────────────
 
+def _tg_ok(resp, what=""):
+    """Telegram javobi haqiqatan muvaffaqiyatlimi. requests javobi HTTP 200
+    bo'lsa ham `ok:false` bo'lishi mumkin — ikkalasini ham tekshiramiz."""
+    if resp is None:
+        return False
+    try:
+        if resp.status_code != 200:
+            logging.error(f"Telegram {what} HTTP {resp.status_code}: {resp.text[:300]}")
+            return False
+        if not resp.json().get("ok"):
+            logging.error(f"Telegram {what} ok=false: {resp.text[:300]}")
+            return False
+        return True
+    except Exception as e:
+        logging.error(f"Telegram {what} javobini o'qib bo'lmadi: {e}")
+        return False
+
+
 def telegram_send_message(chat_id, text):
-    """Telegram API ga to'g'ridan to'g'ri HTTP — alohida loop'dan xavfsiz."""
+    """Telegram API ga to'g'ridan to'g'ri HTTP — alohida loop'dan xavfsiz.
+    Returns True — barcha bo'laklar yetkazilgan bo'lsa."""
     if not text:
-        return
+        return False
+    all_ok = True
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         for i in range(0, len(text), 4000):
             chunk = text[i:i+4000]
-            requests.post(url, data={"chat_id": chat_id, "text": chunk}, timeout=60)
+            resp = requests.post(url, data={"chat_id": chat_id, "text": chunk}, timeout=60)
+            if not _tg_ok(resp, "sendMessage"):
+                all_ok = False
     except Exception as e:
         logging.error(f"Telegram send error: {e}")
+        return False
+    return all_ok
 
 
 def _send_txt_file(user_id, text, filename="matn.txt"):
@@ -6761,6 +7027,7 @@ class ProgressIndicator:
 
 
 def telegram_send_document(chat_id, file_path, filename=None, caption=None):
+    """Returns True — hujjat haqiqatan yetkazilgan bo'lsa."""
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
         with open(file_path, 'rb') as f:
@@ -6768,9 +7035,11 @@ def telegram_send_document(chat_id, file_path, filename=None, caption=None):
             data = {"chat_id": chat_id}
             if caption:
                 data["caption"] = caption
-            requests.post(url, data=data, files=files, timeout=120)
+            resp = requests.post(url, data=data, files=files, timeout=120)
+        return _tg_ok(resp, "sendDocument")
     except Exception as e:
         logging.error(f"Telegram document send error: {e}")
+        return False
 
 
 def telegram_send_voice(chat_id, file_path, caption=None):
@@ -6802,10 +7071,7 @@ def telegram_send_voice(chat_id, file_path, caption=None):
                 if caption:
                     data["caption"] = caption
                 resp = requests.post(url, data=data, files=files, timeout=300)
-                if resp.status_code != 200:
-                    logging.error(f"Telegram sendAudio xato: {resp.status_code} — {resp.text[:200]}")
-                    return False
-                return True
+                return _tg_ok(resp, "sendAudio")
         # Kichik fayl uchun sendVoice
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendVoice"
         with open(file_path, 'rb') as f:
@@ -6816,13 +7082,26 @@ def telegram_send_voice(chat_id, file_path, caption=None):
             if caption:
                 data["caption"] = caption
             resp = requests.post(url, data=data, files=files, timeout=300)
-            if resp.status_code != 200:
-                logging.error(f"Telegram sendVoice xato: {resp.status_code} — {resp.text[:200]}")
-                return False
-        return True
+        return _tg_ok(resp, "sendVoice")
     except Exception as e:
         logging.error(f"Telegram voice/audio send error: {e}")
         return False
+
+
+def _unclear_marker_note(text):
+    """[?] belgilari bo'lsa, ular nimani anglatishini tushuntiruvchi qator.
+
+    Bot tushunmagan so'zni o'ylab topmaydi, [?] bilan belgilaydi — foydalanuvchi
+    qayerni asl audio bilan solishtirish kerakligini bilishi uchun."""
+    if not text:
+        return ""
+    count = text.count("[?]")
+    if not count:
+        return ""
+    return (
+        f"\n\n❓ Matnda {count} ta [?] belgisi bor — bu joylarni bot aniq "
+        f"eshitmadi va taxmin qilmadi. Iltimos asl audio bilan solishtiring."
+    )
 
 
 def _quick_quality_label(text):
@@ -6870,100 +7149,86 @@ def _send_quality_warning(user_id, text):
 def _send_text_card(user_id, text, header="📝 <b>Matn:</b>"):
     """Matnni 2 ta PDF (Lotin + Kirill) qilib avtomat yuborish.
     Audio transkripsiya VA PDF tarjima uchun ishlatiladi.
-    Sync — async kontekstda ham xavfsiz ishlaydi (requests orqali)."""
+    Sync — async kontekstda ham xavfsiz ishlaydi (requests orqali).
+
+    Returns True — natija haqiqatan yetkazilgan bo'lsa (billing shunga qarab)."""
     # Sifat tekshiruvi va ogohlantirish (faqat past sifat)
     _send_quality_warning(user_id, text)
+    return _send_text_and_pdf(user_id, text)
 
+
+def _send_pdf_variant(user_id, text, filename, caption, title=None):
+    """Bitta PDF yasab yuboradi. Returns True — faqat Telegram tasdiqlagan bo'lsa."""
+    pdf_path = None
     try:
-        last_transcripts[int(user_id)] = {"text": text, "ts": time.time()}
-        _save_user_data()  # deploy'larda yo'qolmasin
-    except Exception:
-        pass
-
-    # 2 PDF avtomat yuborish (klient talabi)
-    _send_text_and_pdf(user_id, text)
-    return
-
-    # ESKI KOD — saqlanyapti backward compat uchun (yetkilmaydi)
-    word_count = len(text.split())
-    char_count = len(text)
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    try:
-        requests.post(url, json={
-            "chat_id": user_id,
-            "text": (
-                f"✅ <b>Transkripsiya tayyor!</b>\n\n"
-                f"📊 {word_count:,} ta so'z • {char_count:,} ta belgi\n\n"
-                f"📥 Quyidagi tugmalardan yuklab oling:"
-            ),
-            "parse_mode": "HTML",
-        }, timeout=30)
+        pdf_path = make_pdf(text) if title is None else make_pdf(text, title=title)
     except Exception as e:
-        logging.error(f"Tayyor xabar yuborish xato: {e}")
+        logging.error(f"PDF yasashda xato ({filename}): {e}")
+        return False
+    try:
+        return telegram_send_document(user_id, pdf_path, filename=filename, caption=caption)
+    finally:
+        if pdf_path and os.path.exists(pdf_path):
+            try: os.remove(pdf_path)
+            except Exception: pass
 
 
 def _send_text_and_pdf(user_id, text):
-    """Yangi flow: 2 ta PDF avtomat yuboriladi (Lotin + Kirill).
-    TXT olib tashlandi (klient talabi).
+    """2 ta PDF yuboradi (Lotin + Kirill).
+
+    Returns True — kamida BITTA PDF haqiqatan yetkazilgan bo'lsa.
+    MUHIM: chaqiruvchi shu qiymatga qarab daqiqa yechadi. Ilgari bu funksiya
+    hamma xatoni yutib yuborardi va foydalanuvchi hech nima olmasa ham
+    daqiqasi yechilardi.
     text — Lotin alifbosida bo'lishi kutiladi."""
-    # Foydalanuvchini ogohlantirish (statistika)
     word_count = len(text.split())
     char_count = len(text)
-    url_msg = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    try:
-        requests.post(url_msg, json={
-            "chat_id": user_id,
-            "text": (
-                f"✅ <b>Transkripsiya tayyor!</b>\n\n"
-                f"📊 {word_count:,} ta so'z • {char_count:,} ta belgi\n\n"
-                f"📥 2 ta PDF yuboriladi (Lotin va Kirill)..."
-            ),
-            "parse_mode": "HTML",
-        }, timeout=30)
-    except Exception:
-        pass
+    telegram_send_message(
+        user_id,
+        f"✅ Transkripsiya tayyor!\n\n"
+        f"📊 {word_count:,} ta so'z • {char_count:,} ta belgi\n\n"
+        f"📥 2 ta PDF yuboriladi (Lotin va Kirill)..."
+        + _unclear_marker_note(text)
+    )
 
     # 1) Lotin PDF
-    try:
-        latin_pdf = make_pdf(text)
-        url_doc = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
-        with open(latin_pdf, "rb") as f:
-            files = {"document": ("mnsm-lotin.pdf", f, "application/pdf")}
-            requests.post(url_doc, data={"chat_id": user_id, "caption": "📄 Lotin alifbosida"}, files=files, timeout=120)
-        try: os.remove(latin_pdf)
-        except Exception: pass
-    except Exception as e:
-        logging.error(f"Lotin PDF xato: {e}")
+    latin_ok = _send_pdf_variant(
+        user_id, text, "mnsm-lotin.pdf", "📄 Lotin alifbosida"
+    )
+    if not latin_ok:
+        logging.error(f"Lotin PDF yetkazilmadi (user {user_id})")
 
     # 2) Kirill PDF
+    cyrillic_ok = False
     try:
-        requests.post(url_msg, json={
-            "chat_id": user_id,
-            "text": "🔤 Kirill PDF tayyorlanmoqda...",
-        }, timeout=30)
         cyrillic_text = convert_latin_to_cyrillic(text)
-        cyrillic_pdf = make_pdf(cyrillic_text, title="Audio & Konspekt — Кирилл")
-        with open(cyrillic_pdf, "rb") as f:
-            files = {"document": ("mnsm-kirill.pdf", f, "application/pdf")}
-            requests.post(url_doc, data={"chat_id": user_id, "caption": "📄 Кирилл алифбосида"}, files=files, timeout=120)
-        try: os.remove(cyrillic_pdf)
-        except Exception: pass
+        cyrillic_ok = _send_pdf_variant(
+            user_id, cyrillic_text, "mnsm-kirill.pdf", "📄 Кирилл алифбосида",
+            title="Audio & Konspekt — Кирилл",
+        )
     except Exception as e:
         logging.error(f"Kirill PDF xato: {e}")
-        try:
-            requests.post(url_msg, json={
-                "chat_id": user_id,
-                "text": "⚠️ Kirill PDF tayyorlashda muammo bo'ldi, Lotin PDF yuborildi."
-            }, timeout=30)
-        except Exception:
-            pass
+    if not cyrillic_ok:
+        telegram_send_message(
+            user_id, "⚠️ Kirill PDF tayyorlashda muammo bo'ldi."
+        )
 
-    # last_transcripts saqlash — kelajakda kerak bo'lsa
-    try:
-        last_transcripts[int(user_id)] = {"text": text, "ts": time.time()}
-        _save_user_data()
-    except Exception:
-        pass
+    # Hech qaysi PDF yetkazilmadi — matnni hech bo'lmaganda xabar sifatida beramiz.
+    # Shu ham yiqilsa, chaqiruvchi daqiqani yechmaydi.
+    if not latin_ok and not cyrillic_ok:
+        logging.error(f"⛔ Hech qanday PDF yetkazilmadi (user {user_id}) — matn bilan urinamiz")
+        fallback_ok = telegram_send_message(user_id, text)
+        if not fallback_ok:
+            telegram_send_message(
+                user_id,
+                "❌ Natijani yetkazib bo'lmadi (texnik nosozlik).\n\n"
+                "💚 Daqiqa hisobingizdan yechilmadi. Iltimos qayta urinib ko'ring."
+            )
+            return False
+
+    # Oxirgi matnni RAM'da eslab qolamiz (diskka yozilmaydi)
+    remember_transcript(user_id, text)
+    return True
 
 
 # ── HTTP/THREAD CONTEXT UCHUN LIMIT TEKSHIRUVI ─────────────────────────────
@@ -6971,8 +7236,15 @@ def _send_text_and_pdf(user_id, text):
 # Shu sababli user_id asosida ishlaydigan alohida limit funksiyasi kerak.
 
 def _is_admin_id(user_id):
-    """user_id admin chat ID ga teng bo'lsa admin."""
-    return ADMIN_CHAT_ID["id"] is not None and user_id == ADMIN_CHAT_ID["id"]
+    """user_id admin'ga tegishlimi (limit tekshiruvini chetlab o'tish uchun).
+    ADMIN_USER_IDS sozlangan bo'lsa faqat shu ro'yxat hisobga olinadi."""
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        return False
+    if ADMIN_USER_IDS:
+        return uid in ADMIN_USER_IDS
+    return ADMIN_CHAT_ID["id"] is not None and uid == ADMIN_CHAT_ID["id"]
 
 
 def check_limit_by_user_id(user_id, duration_seconds=0):
@@ -7035,6 +7307,12 @@ def process_pdf_for_user(user_id, pdf_path):
             )
             return
 
+        # MUHIM: limit TTS'dan OLDIN — aks holda limitga sig'masa ham
+        # OpenAI/Edge TTS xarajati sarflanardi (foydalanuvchidan yechilmasdi).
+        if not _is_admin_id(user_id):
+            if not check_limit_by_user_id(user_id, estimate_tts_duration_sec(text)):
+                return
+
         try:
             tts_path = make_tts(text)
         except Exception as e:
@@ -7060,8 +7338,14 @@ def process_pdf_for_user(user_id, pdf_path):
             if not check_limit_by_user_id(user_id, actual_duration):
                 return
 
-        telegram_send_voice(user_id, tts_path, caption="🔊 PDF ovoz shaklida")
-        success = True
+        # success FAQAT audio haqiqatan yetkazilgan bo'lsa True
+        success = telegram_send_voice(user_id, tts_path, caption="🔊 PDF ovoz shaklida")
+        if not success:
+            telegram_send_message(
+                user_id,
+                "❌ Audio yuborib bo'lmadi (fayl juda katta yoki tarmoq nosozligi).\n\n"
+                "💚 Daqiqa hisobingizdan yechilmadi."
+            )
 
         if success and not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration)
@@ -7141,8 +7425,8 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
                 if output_alphabet == "cyrillic":
                     telegram_send_message(user_id, "🔤 Matn Kirill alifbosiga o'tkazilmoqda...")
                     text = convert_latin_to_cyrillic(text)
-                _send_text_and_pdf(user_id, text)
-                success = True
+                # success FAQAT natija haqiqatan yetkazilgan bo'lsa True bo'ladi
+                success = _send_text_and_pdf(user_id, text)
         else:
             telegram_send_message(
                 user_id,
@@ -7160,6 +7444,8 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
             f"💚 Daqiqa hisobingizdan yechilmadi."
         )
     finally:
+        # MUHIM: belgini olib tashlash — aks holda user 30 daqiqaga bloklanib qoladi
+        _unmark_processing(user_id)
         typing.stop()
         if file_path and os.path.exists(file_path):
             try:
@@ -7219,8 +7505,13 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
             translated = original_text
         else:
             progress.set_text("Matn tarjima qilinmoqda...")
+            lost_chunks = []
             try:
-                translated = translate_with_claude(original_text, source_lang, None, target_lang)
+                translated = translate_with_claude(
+                    original_text, source_lang, None, target_lang, lost_chunks
+                )
+                if lost_chunks:
+                    telegram_send_message(user_id, _format_lost_chunks_text(lost_chunks))
             except Exception as e:
                 logging.error(f"GPT tarjima xato: {e}")
                 telegram_send_message(
@@ -7261,8 +7552,8 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
                 translated = convert_latin_to_cyrillic(translated)
                 tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
             header = f"🌐 <b>Tarjima ({html.escape(src_label)} → {html.escape(tgt_label)}):</b>"
-            _send_text_card(user_id, translated, header=header)
-            success = True
+            # success FAQAT natija haqiqatan yetkazilgan bo'lsa True
+            success = _send_text_card(user_id, translated, header=header)
 
         # 4) Tarif daqiqalari — faqat success va sifat OK bo'lsa
         if success and not _is_admin_id(user_id) and actual_duration > 0:
@@ -7333,10 +7624,15 @@ def process_pdf_audio_only(user_id, pdf_path, target_lang="uz"):
         else:
             # Tarjima kerak (ichida bo'ladi, lekin user matn ko'rmaydi)
             telegram_send_message(user_id, f"🔄 Matn {tgt_label} tiliga tarjima qilinmoqda...")
+            lost_chunks = []
             try:
                 logging.info(f"   → GPT tarjima: {detected} → {target_lang}")
-                translated = translate_with_claude(original_text, detected, None, target_lang)
+                translated = translate_with_claude(
+                    original_text, detected, None, target_lang, lost_chunks
+                )
                 logging.info(f"   ✅ Tarjima tayyor: {len(translated)} belgi")
+                if lost_chunks:
+                    telegram_send_message(user_id, _format_lost_chunks_text(lost_chunks))
             except Exception as e:
                 logging.error(f"PDF audio uchun tarjima xato: {e}")
                 telegram_send_message(
@@ -7436,11 +7732,14 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
                 return
         telegram_send_message(user_id, "⏳ Biroz kuting, PDF tarjima qilinmoqda...")
         # 3) GPT tarjima (agar source != target bo'lsa)
+        lost_chunks = []
         try:
-            if source_lang and source_lang != target_lang and source_lang != "":
-                translated = translate_with_claude(original_text, source_lang, None, target_lang)
-            else:
-                translated = translate_with_claude(original_text, "auto", None, target_lang)
+            src = source_lang if (source_lang and source_lang != target_lang) else "auto"
+            translated = translate_with_claude(
+                original_text, src, None, target_lang, lost_chunks
+            )
+            if lost_chunks:
+                telegram_send_message(user_id, _format_lost_chunks_text(lost_chunks))
         except Exception as e:
             logging.error(f"PDF GPT tarjima xato: {e}")
             telegram_send_message(
@@ -7463,8 +7762,8 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
             translated = convert_latin_to_cyrillic(translated)
             tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
         header = f"🌐 <b>PDF tarjima ({html.escape(tgt_label)}):</b>"
-        _send_text_card(user_id, translated, header=header)
-        success = True
+        # success FAQAT natija haqiqatan yetkazilgan bo'lsa True
+        success = _send_text_card(user_id, translated, header=header)
 
         # 5) Audio — endi avtomat YO'Q (klient talabi). Alohida xizmat sifatida bo'ladi keyin.
 
@@ -7549,8 +7848,13 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
         if target_lang == "auto":
             translated = original_text
         else:
+            lost_chunks = []
             try:
-                translated = translate_with_claude(original_text, source_lang, None, target_lang)
+                translated = translate_with_claude(
+                    original_text, source_lang, None, target_lang, lost_chunks
+                )
+                if lost_chunks:
+                    telegram_send_message(user_id, _format_lost_chunks_text(lost_chunks))
             except Exception as e:
                 logging.error(f"URL GPT tarjima xato: {e}")
                 telegram_send_message(
@@ -7574,8 +7878,8 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
             translated = convert_latin_to_cyrillic(translated)
             tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
         header = f"🌐 <b>Tarjima ({html.escape(src_label)} → {html.escape(tgt_label)}):</b>"
-        _send_text_card(user_id, translated, header=header)
-        success = True
+        # success FAQAT natija haqiqatan yetkazilgan bo'lsa True
+        success = _send_text_card(user_id, translated, header=header)
         # 6) Tarif daqiqalari — faqat success'da
         if success and not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration * TRANSLATION_MULTIPLIER)
@@ -7643,15 +7947,23 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
 
         if failed_ranges:
             _send_failed_ranges_notice(user_id, failed_ranges)
+        success = False
         if text and text.strip() != "Matn aniqlanmadi.":
+            # === [ALIFBO] Kirill faqat Pro tariflar uchun (boshqa oqimlar bilan bir xil) ===
+            output_alphabet = _enforce_alphabet_by_tariff(user_id, output_alphabet)
             if output_alphabet == "cyrillic":
                 telegram_send_message(user_id, "🔤 Matn Kirill alifbosiga o'tkazilmoqda...")
                 text = convert_latin_to_cyrillic(text)
-            _send_text_and_pdf(user_id, text)
+            success = _send_text_and_pdf(user_id, text)
         else:
-            telegram_send_message(user_id, "❌ Matn aniqlanmadi (audio sifati past bo'lishi mumkin).")
+            telegram_send_message(
+                user_id,
+                "❌ Matn aniqlanmadi (audio sifati past bo'lishi mumkin).\n\n"
+                "💚 Daqiqa hisobingizdan yechilmadi."
+            )
 
-        if not _is_admin_id(user_id) and actual_duration > 0:
+        # Faqat natija yetkazilgan bo'lsa daqiqa yechamiz
+        if success and not _is_admin_id(user_id) and actual_duration > 0:
             add_user_usage(user_id, actual_duration)
     except Exception as e:
         logging.error(f"process_url_for_user xato: {e}")
@@ -7662,11 +7974,168 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
             shutil.rmtree(os.path.dirname(audio_path), ignore_errors=True)
 
 
+# === [JOB QUEUE] Og'ir ishlarni cheklangan sonda bajarish =======================
+# Har WebApp so'rovi ilgari to'g'ridan-to'g'ri `threading.Thread(...).start()`
+# qilardi — cheklovsiz. Endi hamma og'ir ish shu navbatdan o'tadi.
+_job_semaphore = threading.Semaphore(MAX_CONCURRENT_JOBS)
+_job_counter_lock = threading.Lock()
+_job_stats = {"running": 0, "queued": 0}
+
+
+def _job_slots_info():
+    with _job_counter_lock:
+        return _job_stats["running"], _job_stats["queued"]
+
+
+def submit_job(user_id, target, args=(), label="ish", cleanup_path=None):
+    """Og'ir ishni navbatga qo'yadi. Returns True — qabul qilindi.
+
+    Navbat to'lib ketgan bo'lsa False qaytaradi va foydalanuvchiga xabar
+    yuboradi (jimgina yo'qotishdan ko'ra ochiq rad etish yaxshi).
+
+    cleanup_path — rad etilganda o'chiriladigan vaqtinchalik fayl. Odatda uni
+    ishning o'zi finally'da o'chiradi, lekin ish umuman boshlanmasa kim ham
+    o'chirmasdi.
+
+    MUHIM: bu funksiya aiohttp event loop thread'idan chaqiriladi, shuning uchun
+    ichida bloklaydigan I/O YO'Q — hisoblash tez, xabar yuborish esa alohida
+    thread'da."""
+    with _job_counter_lock:
+        if _job_stats["queued"] >= MAX_QUEUED_JOBS:
+            logging.warning(
+                f"🚦 Navbat to'la ({_job_stats['queued']}), rad etildi: "
+                f"user={user_id}, {label}"
+            )
+            if cleanup_path:
+                try: os.remove(cleanup_path)
+                except Exception: pass
+            threading.Thread(
+                target=telegram_send_message,
+                args=(user_id,
+                      "🚦 Hozir server juda band.\n\n"
+                      "Iltimos 5-10 daqiqadan keyin qayta yuboring.\n"
+                      "💚 Daqiqa hisobingizdan yechilmadi."),
+                daemon=True,
+            ).start()
+            return False
+        _job_stats["queued"] += 1
+
+    def _runner():
+        waited_notice_sent = False
+        # Slot bo'shashini kutamiz. Uzoq kutilsa foydalanuvchini ogohlantiramiz.
+        acquired = _job_semaphore.acquire(timeout=5)
+        if not acquired:
+            running, queued = _job_slots_info()
+            telegram_send_message(
+                user_id,
+                f"⏳ Navbatdasiz — hozir {running} ta fayl qayta ishlanmoqda.\n"
+                f"Sizniki avtomat boshlanadi, kutib turing."
+            )
+            waited_notice_sent = True
+            _job_semaphore.acquire()
+        with _job_counter_lock:
+            _job_stats["queued"] -= 1
+            _job_stats["running"] += 1
+        try:
+            if waited_notice_sent:
+                telegram_send_message(user_id, "▶️ Navbatingiz keldi, boshlandi...")
+            target(*args)
+        except Exception as e:
+            logging.error(f"Job xatosi ({label}, user={user_id}): {e}", exc_info=True)
+            telegram_send_message(
+                user_id,
+                f"❌ Kutilmagan xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+        finally:
+            with _job_counter_lock:
+                _job_stats["running"] -= 1
+            _job_semaphore.release()
+
+    threading.Thread(target=_runner, daemon=True, name=f"job-{label}-{user_id}").start()
+    return True
+# === [/JOB QUEUE] ==============================================================
+
+
+# === [WEBAPP AUTH] Telegram initData imzosini tekshirish ========================
+# MUHIM: user_id NI HECH QACHON klient tanasidan olmaymiz. Telegram WebApp
+# `initData` qatorini bot token bilan imzolaydi; imzoni serverda tekshirib,
+# user_id ni FAQAT imzolangan ma'lumotdan olamiz. Aks holda istalgan odam
+# boshqa foydalanuvchining daqiqalarini yoqib yuborishi mumkin edi.
+#
+# Algoritm (Telegram rasmiy hujjati):
+#   secret_key = HMAC_SHA256(key="WebAppData", msg=BOT_TOKEN)
+#   hash       = HMAC_SHA256(key=secret_key, msg=data_check_string)
+# data_check_string — `hash` va `signature` dan tashqari barcha maydonlar
+# "key=value" ko'rinishida, kalit bo'yicha saralanib "\n" bilan birlashtirilgan.
+
+INIT_DATA_MAX_AGE = 24 * 3600  # 24 soat — undan eski initData qabul qilinmaydi
+
+
+def _verify_init_data(init_data):
+    """initData qatorini tekshiradi. Returns: user_id (int) yoki None.
+
+    None qaytsa — imzo yaroqsiz, eskirgan yoki umuman yo'q."""
+    if not init_data or not isinstance(init_data, str):
+        return None
+    try:
+        # parse_qsl: qiymatlar avtomatik URL-decode qilinadi
+        pairs = urllib.parse.parse_qsl(init_data, keep_blank_values=True, strict_parsing=False)
+    except Exception:
+        return None
+    fields = dict(pairs)
+    received_hash = fields.pop("hash", "")
+    # `signature` (Telegram'ning yangi Ed25519 imzosi) data_check_string'ga kirmaydi
+    fields.pop("signature", None)
+    if not received_hash:
+        return None
+
+    data_check_string = "\n".join(f"{k}={fields[k]}" for k in sorted(fields))
+    secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+    expected_hash = hmac.new(
+        secret_key, data_check_string.encode(), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(expected_hash, received_hash):
+        logging.warning("🚫 WebApp initData imzosi mos kelmadi")
+        return None
+
+    # Eskirganini rad etamiz (replay himoyasi)
+    try:
+        auth_date = int(fields.get("auth_date", "0"))
+    except (TypeError, ValueError):
+        auth_date = 0
+    if auth_date <= 0 or (time.time() - auth_date) > INIT_DATA_MAX_AGE:
+        logging.warning(f"🚫 WebApp initData eskirgan (auth_date={auth_date})")
+        return None
+
+    try:
+        user_obj = json.loads(fields.get("user") or "{}")
+        user_id = int(user_obj.get("id"))
+    except Exception:
+        logging.warning("🚫 WebApp initData ichida user.id topilmadi")
+        return None
+    return user_id
+
+
+def _auth_error_response():
+    return web.json_response(
+        {"error": "auth", "message": (
+            "Foydalanuvchi tasdiqlanmadi. Iltimos botda /start yuboring va "
+            "Web ilovani tugma orqali qayta oching."
+        )},
+        status=401,
+        headers=cors_headers(),
+    )
+# === [/WEBAPP AUTH] ============================================================
+
+
 async def handle_webapp_audio(request):
     """WebApp mikrofon yozuvi (base64). === [TARJIMA] translation_lang qo'llab-quvvatlanadi ==="""
     try:
         data = await request.json()
-        user_id = data.get("user_id")
+        # === [WEBAPP AUTH] user_id faqat imzolangan initData'dan ===
+        user_id = _verify_init_data(data.get("init_data"))
+        if not user_id:
+            return _auth_error_response()
         audio_data = data.get("audio", "")
         format_hint = data.get("format", "audio/webm")
         language = (data.get("language") or "uz").lower()
@@ -7680,17 +8149,20 @@ async def handle_webapp_audio(request):
         target_lang = (data.get("target_lang") or "uz").lower()
         if target_lang not in TRANSLATION_TARGETS:
             target_lang = "uz"
-        if not user_id or not audio_data:
-            return web.json_response({"error": "user_id yoki audio yo'q"}, status=400, headers=cors_headers())
+        if not audio_data:
+            return web.json_response({"error": "audio yo'q"}, status=400, headers=cors_headers())
         ext = format_hint.split("/")[-1].split(";")[0] if "/" in format_hint else format_hint
         if not ext.startswith('.'):
             ext = '.' + ext
         tmp_path = save_base64_audio(audio_data, ext)
         # === [TARJIMA] Tarjima rejimi yoqilgan bo'lsa, thread'iga target_lang bilan uzatamiz ===
         if translation_lang:
-            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang), daemon=True).start()
+            submit_job(user_id, process_translation_for_user,
+                       (user_id, tmp_path, translation_lang, target_lang), label="tarjima",
+                       cleanup_path=tmp_path)
         else:
-            threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, language), daemon=True).start()
+            submit_job(user_id, process_audio_for_user,
+                       (user_id, tmp_path, language), label="audio", cleanup_path=tmp_path)
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP audio xatosi: {e}")
@@ -7705,6 +8177,7 @@ async def handle_webapp_upload(request):
         file_data = None
         file_name = None
         language = "uz"
+        init_data = ""  # === [WEBAPP AUTH] imzolangan Telegram ma'lumoti ===
         translation_lang = ""  # === [TARJIMA] source ===
         target_lang = "uz"      # === [TARJIMA] target — default uzbek ===
         pdf_audio_lang = ""     # === [PDF→MP3] alohida audio rejimi (faqat audio chiqsin) ===
@@ -7713,8 +8186,11 @@ async def handle_webapp_upload(request):
             part = await reader.next()
             if part is None:
                 break
-            if part.name == "user_id":
-                user_id = (await part.text()).strip()
+            if part.name == "init_data":
+                init_data = (await part.text()).strip()
+            elif part.name == "user_id":
+                # Klient yuborgan user_id E'TIBORGA OLINMAYDI (faqat initData ishonchli)
+                await part.text()
             elif part.name == "language":
                 lang_val = (await part.text()).strip().lower()
                 if lang_val in ("uz", "ru", "en"):
@@ -7736,35 +8212,69 @@ async def handle_webapp_upload(request):
                 if oa in ("latin", "cyrillic"):
                     output_alphabet = oa
             elif part.name == "file":
+                # === [WEBAPP AUTH] Faylni O'QIShDAN OLDIN imzoni tekshiramiz ===
+                # index.html init_data'ni fayldan oldin qo'shadi, shuning uchun
+                # bu yerga yetganda u allaqachon bizda bo'ladi.
+                user_id = _verify_init_data(init_data)
+                if not user_id:
+                    return _auth_error_response()
                 file_name = part.filename or "upload.bin"
-                file_data = await part.read()
-        if not user_id or not file_data:
-            return web.json_response({"error": "user_id yoki fayl yo'q"}, status=400, headers=cors_headers())
-        ext = os.path.splitext(file_name)[1].lower() or ".bin"
-        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-            tmp.write(file_data)
-            tmp_path = tmp.name
+                # Butun faylni RAM'ga o'qimaymiz — bo'lak-bo'lak diskka yozamiz.
+                # (512 MB'lik serverda 200 MB'lik video OOM qilardi.)
+                ext = os.path.splitext(file_name)[1].lower() or ".bin"
+                written = 0
+                too_big = False
+                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                    tmp_path = tmp.name
+                    while True:
+                        block = await part.read_chunk(256 * 1024)
+                        if not block:
+                            break
+                        written += len(block)
+                        if written > MAX_UPLOAD_BYTES:
+                            too_big = True
+                            break
+                        tmp.write(block)
+                if too_big or written == 0:
+                    try: os.remove(tmp_path)
+                    except Exception: pass
+                    if too_big:
+                        return web.json_response(
+                            {"error": "too_large",
+                             "message": f"Fayl juda katta (maksimum {MAX_UPLOAD_MB} MB). "
+                                        f"Iltimos videoni qismlarga bo'lib yuboring."},
+                            status=413, headers=cors_headers())
+                    return web.json_response({"error": "fayl bo'sh"}, status=400, headers=cors_headers())
+                file_data = True  # fayl diskda — pastdagi tekshiruv uchun belgi
+        if not user_id:
+            return _auth_error_response()
+        if not file_data:
+            return web.json_response({"error": "fayl yo'q"}, status=400, headers=cors_headers())
         # === [PDF → MP3] WebApp PDF flow — faqat audio chiqsin (matn yo'q) ===
         if ext == ".pdf" and pdf_audio_lang:
-            threading.Thread(
-                target=process_pdf_audio_only,
-                args=(int(user_id), tmp_path, pdf_audio_lang),
-                daemon=True,
-            ).start()
+            submit_job(user_id, process_pdf_audio_only,
+                       (user_id, tmp_path, pdf_audio_lang), label="pdf-mp3", cleanup_path=tmp_path)
         # === [TARJIMA] PDF + translation_lang -> PDF tarjima (har doim O'zbek tiliga) ===
         elif ext == ".pdf" and translation_lang:
             # PDF tarjima uchun target HAR DOIM O'zbek (klient talabi)
-            threading.Thread(target=process_pdf_translation_for_user, args=(int(user_id), tmp_path, translation_lang, "uz", output_alphabet), daemon=True).start()
+            submit_job(user_id, process_pdf_translation_for_user,
+                       (user_id, tmp_path, translation_lang, "uz", output_alphabet),
+                       label="pdf-tarjima", cleanup_path=tmp_path)
         # PDF tarjimasiz — oddiy PDF -> ovoz (default O'zbekcha)
         elif ext == ".pdf":
-            threading.Thread(target=process_pdf_for_user, args=(int(user_id), tmp_path), daemon=True).start()
+            submit_job(user_id, process_pdf_for_user, (user_id, tmp_path),
+                       label="pdf-audio", cleanup_path=tmp_path)
         # Audio/video + translation_lang -> tarjima (faqat source != target bo'lsa)
         elif translation_lang and translation_lang != target_lang:
-            threading.Thread(target=process_translation_for_user, args=(int(user_id), tmp_path, translation_lang, target_lang, output_alphabet), daemon=True).start()
+            submit_job(user_id, process_translation_for_user,
+                       (user_id, tmp_path, translation_lang, target_lang, output_alphabet),
+                       label="tarjima", cleanup_path=tmp_path)
         # Oddiy audio/video -> oddiy STT (source==target yoki til tanlanmagan)
         else:
             stt_lang = translation_lang if translation_lang else language
-            threading.Thread(target=process_audio_for_user, args=(int(user_id), tmp_path, stt_lang, output_alphabet), daemon=True).start()
+            submit_job(user_id, process_audio_for_user,
+                       (user_id, tmp_path, stt_lang, output_alphabet), label="audio",
+                       cleanup_path=tmp_path)
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP upload xatosi: {e}")
@@ -7775,9 +8285,13 @@ async def handle_webapp_url_post(request):
     """WebApp dan URL yuborish (YouTube/Instagram/TikTok). === [TARJIMA] translation_lang ==="""
     try:
         data = await request.json()
-        user_id = data.get("user_id")
-        url = (data.get("url") or "").strip()
-        url = extract_url(url) or url
+        # === [WEBAPP AUTH] user_id faqat imzolangan initData'dan ===
+        user_id = _verify_init_data(data.get("init_data"))
+        if not user_id:
+            return _auth_error_response()
+        # MUHIM: faqat http(s) havola. extract_url None qaytarsa — rad etamiz,
+        # aks holda yt-dlp'ga "--config-location=..." kabi qiymat o'tib ketardi.
+        url = extract_url((data.get("url") or "").strip())
         language = (data.get("language") or "uz").lower()
         if language not in ("uz", "ru", "en"):
             language = "uz"
@@ -7793,16 +8307,20 @@ async def handle_webapp_url_post(request):
         output_alphabet = (data.get("output_alphabet") or "latin").lower()
         if output_alphabet not in ("latin", "cyrillic"):
             output_alphabet = "latin"
-        if not user_id or not url:
-            return web.json_response({"error": "user_id yoki url yo'q"}, status=400, headers=cors_headers())
+        if not url:
+            return web.json_response(
+                {"error": "url", "message": "To'g'ri havola yuboring (http:// yoki https:// bilan)."},
+                status=400, headers=cors_headers())
         # === [TARJIMA] Tarjima rejimi (source + target) ===
         # MUHIM: agar source == target (masalan, Uz->Uz) tarjimasiz oddiy STT
         if translation_lang and translation_lang != target_lang:
-            threading.Thread(target=process_url_translation_for_user, args=(int(user_id), url, translation_lang, target_lang, output_alphabet), daemon=True).start()
+            submit_job(user_id, process_url_translation_for_user,
+                       (user_id, url, translation_lang, target_lang, output_alphabet), label="url-tarjima")
         else:
             # Oddiy transkripsiya — manba til tanlangan bo'lsa shuni ishlatamiz
             stt_lang = translation_lang if translation_lang else language
-            threading.Thread(target=process_url_for_user, args=(int(user_id), url, stt_lang, output_alphabet), daemon=True).start()
+            submit_job(user_id, process_url_for_user,
+                       (user_id, url, stt_lang, output_alphabet), label="url")
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP URL xatosi: {e}")
@@ -7839,7 +8357,8 @@ async def serve_static(request):
 
 
 async def run_http_server():
-    web_app = web.Application(client_max_size=1024 * 1024 * 1024)  # 1 GB
+    # client_max_size — MAX_UPLOAD_BYTES + multipart sarlavhalari uchun kichik zaxira
+    web_app = web.Application(client_max_size=MAX_UPLOAD_BYTES + 8 * 1024 * 1024)
     web_app.router.add_get('/', serve_index)
     web_app.router.add_get('/index.html', serve_index)
     web_app.router.add_get('/static/{name}', serve_static)
@@ -7869,88 +8388,6 @@ def run_http_server_thread():
         traceback.print_exc()
 
 
-def _restore_lost_paid_users():
-    """One-time migration: data yo'qolgandan keyin BARCHA 62 user'ni tiklash.
-    Eski /stats matnidan olingan ma'lumotlar.
-    Faqat ular hali yo'q bo'lsa qo'shiladi (mavjud data buzilmaydi).
-
-    XAVFSIZLIK: faqat BIR MARTA ishlaydi — marker fayl orqali. Aks holda
-    har deploy'da approve qilingan userlarning ishlatgan daqiqasi qaytariladi.
-    """
-    # Marker tekshirish — bir marta ishlagan bo'lsa, qayta ishlamaydi
-    marker_path = DATA_FILE + ".migration_done"
-    if os.path.exists(marker_path):
-        logging.info("✓ Restore migration allaqachon bajarilgan — o'tkazib yuborildi")
-        return
-    # 62 user — (user_id, "username yoki name", used_min, tariff_key)
-    known_users = [
-        (8128034276, "Ummu Soliha", 408.5, "free"),
-        (8744070680, "ummuufotimaaa", 82.5, "premium"),
-        (2074842922, "Azizov_AD", 6.7, "free"),
-        (837316593, "Xodima85", 4.1, "free"),
-        (171586747, "Aliii1977", 3.2, "free"),
-        (482400290, "SHoxbozbekOdilov", 2.8, "free"),
-        (985048091, "ergashe_v", 2.0, "free"),
-        (94184684, "Masuda", 1.3, "standart"),
-        (6287735049, "ZUXRO", 1.2, "free"),
-        (1839083776, "o1_abduvaliyevv", 0.4, "free"),
-        (567778494, "dildoraumar94", 0.1, "free"),
-        (1011932450, "Bashorat", 0.1, "free"),
-        (6614524874, "Ibodullayev_Asil", 0.0, "free"),
-        (7536418306, "Ibrahim", 0.0, "free"),
-        (5084286979, "Karimova Yulduz", 0.0, "free"),
-        (5164519813, "Mohira", 0.0, "free"),
-        (8501870982, "muminjonovae", 0.0, "free"),
-        (1212497543, "OUL2STAFF", 0.0, "free"),
-        (525382413, "Shahzodaxon_8888", 0.0, "free"),
-        (5773332244, "AishaZinnura", 0.0, "free"),
-        (8531498903, "User8531498903", 0.0, "free"),
-        (7288340503, "sev_sweets", 0.0, "free"),
-        (7627447834, "muminjonova19", 0.0, "free"),
-        (8477700124, "Bonaa_uz", 0.0, "free"),
-        (7845765277, "Nazokat_571", 0.0, "free"),
-        (563520535, "Khanafeeyya", 0.0, "free"),
-        (1217954204, "Dilbar Ibragimova", 0.0, "free"),
-        (87796772, "Shairapayzieva", 0.0, "free"),
-        (8407311144, "Humo2001", 0.0, "free"),
-        (190612268, "DILNOZA", 0.0, "free"),
-    ]
-    restored_paid = 0
-    restored_info = 0
-    now_ts = int(time.time())
-    for uid, name, used_min, tariff_key in known_users:
-        # Tarif tiklash (faqat yo'q bo'lsa)
-        if uid not in user_tariffs and tariff_key in TARIFFS and tariff_key != "free":
-            user_tariffs[uid] = tariff_key
-            user_uzbek_usage[uid] = 0
-            restored_paid += 1
-            logging.info(f"🔁 Tarif tiklandi: {uid} → {tariff_key}")
-        # User info tiklash (faqat yo'q bo'lsa)
-        if uid not in user_info:
-            user_info[uid] = {
-                "first_name": name,
-                "username": name if not name.startswith("U") else "",
-                "last_seen": now_ts,
-                "first_seen": now_ts,
-            }
-            restored_info += 1
-        # Usage tiklash — agar 0 bo'lsa (ma'lumotlar yo'qolgan)
-        if user_uzbek_usage.get(uid, 0) == 0 and used_min > 0:
-            user_uzbek_usage[uid] = int(used_min * 60)
-
-    if restored_paid > 0 or restored_info > 0:
-        _save_user_data()
-        logging.info(f"🔁 Tiklash tugadi: {restored_paid} tarif, {restored_info} user info")
-
-    # Marker fayl yaratish — qayta ishlamasligi uchun
-    try:
-        with open(marker_path, "w") as f:
-            f.write(f"done at {int(time.time())}")
-        logging.info(f"✓ Migration marker yaratildi: {marker_path}")
-    except Exception as e:
-        logging.warning(f"Marker yaratishda xato: {e}")
-
-
 def main():
     global bot_app
 
@@ -7963,25 +8400,11 @@ def main():
     except Exception as e:
         logging.error(f"❌ Tariff log replay xato: {e}")
 
-    # One-time: ma'lum yo'qolgan paid user'larni tiklash (faqat ular yo'q bo'lsa)
-    try:
-        _restore_lost_paid_users()
-    except Exception as e:
-        logging.warning(f"Auto-restore xato: {e}")
-
-    # ONE-TIME FIX (2026-05-17): Ummu Soliha (8128034276) — Pro Pro tasdiqlangan,
-    # ammo migration uning hisobini qaytarib qo'ydi. Tikla:
-    ummusoliha_fix_marker = DATA_FILE + ".ummusoliha_fix_done"
-    if not os.path.exists(ummusoliha_fix_marker):
-        try:
-            user_tariffs[8128034276] = "pro_max"
-            user_uzbek_usage[8128034276] = 0
-            _save_user_data()
-            with open(ummusoliha_fix_marker, "w") as f:
-                f.write(f"done at {int(time.time())}")
-            logging.info("✓ Ummu Soliha tariff fix: pro_max, usage=0")
-        except Exception as e:
-            logging.warning(f"Ummu Soliha fix xato: {e}")
+    # Eslatma: bu yerda ilgari 2026-05 dagi bir martalik migratsiyalar bor edi
+    # (30 ta foydalanuvchi tarifi/usage'i kodga qattiq yozilgan). Ular olib
+    # tashlandi — marker fayl volume bilan birga o'chsa MIGRATSIYA QAYTA
+    # ISHLAB, uch oylik eski usage qiymatlarini tiklab qo'yardi. Ma'lumot
+    # yo'qolsa endi /restore (Telegram'dagi backup fayl) ishlatiladi.
 
     # Admin user ID env'dan o'qib ADMIN_CHAT_ID ga yozamiz (admin /start kutmasdan ishlasin)
     if ADMIN_USER_ID:

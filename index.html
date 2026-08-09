@@ -1688,35 +1688,19 @@
   }
   setTimeout(animateCounters, 800);
 
-  function getTelegramUserId() {
-    if (tg) {
-      const id1 = tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id;
-      if (id1) return id1;
-      const initData = tg.initData || '';
-      if (initData) {
-        try {
-          const params = new URLSearchParams(initData);
-          const userStr = params.get('user');
-          if (userStr) {
-            const obj = JSON.parse(userStr);
-            if (obj && obj.id) return obj.id;
-          }
-        } catch (e) {}
-      }
-    }
-    try {
-      const urlParams = new URLSearchParams(window.location.search);
-      const userParam = urlParams.get('user');
-      if (userParam && /^\d+$/.test(userParam)) return parseInt(userParam, 10);
-    } catch (e) {}
-    return null;
+  // === [XAVFSIZLIK] Serverga FAQAT imzolangan initData yuboriladi.
+  // Ilgari user_id klientdan yuborilardi va server unga ishonardi — bu istalgan
+  // odamga boshqa foydalanuvchining daqiqalarini sarflash imkonini berardi.
+  // Endi server initData imzosini bot token bilan tekshirib, user_id ni o'zi oladi.
+  function getInitData() {
+    return (tg && tg.initData) || '';
   }
 
   function userIdMissingMessage() {
     const platform = (tg && tg.platform) || 'noma\'lum';
     const v = (tg && tg.version) || '?';
-    const hasInit = !!(tg && tg.initData);
-    return 'Foydalanuvchi ID olinmadi.\n\n' +
+    const hasInit = !!getInitData();
+    return 'Foydalanuvchi tasdiqlanmadi.\n\n' +
       'Iltimos botda /start yuboring va paydo bo\'lgan klaviatura tugmasi orqali Web ilovani qayta oching.\n\n' +
       '[debug: platform=' + platform + ', v=' + v + ', initData=' + (hasInit ? 'bor' : 'yo\'q') + ']';
   }
@@ -2056,10 +2040,10 @@
 
   function sendWebAppVoice(dataUrl) {
     showProcessing();
-    const userId = getTelegramUserId();
-    if (!tg || !userId) { hideProcessing(); showToast(userIdMissingMessage(), 'error', 8000); return; }
+    const initData = getInitData();
+    if (!initData) { hideProcessing(); showToast(userIdMissingMessage(), 'error', 8000); return; }
     const payload = {
-      user_id: userId, audio: dataUrl,
+      init_data: initData, audio: dataUrl,
       format: dataUrl.split(',')[0].split(':')[1].split(';')[0] || 'audio/webm',
       language: currentLang
     };
@@ -2073,7 +2057,7 @@
       body: JSON.stringify(payload)
     }).then(async r => {
       const json = await r.json();
-      if (!r.ok) throw new Error(json.error || 'Server xatosi');
+      if (!r.ok) throw new Error(json.message || json.error || 'Server xatosi');
       hideProcessing();
       showToast(t('t_voice_sent'), 'success');
       fireConfetti();
@@ -2351,17 +2335,17 @@
   }
 
   async function sendToBot(url) {
-    const userId = getTelegramUserId();
+    const initData = getInitData();
     if (currentType === 'youtube') {
       const link = url || document.getElementById('urlInput').value.trim();
       if (!link) { showToast(t('t_url_empty'), 'error'); return; }
       if (!/^https?:\/\//i.test(link)) { showToast(t('t_url_proto'), 'error'); return; }
       showProcessing();
       // Avval fetch — MenuButton va KeyboardButton orqali ochilsa ham ishlaydi
-      if (userId) {
+      if (initData) {
         try {
           // === [TARJIMA] Til tanlangan bo'lsa source+target qo'shamiz ===
-          const urlBody = { user_id: userId, url: link, language: currentLang };
+          const urlBody = { init_data: initData, url: link, language: currentLang };
           if (translateLang) {
             urlBody.translation_lang = translateLang;
             urlBody.target_lang = targetLang || 'uz';
@@ -2371,7 +2355,7 @@
             body: JSON.stringify(urlBody)
           });
           const json = await r.json();
-          if (!r.ok) throw new Error(json.error || 'Server xato');
+          if (!r.ok) throw new Error(json.message || json.error || 'Server xato');
           hideProcessing();
           showToast(t('t_url_sent'), 'success');
           fireConfetti();
@@ -2394,11 +2378,13 @@
       return;
     }
     if (!selectedFile) { showToast(t('t_no_file'), 'error'); return; }
-    if (!userId) { showToast(userIdMissingMessage(), 'error', 8000); return; }
+    if (!initData) { showToast(userIdMissingMessage(), 'error', 8000); return; }
     showProcessing();
     try {
       const fd = new FormData();
-      fd.append('user_id', String(userId));
+      // MUHIM: init_data BIRINCHI bo'lib qo'shiladi — server faylni o'qishdan
+      // oldin imzoni tekshiradi (tasdiqlanmagan yuklama diskka yozilmasin).
+      fd.append('init_data', initData);
       fd.append('language', currentLang);
       // === [TARJIMA] Natija doim O'zbek tilida — soddalashtirildi ===
       // Audio/video uchun source tanlanadi, target doim 'uz'
@@ -2431,7 +2417,7 @@
       fd.append('file', selectedFile, selectedFile.name);
       const r = await fetch(window.location.origin + '/upload', { method: 'POST', body: fd });
       const json = await r.json();
-      if (!r.ok) throw new Error(json.error || 'Server xato');
+      if (!r.ok) throw new Error(json.message || json.error || 'Server xato');
       hideProcessing();
       showToast(t('t_file_sent'), 'success');
       fireConfetti();

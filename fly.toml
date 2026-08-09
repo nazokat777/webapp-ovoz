@@ -17,4 +17,6 @@ primary_region = "fra"
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 512
+  # 512 MB kam edi: ffmpeg + bir vaqtda bir nechta ish uchun zaxira kerak.
+  # MAX_CONCURRENT_JOBS ni oshirsangiz, buni ham oshiring.
+  memory_mb = 1024

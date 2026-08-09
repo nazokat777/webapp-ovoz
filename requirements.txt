@@ -3,6 +3,5 @@ aiohttp>=3.9
 requests>=2.31
 fpdf2>=2.7
 edge-tts>=7.0
-SpeechRecognition>=3.10
 pypdf>=4.0
 yt-dlp>=2026.1.1
