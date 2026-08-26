@@ -1,27 +1,31 @@
-"""Deploy'dan keyingi JONLI tekshiruv — ishlab turgan serverga qarshi.
+"""Deploy tekshiruvi — build konfiguratsiyasi + ishlab turgan server.
 
-Foydalanish (lokal kompyuterdan):
+Foydalanish:
     python tools/live_check.py                      # default Railway URL
     python tools/live_check.py https://boshqa.url   # boshqa deploy
+    SKIP_PREFLIGHT=1 python tools/live_check.py     # faqat server tekshiruvi
 
-BOT_TOKEN env o'rnatilgan bo'lsa, Telegram API holati ham tekshiriladi
-(ixtiyoriy — tokensiz ham server tekshiruvlari ishlayveradi).
+BOT_TOKEN env bo'lsa, Telegram API holati ham tekshiriladi (ixtiyoriy).
 
-Hech narsani O'ZGARTIRMAYDI: faqat GET/POST o'qish so'rovlari; auth'siz
-POST'lar ataylab rad etilishi KUTILADI (himoya ishlayotganini isbotlaydi).
+Hech narsani O'ZGARTIRMAYDI: faqat o'qish so'rovlari. Auth'siz POST'lar
+ataylab rad etilishi KUTILADI — bu himoya ishlayotganini isbotlaydi.
 """
+import io
 import json
 import os
 import sys
-import urllib.request
 import urllib.error
+import urllib.parse
+import urllib.request
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 except Exception:
     pass
 
-BASE = (sys.argv[1] if len(sys.argv) > 1 else "https://webapp-ovoz-production.up.railway.app").rstrip("/")
+BASE = (sys.argv[1] if len(sys.argv) > 1
+        else "https://webapp-ovoz-production.up.railway.app").rstrip("/")
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ok = fail = 0
 
 
@@ -35,11 +39,12 @@ def check(name, cond, extra=""):
         print(f"  FAIL  {name}  {extra}")
 
 
-def req(method, path, body=None, headers=None, base=None):
+def req(method, path, body=None, base=None):
     url = (base or BASE) + path
     data = json.dumps(body).encode() if body is not None else None
-    r = urllib.request.Request(url, data=data, method=method,
-                               headers={"Content-Type": "application/json", **(headers or {})})
+    r = urllib.request.Request(
+        url, data=data, method=method,
+        headers={"Content-Type": "application/json", "User-Agent": "live-check"})
     try:
         with urllib.request.urlopen(r, timeout=30) as resp:
             return resp.status, resp.read().decode("utf-8", "replace")
@@ -49,47 +54,141 @@ def req(method, path, body=None, headers=None, base=None):
         return None, str(e)
 
 
-print(f"Server: {BASE}\n")
+def _vtuple(v):
+    out = []
+    for part in v.split("."):
+        num = ""
+        for ch in part:
+            if ch.isdigit():
+                num += ch
+            else:
+                break
+        out.append(int(num) if num else 0)
+    return tuple(out)
+
+
+def preflight():
+    """Build UMUMAN muvaffaqiyatli bo'la oladimi.
+
+    Yiqilgan build = deployment yo'q = Railway 'Application not found'.
+    Shuning uchun bu tekshiruv serverdan OLDIN turadi: agar bu yerda xato
+    bo'lsa, server tekshiruvlarining yiqilishi tabiiy."""
+    print("[0] Build konfiguratsiyasi")
+    try:
+        reqs = [l.strip() for l in io.open(os.path.join(ROOT, "requirements.txt"),
+                                          encoding="utf-8") if l.strip()]
+    except Exception as e:
+        check("requirements.txt o'qildi", False, str(e))
+        reqs = []
+    for line in reqs:
+        if ">=" in line:
+            name, want = line.split(">=", 1)
+        else:
+            name, want = line, None
+        name = name.strip()
+        st, body = req("GET", f"/pypi/{urllib.parse.quote(name)}/json",
+                       base="https://pypi.org")
+        if st != 200:
+            check(f"pip: {name}", False, "PyPI'da topilmadi -> BUILD YIQILADI")
+            continue
+        cur = json.loads(body)["info"]["version"]
+        good = (not want) or _vtuple(cur) >= _vtuple(want.strip())
+        check(f"pip: {line}", good, f"PyPI'dagi eng yangisi {cur} -> BUILD YIQILADI")
+
+    # Dockerfile'dagi apt paketlari (RUN apt-get install bloki)
+    try:
+        lines = io.open(os.path.join(ROOT, "Dockerfile"), encoding="utf-8").read().splitlines()
+    except Exception:
+        lines = []
+    pkgs, inside = [], False
+    for ln in lines:
+        t = ln.strip()
+        if t.startswith("RUN apt-get"):
+            inside = True
+            continue
+        if inside:
+            cand = t.rstrip("\\").strip()
+            if not cand or cand.startswith("#"):
+                continue
+            if cand.startswith("&&") or cand.startswith("RUN "):
+                inside = False
+                continue
+            if all(c.isalnum() or c in "-.+" for c in cand):
+                pkgs.append(cand)
+            if not ln.rstrip().endswith("\\"):
+                inside = False
+    for pkg in pkgs:
+        st, _ = req("GET", f"/bookworm/{pkg}", base="https://packages.debian.org")
+        check(f"apt: {pkg}", st == 200, "Debian bookworm'da yo'q -> BUILD YIQILADI")
+
+
+if os.getenv("SKIP_PREFLIGHT", "").strip().lower() not in ("1", "true", "yes"):
+    preflight()
+    print()
+
+print(f"Server: {BASE}")
+print()
 
 print("[1] WebApp sahifasi")
-st, body = req("GET", "/")
-check("GET / -> 200", st == 200, f"status={st}")
-check("index.html yetkazildi", st == 200 and "initData" in body,
+st_root, body_root = req("GET", "/")
+check("GET / -> 200", st_root == 200, f"status={st_root}")
+check("index.html yetkazildi", st_root == 200 and "initData" in (body_root or ""),
       "sahifada initData ishlovi topilmadi")
 
-print("\n[2] HMAC-auth himoyasi (rad etilishi KUTILADI)")
+print()
+print("[2] HMAC-auth himoyasi (rad etilishi KUTILADI)")
 st, body = req("POST", "/url", {"url": "https://youtu.be/x", "init_data": "soxta"})
-check("soxta initData bilan /url -> 401", st == 401, f"status={st} body={body[:120]}")
-st, body = req("POST", "/audio", {"audio": "AAAA", "init_data": ""})
+check("soxta initData bilan /url -> 401", st == 401, f"status={st} {body[:90]}")
+st, _ = req("POST", "/audio", {"audio": "AAAA", "init_data": ""})
 check("initData'siz /audio -> 401", st == 401, f"status={st}")
-st, body = req("POST", "/url", {"url": "https://youtu.be/x", "user_id": 123})
+st, _ = req("POST", "/url", {"url": "https://youtu.be/x", "user_id": 123})
 check("eski uslub (user_id) ham rad -> 401", st == 401,
-      f"status={st}  !!! 401 emas = HIMOYA ISHLAMAYAPTI, darhol tekshiring")
+      f"status={st}  (agar server tirik bo'lsa-yu 401 kelmasa — DARHOL tekshiring)")
 
-print("\n[3] Statik xizmat chegaralari")
+print()
+print("[3] Statik xizmat")
 st, _ = req("GET", "/../bot.py")
-check("path traversal yopiq", st in (403, 404, 400), f"status={st}")
+check("path traversal yopiq", st in (400, 403, 404, 405), f"status={st}")
+st, b = req("GET", "/bot.py")
+check("manba kod berilmaydi", "BOT_TOKEN" not in (b or ""), "KOD OSHKOR BO'LDI!")
 st, _ = req("GET", "/logo.png")
 check("ruxsatli statik fayl ochiq", st == 200, f"status={st}")
 
 token = os.getenv("BOT_TOKEN", "").strip()
+print()
 if token:
-    print("\n[4] Telegram API (BOT_TOKEN env orqali)")
+    print("[4] Telegram API (BOT_TOKEN env orqali)")
     api = f"https://api.telegram.org/bot{token}"
     st, body = req("GET", "/getMe", base=api)
-    okj = st == 200 and json.loads(body).get("ok")
-    check("getMe ishlaydi (token amal qiladi)", bool(okj), f"status={st}")
-    if okj:
+    good = st == 200 and json.loads(body).get("ok")
+    check("getMe ishlaydi (token amal qiladi)", bool(good), f"status={st}")
+    if good:
         print("        bot: @" + json.loads(body)["result"].get("username", "?"))
     st, body = req("GET", "/getWebhookInfo", base=api)
     if st == 200:
-        url = json.loads(body).get("result", {}).get("url", "")
-        check("webhook YO'Q (polling rejimi)", url == "",
-              f"webhook o'rnatilgan: {url} — polling bilan to'qnashadi!")
+        wh = json.loads(body).get("result", {}).get("url", "")
+        check("webhook YO'Q (polling rejimi)", wh == "",
+              f"webhook o'rnatilgan: {wh} — polling bilan to'qnashadi!")
 else:
-    print("\n[4] BOT_TOKEN env yo'q — Telegram API tekshiruvi o'tkazib yuborildi")
-    print("    (xohlasangiz: set BOT_TOKEN=... && python tools/live_check.py)")
+    print("[4] BOT_TOKEN env yo'q — Telegram API tekshiruvi o'tkazib yuborildi")
 
-print(f"\n{'='*46}")
+if st_root == 404 and "Application not found" in (body_root or ""):
+    print()
+    print("!" * 62)
+    print("TASHXIS: Railway domeni faol deployment'ga bog'lanmagan.")
+    print("Bu BOT xatosi EMAS — Railway edge javobi (kod hatto ishga tushmagan).")
+    print("Sabablari, ehtimollik bo'yicha:")
+    print("  1) BOT_TOKEN env yo'q -> bot startup'da ATAYLAB to'xtaydi")
+    print("     Railway -> Variables -> BOT_TOKEN qo'shing -> Redeploy")
+    print("  2) Servis o'chirilgan, nomi yoki domeni o'zgargan")
+    print("  3) Railway hisobi / billing to'xtatilgan")
+    print("Qadam: Railway -> Deployments -> oxirgi deploy LOGI'ni o'qing.")
+    if not fail or True:
+        print("Yuqoridagi [0] build konfiguratsiyasi toza bo'lsa — muammo koddan")
+        print("tashqarida (env yoki hisob darajasida).")
+    print("!" * 62)
+
+print()
+print("=" * 46)
 print(("✅ Hammasi joyida" if not fail else f"❌ {fail} ta muammo") + f"  ({ok} pass)")
 sys.exit(1 if fail else 0)
