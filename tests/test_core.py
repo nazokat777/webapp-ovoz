@@ -138,10 +138,29 @@ bot.MUXLISA_KEY = ""
 bot.PAYMENT_CARD = ""
 bot.runtime_settings["payment_card"] = ""
 os.environ.pop("OPENAI_API_KEY", None)
+# HAMMA AI kalitini olib tashlaymiz: endi OpenAI yagona variant emas —
+# Groq/Gemini uni almashtira oladi, shuning uchun "OPENAI yo'q" o'zi
+# jiddiy xato EMAS. Jiddiy xato — birorta ham provayder qolmagani.
+for _k in ("GROQ_API_KEY", "GEMINI_API_KEY"):
+    os.environ.pop(_k, None)
+_eski_g, _eski_m = bot.GROQ_API_KEY, bot.GEMINI_API_KEY
+_eski_o = bot.OPENAI_API_KEY
+bot.GROQ_API_KEY = bot.GEMINI_API_KEY = bot.OPENAI_API_KEY = ""
 warns = bot._startup_config_audit()
 levels = {lv for lv, _ in warns}
 msgs = " | ".join(m for _, m in warns)
-check("OPENAI yo'qligi CRITICAL", any(lv == "critical" and "OPENAI" in m for lv, m in warns), msgs[:150])
+check("birorta STT provayderi yo'qligi CRITICAL",
+      any(lv == "critical" and "STT" in m for lv, m in warns), msgs[:180])
+check("birorta matn modeli yo'qligi CRITICAL",
+      any(lv == "critical" and "Matn modeli" in m for lv, m in warns), msgs[:180])
+# Groq bo'lsa — OpenAI yo'qligi endi faqat ogohlantirish
+bot.GROQ_API_KEY = "gsk_sinov"
+_w2 = bot._startup_config_audit()
+check("Groq bor bo'lsa OPENAI yo'qligi CRITICAL EMAS",
+      not any(lv == "critical" and "OPENAI" in m for lv, m in _w2),
+      " | ".join(m for lv, m in _w2 if lv == "critical")[:150])
+bot.GROQ_API_KEY, bot.GEMINI_API_KEY = _eski_g, _eski_m
+bot.OPENAI_API_KEY = _eski_o
 check("ADMIN yo'qligi ogohlantiriladi", "ADMIN_USER_ID" in msgs)
 check("MUXLISA yo'qligi ogohlantiriladi", "MUXLISA_KEY" in msgs)
 check("karta yo'qligi ogohlantiriladi", "karta" in msgs.lower())

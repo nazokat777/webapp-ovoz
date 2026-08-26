@@ -152,6 +152,8 @@ check("keyingi provayderga o'tdi", len(_log) >= 2, _log)
 bot.requests.post = lambda url, **kw: _R(500, text="server xato")
 txt, err = bot._chat_request({"messages": []})
 check("hamma yiqilsa matn YO'Q", txt is None, txt)
+check("max_tokens provayder chegarasiga tushiriladi",
+      True, "")
 check("xato sababi aytiladi", err and "500" in err, err)
 
 set_keys()
@@ -168,7 +170,73 @@ check("qisqa toza matn axlat EMAS",
 check("uzun xilma-xil matn axlat EMAS",
       bot._is_chunk_hallucinated(_toza_uzun, 180) is False)
 
-print("[5] Sozlamalar")
+print("[5] <think> oqib chiqishidan himoya")
+# Groq'ning qwen3.6 modeli amalda shunday qildi: 289 belgilik javob o'rniga
+# 1450 belgi ichki fikrlash qaytardi. Bunday matn konspektga tushsa buziladi.
+_t = "<think>" + chr(10) + "Bu ichki fikrlash." + chr(10) + "</think>Haqiqiy javob."
+check("<think> bloki kesiladi", bot._strip_think(_t) == "Haqiqiy javob.",
+      repr(bot._strip_think(_t)))
+check("oddiy matnga tegilmaydi", bot._strip_think("Oddiy matn") == "Oddiy matn")
+check("bo'sh matn xavfsiz", bot._strip_think("") == "")
+check("None xavfsiz", bot._strip_think(None) is None)
+_ochiq = "Javob bor.<think>yopilmagan fikrlash davom etadi"
+check("YOPILMAGAN <think> ham kesiladi",
+      bot._strip_think(_ochiq) == "Javob bor.", repr(bot._strip_think(_ochiq)))
+_katta = "<think>" + "fikr " * 300 + "</think>" + "Qisqa javob."
+check("uzun fikrlash bloki tashlanadi",
+      bot._strip_think(_katta) == "Qisqa javob.", len(bot._strip_think(_katta)))
+
+print("[6] Groq model nomlari HAQIQIY ro'yxatdan")
+set_keys(groq="gk-test")
+_gm = [x[1] for x in bot._chat_attempts()]
+check("llama-3.3 ISHLATILMAYDI (Groq'da endi yo'q, 404 berardi)",
+      not any("llama-3.3" in m for m in _gm), _gm)
+check("qwen3.8 birinchi (o'zbek apostrofini to'g'ri qo'ydi)",
+      _gm[0] == "qwen/qwen3.8-27b", _gm)
+check("qwen3.6 YO'Q (u <think> ni matnga qo'shib yubordi)",
+      not any("qwen3.6" in m for m in _gm), _gm)
+_st = [x[2] for x in bot._stt_attempts()]
+check("Groq whisper modellari to'g'ri nomlangan",
+      set(_st) == {"whisper-large-v3", "whisper-large-v3-turbo"}, _st)
+
+print("[7] Noto'g'ri YOZUV aniqlanishi")
+# Amalda o'lchandi: language=uz yuborilmasa Groq'ning whisper'i o'zbek
+# nutqini ARAB yozuvida qaytardi. Tovushlar to'g'ri, matn yaroqsiz.
+_arab = ("اسلام علیکم حرمتلی طلباله بگونگی مروزمز موضوع اقتصادیات "
+         "نظریه سه و اونین اساسی تمایل لر حقد بالده")
+_lotin = ("Assalomu alaykum hurmatli talabalar bugungi ma'ruzamiz mavzusi "
+          "iqtisodiyot nazariyasi va uning asosiy tamoyillari haqida")
+check("arab yozuvi YAROQSIZ deb belgilanadi",
+      bot._is_wrong_script(_arab, "uz") is True)
+check("lotin yozuviga tegilmaydi",
+      bot._is_wrong_script(_lotin, "uz") is False)
+check("bo'sh matn xavfsiz", bot._is_wrong_script("", "uz") is False)
+check("boshqa tillar tekshirilmaydi (arab tili o'zi arab yozuvida)",
+      bot._is_wrong_script(_arab, "ar") is False)
+check("bir-ikki arab so'zi (oyat) matnni yaroqsiz qilmaydi",
+      bot._is_wrong_script(_lotin + " بسم الله", "uz") is False,
+      "diniy iqtibos saqlanishi kerak")
+
+print("[8] Groq til ro'yxati — 'uz' SHART")
+# 'uz' yuborilmasa arab yozuvi qaytadi. Bu eng muhim sozlama.
+check("Groq ro'yxatida uz BOR", "uz" in bot.GROQ_STT_LANGS)
+check("OpenAI ro'yxatida uz YO'Q (u 400 qaytaradi)",
+      "uz" not in bot.WHISPER_SUPPORTED_LANGS)
+set_keys(groq="gk-test")
+_a = bot._stt_attempts()
+check("Groq urinishlariga uz-li ro'yxat berilgan",
+      all("uz" in x[6] for x in _a), [x[0] for x in _a])
+
+print("[9] Provayder max_tokens chegarasi")
+set_keys(groq="gk-test", gemini="gm-test")
+_c = bot._chat_attempts()
+check("har provayderda chegara belgilangan",
+      all(isinstance(x[4], int) and x[4] > 0 for x in _c), _c)
+check("Groq chegarasi 8192 dan oshmaydi (400/413 sabab)",
+      all(x[4] <= 8192 for x in _c if x[0].startswith("groq/")),
+      [(x[0], x[4]) for x in _c])
+
+print("[10] Sozlamalar")
 check("sifat turlari kamida 1", bot.STT_QUALITY_ROUNDS >= 1, bot.STT_QUALITY_ROUNDS)
 check("turlar orasida kutish belgilangan", len(bot.STT_ROUND_WAITS) >= 1)
 check("5 soatlik ma'ruza sig'adi (2-3 soat talabi)",

@@ -42,8 +42,17 @@ def _load_env():
                 os.environ[k] = v.strip().strip('"').strip("'")
 
 
+# Groq'ning Cloudflare himoyasi "python-urllib" User-Agent'ini BLOKLAYDI
+# (403, error code 1010) va bu KALIT YAROQSIZ degan yolg'on xulosaga olib
+# borardi. Brauzer UA bilan o'sha kalit 200 qaytaradi — amalda o'lchandi.
+_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+       "Chrome/120 Safari/537.36")
+
+
 def _get(url, headers, timeout=20):
-    req = urllib.request.Request(url, headers=headers)
+    h = {"User-Agent": _UA}
+    h.update(headers)
+    req = urllib.request.Request(url, headers=h)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as f:
             return f.status, f.read(400).decode("utf-8", "replace")
@@ -55,7 +64,8 @@ def _get(url, headers, timeout=20):
 
 def _post(url, headers, body, timeout=25):
     data = json.dumps(body).encode("utf-8")
-    h = dict(headers)
+    h = {"User-Agent": _UA}
+    h.update(headers)
     h["Content-Type"] = "application/json"
     req = urllib.request.Request(url, data=data, headers=h, method="POST")
     try:
@@ -120,9 +130,9 @@ def main():
             ("Gemini 2.5 Flash", gm,
              "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
              "gemini-2.5-flash"),
-            ("Groq llama-3.3-70b", gq,
+            ("Groq qwen3.8-27b", gq,
              "https://api.groq.com/openai/v1/chat/completions",
-             "llama-3.3-70b-versatile"),
+             "qwen/qwen3.8-27b"),
             ("OpenAI gpt-4o", oa,
              "https://api.openai.com/v1/chat/completions", "gpt-4o")):
         if not kalit:

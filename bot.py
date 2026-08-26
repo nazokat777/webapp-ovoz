@@ -258,7 +258,7 @@ def _bearer(key):
 def _stt_attempts():
     """Bo'lakni transkripsiya qilish urinishlari — SIFAT tartibida.
 
-    Har element: (nom, kind, model, url, headers, timestamps)
+    Har element: (nom, kind, model, url, headers, timestamps, langs)
       kind="chat_audio" — audio base64 bilan /chat/completions (faqat OpenAI)
       kind="form"       — multipart /audio/transcriptions (OpenAI va Groq)
       timestamps        — verbose_json + segment vaqt belgilari so'ralsinmi
@@ -275,25 +275,30 @@ def _stt_attempts():
     out = []
     if oa:
         out.append(("gpt-audio", "chat_audio", "gpt-audio",
-                    OPENAI_CHAT_URL, _bearer(oa), False))
+                    OPENAI_CHAT_URL, _bearer(oa), False, WHISPER_SUPPORTED_LANGS))
     if gq:
         out.append(("groq/whisper-large-v3", "form", "whisper-large-v3",
-                    GROQ_STT_URL, _bearer(gq), True))
+                    GROQ_STT_URL, _bearer(gq), True, GROQ_STT_LANGS))
     if oa:
         out.append(("whisper-1", "form", "whisper-1",
-                    OPENAI_STT_URL, _bearer(oa), True))
+                    OPENAI_STT_URL, _bearer(oa), True, WHISPER_SUPPORTED_LANGS))
         out.append(("gpt-4o-transcribe", "form", "gpt-4o-transcribe",
-                    OPENAI_STT_URL, _bearer(oa), False))
+                    OPENAI_STT_URL, _bearer(oa), False, WHISPER_SUPPORTED_LANGS))
     if gq:
         out.append(("groq/whisper-large-v3-turbo", "form", "whisper-large-v3-turbo",
-                    GROQ_STT_URL, _bearer(gq), False))
+                    GROQ_STT_URL, _bearer(gq), False, GROQ_STT_LANGS))
     return out
 
 
 def _chat_attempts():
     """Matn modeli urinishlari — SIFAT tartibida.
 
-    Har element: (nom, model, url, headers)
+    Har element: (nom, model, url, headers, max_out)
+
+    max_out — o'sha provayderning max_tokens CHEGARASI. Bu qattiq chegara:
+    Groq 8192 dan oshsa HTTP 400 ("must be less than or equal to 8192")
+    yoki 413 qaytaradi va tozalash BUTUNLAY yiqiladi (amalda shunday
+    bo'ldi — matn tozalanmay o'tib ketdi).
 
     Gemini 2.5 Pro birinchi: o'zbek kabi kam resursli tillarda kuchli.
     Bepul tarifda kuniga atigi ~50 so'rov, shuning uchun limitga urilganda
@@ -304,15 +309,47 @@ def _chat_attempts():
     gq = _ensure_groq_key()
     out = []
     if gm:
-        out.append(("gemini-2.5-pro", "gemini-2.5-pro", GEMINI_CHAT_URL, _bearer(gm)))
+        out.append(("gemini-2.5-pro", "gemini-2.5-pro", GEMINI_CHAT_URL,
+                    _bearer(gm), 8192))
     if oa:
-        out.append(("gpt-4o", "gpt-4o", OPENAI_CHAT_URL, _bearer(oa)))
+        out.append(("gpt-4o", "gpt-4o", OPENAI_CHAT_URL, _bearer(oa), 16000))
     if gm:
-        out.append(("gemini-2.5-flash", "gemini-2.5-flash", GEMINI_CHAT_URL, _bearer(gm)))
+        out.append(("gemini-2.5-flash", "gemini-2.5-flash", GEMINI_CHAT_URL,
+                    _bearer(gm), 8192))
     if gq:
-        out.append(("groq/llama-3.3-70b", "llama-3.3-70b-versatile",
-                    GROQ_CHAT_URL, _bearer(gq)))
+        # Modellar HAQIQIY Groq ro'yxatidan olingan va o'zbek matnida
+        # o'lchangan (llama-3.3 endi mavjud emas — qattiq yozilgani 404
+        # berardi). Tanlov mezoni: o'zbek lotinidagi APOSTROF to'g'riligi,
+        # chunki u ma'noni o'zgartiradi ("ma'ruza" != "maruza"):
+        #   qwen3.8-27b   — apostrof to'g'ri, eng tez (1.1s)
+        #   groq/compound — apostrof to'g'ri
+        #   gpt-oss-120b  — apostrofni TUSHIRIB QOLDIRDI, shuning uchun oxirida
+        # qwen3.6-27b ATAYLAB yo'q: u <think> fikrlashini matnga qo'shib yubordi.
+        out.append(("groq/qwen3.8-27b", "qwen/qwen3.8-27b",
+                    GROQ_CHAT_URL, _bearer(gq), 8192))
+        out.append(("groq/compound", "groq/compound",
+                    GROQ_CHAT_URL, _bearer(gq), 8192))
+        out.append(("groq/gpt-oss-120b", "openai/gpt-oss-120b",
+                    GROQ_CHAT_URL, _bearer(gq), 8192))
     return out
+
+
+_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.S | re.I)
+
+
+def _strip_think(text):
+    """Ba'zi ochiq modellar ichki fikrlashini <think>...</think> ichida
+    JAVOBGA qo'shib yuboradi (Groq'ning qwen3.6 modelida shunday bo'ldi —
+    289 belgilik matn o'rniga 1450 belgi fikrlash chiqdi). Bunday matn
+    to'g'ridan-to'g'ri foydalanuvchiga ketsa konspekt buziladi.
+    Yopilmagan <think> ham kesiladi."""
+    if not text or "<think>" not in text.lower():
+        return text
+    out = _THINK_RE.sub("", text)
+    low = out.lower()
+    if "<think>" in low:          # yopilmagan teg — qolganini tashlaymiz
+        out = out[:low.index("<think>")]
+    return out.strip()
 
 
 def _chat_request(payload, timeout=300, label=""):
@@ -329,9 +366,13 @@ def _chat_request(payload, timeout=300, label=""):
                       "OPENAI_API_KEY yoki GROQ_API_KEY sozlang")
     errors = []
     backoffs = [2, 5, 12]
-    for nom, model, url, headers in attempts:
+    for nom, model, url, headers, max_out in attempts:
         body = dict(payload)
         body["model"] = model
+        # max_tokens ni provayder chegarasiga bo'ysundiramiz — oshsa
+        # so'rov BUTUNLAY rad etiladi (400/413) va tozalash yiqiladi.
+        if body.get("max_tokens"):
+            body["max_tokens"] = min(int(body["max_tokens"]), max_out)
         h = dict(headers)
         h["Content-Type"] = "application/json"
         for attempt in range(3):
@@ -344,6 +385,7 @@ def _chat_request(payload, timeout=300, label=""):
                     except Exception as e:
                         errors.append(nom + ": javob shakli buzuq (" + str(e)[:60] + ")")
                         break
+                    txt = _strip_think(txt)
                     if txt:
                         if errors:
                             logging.info("%s: %s bilan bajarildi (%d urinishdan keyin)",
@@ -2240,16 +2282,23 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
 
         # CROSS-MODEL FALLBACK: Muhlisa hali qila olmagan chunklarni Whisper bilan urinish
         # Bu chunk drop'ni butunlay yo'q qiladi — 2 ta turli AI ishlatamiz.
-        if failed_chunks_muhlisa and _ensure_openai_key():
-            logging.warning(f"🔄 CROSS-MODEL FALLBACK: {len(failed_chunks_muhlisa)} ta Muhlisa chunkni Whisper bilan urinamiz...")
-            url_w = "https://api.openai.com/v1/audio/transcriptions"
-            headers_w = {"Authorization": f"Bearer {OPENAI_API_KEY}"}
+        # Ilgari bu FAQAT OpenAI kaliti bo'lganda ishlardi. Endi mavjud
+        # istalgan multipart STT provayderi ishlatiladi (Groq ham), ya'ni
+        # OpenAI'siz ham Muxlisa yiqilgan bo'laklari tiklanadi.
+        _form = [a for a in _stt_attempts() if a[1] == "form"]
+        if failed_chunks_muhlisa and _form:
+            _nom_w, _, _model_w, url_w, headers_w, _ts_w, _lg_w = _form[0]
+            logging.warning("🔄 CROSS-MODEL FALLBACK: %s ta Muhlisa bo'lagini "
+                            "%s bilan urinamiz...", len(failed_chunks_muhlisa), _nom_w)
             for failed_idx, failed_info, _ in failed_chunks_muhlisa:
                 if not failed_info:
                     continue
                 chunk_path_r, start_r, end_r = failed_info
                 try:
-                    wtext, werr = _try_transcribe(chunk_path_r, "whisper-1", "uz", url_w, headers_w, start_r)
+                    wtext, werr = _try_transcribe(chunk_path_r, _model_w, "uz",
+                                                  url_w, headers_w, start_r,
+                                                  want_timestamps=_ts_w,
+                                                  supported_langs=_lg_w)
                     if wtext:
                         chunk_results[failed_idx] = wtext
                         logging.info(f"✅ CROSS-MODEL: bo'lak {failed_idx} Whisper bilan tiklandi")
@@ -2907,8 +2956,9 @@ def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges
     failed_ranges_out: list pass qilsangiz, yiqilgan bo'lak vaqt oraliqlari to'ldiriladi:
         [(start_sec, end_sec, error), ...]
     """
-    if not _ensure_openai_key():
-        raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing — bot OpenAI'siz ishlamaydi.")
+    if not _stt_attempts():
+        raise Exception("STT provayderi sozlanmagan — GROQ_API_KEY (bepul) "
+                        "yoki OPENAI_API_KEY qo'shing.")
 
     # 1) STT — progress_cb ni transcribe_whisper'ga uzatamiz
     text = transcribe_whisper(file_path, language, progress_cb, failed_ranges_out) or ""
@@ -2953,6 +3003,12 @@ WHISPER_SUPPORTED_LANGS = {
     # NOTE: 'uz' QO'SHMA! Whisper API "unsupported_language" HTTP 400 qaytaradi.
     # O'zbek uchun avto-aniqlash + GPT-4o cleanup ishlatamiz.
 }
+# Groq'ning whisper-large-v3 o'zbekni QO'LLAB-QUVVATLAYDI va language=uz
+# YUBORILMASA o'zbek nutqini ARAB YOZUVIDA qaytaradi (amalda o'lchandi:
+# "اسلام علیکم حرمتلی طلباله" = "assalomu alaykum hurmatli talabalar").
+# Shuning uchun Groq uchun ro'yxat ALOHIDA — 'uz' bilan.
+GROQ_STT_LANGS = WHISPER_SUPPORTED_LANGS | {"uz"}
+
 WHISPER_MAX_FILE_MB = 22        # 22 MB dan oshganda bo'laklash (25 MB Whisper chegarasi - 3 MB margin)
 WHISPER_CHUNK_BITRATE = "64k"   # 64 kbps mono — 10 daqiqa ≈ 4.8 MB
 CLAUDE_CHUNK_WORDS = 3000       # GPT-4o uchun 3000 so'z (16k token output limitida xavfsiz)
@@ -3581,6 +3637,19 @@ def _cleanup_uzbek_transcript_chunk(text):
         "   • ş→sh, ç→ch, ı→i, ö→o', ü→u, ğ→g'\n"
         "   • Kazakh қ→q, ң→ng, ы→i, ә→a\n"
         "   • Cyrillic Uzbek → Latin Uzbek (same words, different script)\n"
+        "1b) SYSTEMATIC UZBEK SPELLING ERRORS. whisper-large-v3 writes Uzbek "
+        "with a Turkic-style spelling. Restore the standard Uzbek form — these "
+        "are SPELLING fixes of the SAME word, not word replacements:\n"
+        "   • 'a' written where Uzbek has 'o': iqtisadiyat→iqtisodiyot, "
+        "bazar→bozor, qanun→qonun, asasi→asosi/asosiy, nazaryasi→nazariyasi, "
+        "baladi→bo'ladi, Assalamu→Assalomu, xsablanadi→hisoblanadi, "
+        "tamayillari→tamoyillari\n"
+        "   • 'w' does not exist in Uzbek Latin: wa→va, mawzu→mavzu\n"
+        "   • dropped apostrophe: maruza→ma'ruza, bulaidi→bo'ladi\n"
+        "   • wrongly split or merged words: 'Birinchin abadte'→'Birinchi "
+        "navbatda', 'onin'→'uning'\n"
+        "   Apply this ONLY when the corrected form is an obvious standard "
+        "Uzbek word. If unsure, keep the original and mark [?] per rule 7.\n"
         "2) PROPER UZBEK APOSTROPHES: o', g' (not o`, ó, oʻ, ‘).\n"
         "3) ARABIC SCRIPT → standard Uzbek Latin transliteration of well-known "
         "formulas ONLY:\n"
@@ -3799,7 +3868,7 @@ def _try_transcribe_audio_chat(chunk_path, source_lang, headers):
 
 
 def _try_transcribe(chunk_path, model, source_lang, url, headers, chunk_offset_sec=0,
-                    want_timestamps=None):
+                    want_timestamps=None, supported_langs=None):
     """Bitta bo'lakni belgilangan model bilan transkripsiya qilish.
     7 marta retry (HTTP 429/500/502/503/504/timeout/connection errors).
     Backoff: 1s, 2s, 4s, 8s, 15s, 30s, 60s — total ~120s max.
@@ -3830,7 +3899,16 @@ def _try_transcribe(chunk_path, model, source_lang, url, headers, chunk_offset_s
                 }
                 if is_whisper1:
                     data["timestamp_granularities[]"] = "segment"
-                if source_lang and source_lang != "auto" and source_lang in WHISPER_SUPPORTED_LANGS:
+                # Qaysi tillarni yuborish mumkinligi PROVAYDERGA bog'liq.
+                # Bu HAL QILUVCHI: 'uz' yuborilmasa Groq'ning whisper-large-v3
+                # o'zbek nutqini ARAB YOZUVIDA qaytaradi (amalda o'lchandi:
+                # "اسلام علیکم حرمتلی طلباله" = "assalomu alaykum hurmatli
+                # talabalar"). 'uz' yuborilsa lotin yozuvida to'g'ri beradi.
+                # OpenAI esa 'uz' ni rad etadi (400 unsupported_language),
+                # shuning uchun ro'yxat har provayder uchun ALOHIDA.
+                _langs = (WHISPER_SUPPORTED_LANGS if supported_langs is None
+                          else supported_langs)
+                if source_lang and source_lang != "auto" and source_lang in _langs:
                     data["language"] = source_lang
                 resp = requests.post(url, headers=headers, files=files, data=data, timeout=600)
 
@@ -4038,13 +4116,71 @@ def _join_chunks_dedup_overlap(chunk_results, sorted_keys):
     return results
 
 
+_ARAB_RE = re.compile("[" + chr(0x0600) + "-" + chr(0x06FF) + "]")
+
+
+def _is_wrong_script(text, expect_lang="uz"):
+    """O'zbek lotin kutilganda ARAB YOZUVI qaytsa — natija yaroqsiz.
+
+    Amalda o'lchandi: Groq'ning whisper-large-v3 language parametri
+    yuborilmasa o'zbek nutqini arab yozuvida qaytaradi
+    ("اسلام علیکم حرمتلی طلباله"). Tovushlar to'g'ri, lekin foydalanuvchi
+    uchun butunlay yaroqsiz. language=uz buni hal qiladi, ammo vaqtinchalik
+    nosozlikda model yana adashishi mumkin — shuning uchun NATIJANING O'ZI
+    ham tekshiriladi va bunday matn sifatsiz deb qayta urinilаdi.
+    """
+    if not text or expect_lang != "uz":
+        return False
+    arab = len(_ARAB_RE.findall(text))
+    return arab > max(10, len(text) * 0.10)
+
+
+def _rescue_split(chunk_path, parts=3):
+    """Yiqilgan bo'lakni MAYDA qismlarga kesadi (qutqaruv uchun).
+
+    NEGA: hallutsinatsiya odatda bo'lak ichidagi jimlik yoki shovqindan
+    boshlanadi va BUTUN bo'lakni buzadi — model bir marta "adashib",
+    keyin takroriy axlat yozaveradi. Kichikroq qismlarda u odatda
+    to'g'ri ishlaydi, ya'ni matnni yo'qotmasdan qutqarib qolish mumkin.
+
+    Bu foydalanuvchi talabi: konspektda BO'SHLIQ qolmasin.
+    """
+    try:
+        dur = get_duration_or_estimate(chunk_path)
+    except Exception:
+        dur = 0
+    if not dur or dur < 20:
+        return []
+    step = dur / parts
+    base = os.path.splitext(chunk_path)[0]
+    out = []
+    for i in range(parts):
+        start = i * step
+        # Oxirgisidan boshqasiga 3s ustma-ustlik — chegarada so'z kesilmasin
+        length = step + (3 if i < parts - 1 else 0)
+        pth = base + "_qutqaruv" + str(i) + ".mp3"
+        cmd = ["ffmpeg", "-y", "-v", "error",
+               "-ss", str(round(start, 2)), "-i", chunk_path,
+               "-t", str(round(length, 2)),
+               "-vn", "-ac", "1", "-ar", "16000",
+               "-acodec", "libmp3lame", "-b:a", WHISPER_CHUNK_BITRATE, pth]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=180)
+            if os.path.exists(pth) and os.path.getsize(pth) > 1000:
+                out.append(pth)
+        except Exception as e:
+            logging.warning("Qutqaruv qismi %s yaratilmadi: %s", i, e)
+    return out
+
+
 def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_out=None):
     """OpenAI Whisper API orqali audio'ni matnga aylantirish.
     HAR DOIM avval optimallashtirish (64kbps mono MP3) qilinadi — bu Whisper
     25 MB limitiga moslashish va arzonroq tarmoq trafigi uchun.
     progress_cb(current_chunk, total_chunks) — sync progress callback."""
-    if not _ensure_openai_key():
-        raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing.")
+    if not _stt_attempts():
+        raise Exception("STT provayderi sozlanmagan — GROQ_API_KEY (bepul) "
+                        "yoki OPENAI_API_KEY qo'shing.")
 
     try:
         orig_size_mb = os.path.getsize(file_path) / (1024 * 1024)
@@ -4116,7 +4252,15 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
         # Shuning uchun: axlat hech qachon yetkazilmaydi, qisqa-lekin-toza
         # matn yetkaziladi.
         def _is_junk(text):
-            return bool(text) and _is_chunk_hallucinated(text, WHISPER_CHUNK_SECONDS)
+            if not text:
+                return False
+            # Noto'g'ri YOZUV ham axlat: tovushlar to'g'ri bo'lsa ham
+            # foydalanuvchi o'qiy olmaydi.
+            if _is_wrong_script(text, source_lang):
+                logging.warning("Bo'lak %s/%s: NOTO'G'RI YOZUV (arab) — "
+                                "yaroqsiz deb belgilandi", idx, total)
+                return True
+            return _is_chunk_hallucinated(text, WHISPER_CHUNK_SECONDS)
 
         def _is_good(text):
             return bool(text) and len(text) >= 20 and not _is_junk(text)
@@ -4131,14 +4275,15 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
         # nosozlik yoki limit tufayli sifat pasaygan bo'lsa, kutib qayta
         # urinamiz. Bir marta urinib taslim bo'lish sifatni pasaytirardi.
         for rnd in range(1, STT_QUALITY_ROUNDS + 1):
-            for nom, kind, model, a_url, a_headers, want_ts in attempts:
+            for nom, kind, model, a_url, a_headers, want_ts, a_langs in attempts:
                 if kind == "chat_audio":
                     text, err = _try_transcribe_audio_chat(chunk_path, source_lang,
                                                            a_headers)
                 else:
                     text, err = _try_transcribe(
                         chunk_path, model, source_lang, a_url, a_headers,
-                        chunk_offset_sec=chunk_offset_sec, want_timestamps=want_ts)
+                        chunk_offset_sec=chunk_offset_sec, want_timestamps=want_ts,
+                        supported_langs=a_langs)
                 if _is_good(text):
                     if clean_candidates or errors:
                         logging.info("Bo'lak %s/%s %s bilan olindi (%s-tur)",
@@ -4165,6 +4310,34 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
             logging.warning("Bo'lak %s/%s: qisqa, lekin TOZA natija yetkazildi",
                             idx, total)
             return idx, best, None
+
+        # ── QUTQARUV: bo'lakni maydalab qayta urinish ────────────────
+        # Taslim bo'lish o'rniga bo'lakni 3 ga bo'lib qayta o'qiymiz.
+        # Konspektda bo'shliq qolmasligi uchun oxirgi imkoniyat.
+        _qismlar = _rescue_split(chunk_path)
+        if _qismlar:
+            logging.warning("🩹 Bo'lak %s/%s QUTQARUV: %s qismga bo'lindi",
+                            idx, total, len(_qismlar))
+            _olingan = []
+            for _pth in _qismlar:
+                for nom, kind, model, a_url, a_headers, want_ts, a_langs in attempts:
+                    if kind == "chat_audio":
+                        _pt, _ = _try_transcribe_audio_chat(_pth, source_lang, a_headers)
+                    else:
+                        _pt, _ = _try_transcribe(_pth, model, source_lang, a_url,
+                                                 a_headers, want_timestamps=False,
+                                                 supported_langs=a_langs)
+                    if _pt and not _is_junk(_pt):
+                        _olingan.append(_pt.strip())
+                        break
+                try:
+                    os.remove(_pth)
+                except Exception:
+                    pass
+            if _olingan:
+                logging.info("🩹 Bo'lak %s/%s QUTQARILDI (%s/%s qism)",
+                             idx, total, len(_olingan), len(_qismlar))
+                return idx, " ".join(_olingan), None
 
         # Faqat axlat chiqdi yoki umuman javob yo'q — JIM YETKAZMAYMIZ.
         # Bo'lak "yiqilgan" deb belgilanadi va foydalanuvchiga QAYSI daqiqalar
@@ -4430,8 +4603,9 @@ def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz",
 
     source_lang: manba til (yoki 'auto')
     target_lang: hosil til ('uz', 'ru', 'en', 'ar')"""
-    if not _ensure_openai_key():
-        raise Exception("OPENAI_API_KEY sozlanmagan. Railway env qo'shing.")
+    if not _has_any_ai_key():
+        raise Exception("Matn modeli sozlanmagan — GEMINI_API_KEY, "
+                        "GROQ_API_KEY yoki OPENAI_API_KEY qo'shing.")
 
     words = text.split()
     # Kichik matn — bir martada tarjima (retry bilan)
@@ -9188,10 +9362,13 @@ def _startup_config_audit():
     Har element: (daraja, xabar). Daraja: 'critical' | 'warning'."""
     out = []
 
+    # OPENAI_API_KEY endi MAJBURIY emas — Groq/Gemini uni almashtiradi.
+    # Faqat OpenAI TTS unga bog'liq; qolgani quyida tekshiriladi.
     if not _ensure_openai_key():
-        out.append(("critical",
-                    "OPENAI_API_KEY yo'q — matnga aylantirish, tarjima va "
-                    "premium TTS ISHLAMAYDI (har so'rov xato bilan tugaydi)."))
+        out.append(("warning",
+                    "OPENAI_API_KEY yo'q — premium OpenAI TTS ishlamaydi "
+                    "(matn va tarjima Groq/Gemini orqali ishlayveradi, "
+                    "ovoz bepul Edge TTS bilan beriladi)."))
 
     if not ADMIN_USER_IDS:
         out.append(("warning",
