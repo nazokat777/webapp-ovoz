@@ -110,14 +110,20 @@ BOT_TOKEN   = os.getenv("BOT_TOKEN", "").strip()
 # ogohlantiradi — shunchaki nosozlik KO'RINADIGAN bo'ladi.
 DEGRADED_REASON = ""
 if not BOT_TOKEN:
-    DEGRADED_REASON = (
-        "BOT_TOKEN env o'rnatilmagan. Railway -> Variables -> BOT_TOKEN "
-        "qo'shing va Redeploy qiling."
-    )
+    # Yechim MUHITGA bog'liq: bulutda env o'zgaruvchisi, lokalda .env fayli.
+    # Noto'g'ri joyni ko'rsatish foydalanuvchini behuda sarson qiladi.
+    _on_cloud = bool(os.getenv("RAILWAY_PUBLIC_DOMAIN") or os.getenv("RAILWAY_PROJECT_ID")
+                     or os.getenv("FLY_APP_NAME") or os.getenv("DYNO"))
+    if _on_cloud:
+        _fix = "Railway -> Variables -> BOT_TOKEN qo'shing va Redeploy qiling."
+    else:
+        _fix = (".env fayliga BOT_TOKEN=... yozing (.env.example dan nusxa oling), "
+                "so'ng ishga_tushirish.bat ni qayta bosing.")
+    DEGRADED_REASON = "BOT_TOKEN o'rnatilmagan. " + _fix
     print(
-        "❌ BOT_TOKEN env o'rnatilmagan — DEGRADED rejim.\n"
+        "❌ BOT_TOKEN o'rnatilmagan — DEGRADED rejim.\n"
         "   Bot ishlamaydi; HTTP server faqat tashxis uchun ko'tariladi.\n"
-        "   Railway → Variables → BOT_TOKEN qo'shing → Redeploy.",
+        "   " + _fix,
         file=sys.stderr,
     )
 # Muhlisa AI — Pro Uzbek tarifi uchun (premium sifat, Uzbek native STT)

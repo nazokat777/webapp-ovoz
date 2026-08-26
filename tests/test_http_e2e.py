@@ -211,6 +211,9 @@ try:
     hj = json.loads(b) if b and b.startswith("{") else {}
     check("status=degraded", hj.get("status") == "degraded", hj)
     check("sabab aytilgan", "BOT_TOKEN" in (hj.get("reason") or ""), hj)
+    # Lokal muhitda yechim .env, bulutda Railway Variables bo'lishi kerak
+    check("lokal yechim .env ni ko'rsatadi", ".env" in (hj.get("reason") or ""),
+          hj.get("reason"))
     st, _ = req("POST", "/url", {"url": "https://youtu.be/x"}, base=dbase)
     check("degraded'da /url rad -> 503", st == 503, f"status={st}")
     st, _ = req("POST", "/audio", {"audio": "AAAA", "init_data": "x"}, base=dbase)

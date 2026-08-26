@@ -1,0 +1,10 @@
+# Windows .bat fayllari CRLF talab qiladi — LF bilan buziladi
+# (echo. -> "cho." xatosi). Git checkout qanday sozlangan bo'lishidan
+# qat'i nazar kafolatlaymiz.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Qolgan matn fayllar repoda LF
+*.py text eol=lf
+*.md text eol=lf
+*.html text eol=lf
