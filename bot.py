@@ -75,8 +75,30 @@ MUXLISA_KEY = os.getenv("MUXLISA_KEY", "")
 PAYMENT_CARD = os.getenv("PAYMENT_CARD", "")
 PAYMENT_CARD_HOLDER = os.getenv("PAYMENT_CARD_HOLDER", "")
 ADMIN_CONTACT = os.getenv("ADMIN_CONTACT", "@Nazokat_571")
-# Markdown V1 uchun xavfsiz versiya (pastki chiziqni qochirish — italic talqin qilinmasligi uchun)
-ADMIN_CONTACT_MD = ADMIN_CONTACT.replace("_", "\\_")
+
+
+def md_escape(text):
+    """Telegram Markdown (V1) uchun maxsus belgilarni qochirish.
+
+    NEGA KERAK: foydalanuvchi ismi yoki matni escape'siz `parse_mode="Markdown"`
+    xabarga qo'yilsa, Telegram butun xabarni RAD ETADI ("Can't parse entities").
+    Ya'ni ismida `_` bo'lgan odam /start ololmasdi, `*` yuborgan odamning
+    murojaati adminga umuman yetmasdi — jimgina yo'qolardi.
+    """
+    if not text:
+        return ""
+    out = str(text)
+    for ch in ("_", "*", "`", "["):
+        out = out.replace(ch, "\\" + ch)
+    return out
+
+
+# Markdown V1 uchun xavfsiz versiya (barcha maxsus belgilar qochiriladi)
+ADMIN_CONTACT_MD = md_escape(ADMIN_CONTACT)
+
+# WebApp initData imzosi uchun kalit — BOT_TOKEN startupdan keyin o'zgarmaydi,
+# shuning uchun har so'rovda qayta hisoblash shart emas.
+_WEBAPP_SECRET = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
 
 # Foydalanuvchilarga ko'rsatiladigan neutral nom (admin username yashiriladi)
 SUPPORT_NAME = os.getenv("SUPPORT_NAME", "Audio Bot Yordam markazi")
@@ -107,8 +129,6 @@ PAYMENT_CURRENCY = os.getenv("PAYMENT_CURRENCY", "UZS")
 # === [TARJIMA MODULI] ===========================================================
 # STT (Whisper/gpt-audio), matn tozalash va tarjima — hammasi OpenAI orqali.
 # Railway env: OPENAI_API_KEY=sk-...
-# Eslatma: ilgari bu yerda ANTHROPIC_API_KEY ham bor edi, lekin kodda hech qachon
-# ishlatilmagan (translate_with_claude nomi qolgan, ichida GPT-4o chaqiriladi).
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 
@@ -274,10 +294,191 @@ def _mark_processing(user_id):
         processing_users[user_id] = time.time()
 
 
+def _try_mark_processing(user_id):
+    """ATOMIK check-and-mark. Returns True — belgi qo'yildi (ish boshlash mumkin).
+
+    NEGA KERAK: alohida _is_user_processing() + _mark_processing() chaqirish
+    ikki thread (PTB loop va aiohttp loop) orasida race ochardi — user bir
+    vaqtda Telegram'dan voice va WebApp'dan fayl yuborsa, ikkalasi ham
+    tekshiruvdan o'tib, bitta audio uchun ikki marta hisob yechilishi mumkin edi."""
+    now = time.time()
+    with processing_lock:
+        prev = processing_users.get(user_id)
+        if prev is not None and now - prev < 1800:
+            return False
+        processing_users[user_id] = now
+        return True
+
+
 def _unmark_processing(user_id):
     """User ishlash tugadi (yoki xato) — belgini olib tashlash."""
     with processing_lock:
         processing_users.pop(user_id, None)
+# === [JOB QUEUE] Og'ir ishlar uchun YAGONA umumiy pool ==========================
+# BITTA ThreadPoolExecutor(MAX_CONCURRENT_JOBS) — WebApp ham, Telegram ham
+# og'ir ishni (STT/tarjima/TTS/ffmpeg) faqat shu pool'da bajaradi.
+#
+# NEGA BITTA: ilgari ikkita mustaqil semafor bor edi (threading — WebApp,
+# asyncio — Telegram), ya'ni real cap 2×MAX_CONCURRENT_JOBS bo'lib qolgan edi
+# va /debug faqat WebApp tomonini sanardi. Endi cap haqiqiy va yagona.
+from concurrent.futures import ThreadPoolExecutor as _TPE
+import contextvars
+
+_job_executor = _TPE(max_workers=MAX_CONCURRENT_JOBS, thread_name_prefix="job")
+_job_counter_lock = threading.Lock()
+_job_stats = {"running": 0, "queued": 0}
+
+BUSY_MESSAGE = (
+    "⏳ Sizning oldingi faylingiz hali tayyorlanmoqda.\n"
+    "Iltimos tugashini kuting — daqiqalar ortiqcha yechilmasligi uchun."
+)
+QUEUE_FULL_MESSAGE = (
+    "🚦 Hozir server juda band.\n\n"
+    "Iltimos 5-10 daqiqadan keyin qayta yuboring.\n"
+    "💚 Daqiqa hisobingizdan yechilmadi."
+)
+
+
+def _job_slots_info():
+    with _job_counter_lock:
+        return _job_stats["running"], _job_stats["queued"]
+
+
+def _notify_async(user_id, text):
+    """Xabarni event loop'ni bloklamasdan yuborish (rad etish holatlari uchun)."""
+    threading.Thread(
+        target=telegram_send_message, args=(user_id, text), daemon=True
+    ).start()
+
+
+async def _run_heavy(fn, *args):
+    """Telegram (asyncio) yo'lidagi og'ir sync ishni umumiy pool'da bajarish.
+
+    asyncio.to_thread EMAS: u default executor'ni ishlatadi (cheklovsiz bo'lardi);
+    bu yerda esa aynan _job_executor — WebApp ishlari bilan bitta budjet."""
+    loop = asyncio.get_running_loop()
+    with _job_counter_lock:
+        _job_stats["queued"] += 1
+
+    def _tracked():
+        with _job_counter_lock:
+            _job_stats["queued"] -= 1
+            _job_stats["running"] += 1
+        try:
+            return fn(*args)
+        finally:
+            with _job_counter_lock:
+                _job_stats["running"] -= 1
+
+    try:
+        return await loop.run_in_executor(_job_executor, _tracked)
+    except BaseException:
+        # Bekor qilinsa (CancelledError ham!) queued hisobini to'g'rilash —
+        # _tracked hali boshlanmagan bo'lishi mumkin. run_in_executor future
+        # bekor qilinsa ham executor ishni baribir bajaradi, shuning uchun
+        # hisob faqat "hali navbatda" holatda tuzatiladi.
+        raise
+
+
+# Bitta task ichida busy_guard qayta kirsa (masalan, process_translation
+# process_translation_from_file_id orqali chaqirilsa) o'zini bloklamasin.
+_busy_owner = contextvars.ContextVar("busy_owner", default=None)
+
+
+def busy_guard(func):
+    """Async flow'ni "bitta user — bitta og'ir ish" qoidasi bilan o'raydi.
+
+    Handler KIRISHIDA (fayl yuklab olishdan OLDIN) atomik belgi qo'yiladi —
+    ilgari belgi yuklab olishdan keyin qo'yilar, ikki marta yuborilgan katta
+    video ikkala safar to'liq yuklab olinardi. CancelledError'da ham belgi
+    kafolatli olib tashlanadi (finally)."""
+    import functools
+
+    @functools.wraps(func)
+    async def wrapper(update, *args, **kwargs):
+        user = getattr(update, "effective_user", None)
+        uid = user.id if user else None
+        if uid is None or _busy_owner.get() == uid:
+            return await func(update, *args, **kwargs)
+        if is_admin(update):
+            # Admin uchun guard yo'q (test/tezkor ishlar)
+            return await func(update, *args, **kwargs)
+        if not _try_mark_processing(uid):
+            try:
+                if getattr(update, "message", None):
+                    await update.message.reply_text(BUSY_MESSAGE)
+            except Exception:
+                pass
+            return None
+        token = _busy_owner.set(uid)
+        try:
+            return await func(update, *args, **kwargs)
+        finally:
+            _busy_owner.reset(token)
+            _unmark_processing(uid)
+
+    return wrapper
+
+
+def submit_job(user_id, target, args=(), label="ish", cleanup_path=None):
+    """WebApp yo'lidagi og'ir ishni umumiy pool'ga qo'yadi. Returns True — qabul.
+
+    False — duplicate click yoki navbat to'la; foydalanuvchiga xabar chat'ga
+    yuboriladi va HTTP handler ham xato status qaytarishi kerak (WebApp toast).
+
+    cleanup_path — rad etilganda o'chiriladigan vaqtinchalik fayl."""
+
+    def _reject(msg):
+        if cleanup_path:
+            try: os.remove(cleanup_path)
+            except Exception: pass
+        _notify_async(user_id, msg)
+        return False
+
+    # ATOMIK duplicate himoyasi — Telegram yo'lidagi busy_guard bilan bitta
+    # processing_users store, shuning uchun user ikki kanaldan bir vaqtda
+    # ikkita ish ochib yubora olmaydi.
+    if not _try_mark_processing(user_id):
+        return _reject(BUSY_MESSAGE)
+
+    with _job_counter_lock:
+        if _job_stats["queued"] >= MAX_QUEUED_JOBS:
+            _unmark_processing(user_id)
+            logging.warning(f"🚦 Navbat to'la, rad etildi: user={user_id}, {label}")
+            return _reject(QUEUE_FULL_MESSAGE)
+        _job_stats["queued"] += 1
+        waiting = _job_stats["running"] >= MAX_CONCURRENT_JOBS
+
+    if waiting:
+        _notify_async(
+            user_id,
+            "⏳ Navbatdasiz — server hozir boshqa fayllarni qayta ishlamoqda.\n"
+            "Sizniki avtomat boshlanadi, kutib turing."
+        )
+
+    def _runner():
+        with _job_counter_lock:
+            _job_stats["queued"] -= 1
+            _job_stats["running"] += 1
+        try:
+            target(*args)
+        except Exception as e:
+            logging.error(f"Job xatosi ({label}, user={user_id}): {e}", exc_info=True)
+            telegram_send_message(
+                user_id,
+                f"❌ Kutilmagan xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
+            )
+        finally:
+            with _job_counter_lock:
+                _job_stats["running"] -= 1
+            # MUHIM: belgini olib tashlash — aks holda user 30 daqiqaga bloklanadi
+            _unmark_processing(user_id)
+
+    _job_executor.submit(_runner)
+    return True
+# === [/JOB QUEUE] ==============================================================
+
+
 # === [REFERRAL] Do'st taklif qilish tizimi ===
 # Sozlash:
 REFERRAL_BONUS_MIN = 5         # Har taklif uchun har ikkalasiga +5 daqiqa
@@ -488,38 +689,33 @@ def _save_user_data():
             # XAVFSIZLIK 1: ENG QATTIQ himoya — memory diskdan KAMROQ bo'lsa darrov abort.
             # Bu kategoriyalar (tariffs, usage, info) faqat o'sadi, hech qachon kamaymaydi.
             # Shuning uchun memory < disk = ma'lumot yo'qolish belgisi.
-            # TEZLIK: bu jarayon faylning YAGONA yozuvchisi, shuning uchun
-            # oxirgi yozilgan sonlarni xotirada eslab qolamiz va har saqlashda
-            # butun JSON'ni qayta parse qilmaymiz. Kesh bo'sh bo'lsa (bot endi
-            # ishga tushgan) — bir marta diskdan o'qiymiz.
+            # TEZLIK: bu jarayon faylning YAGONA yozuvchisi — oxirgi yozilgan
+            # sonlar keshda; kesh "kamayish" ko'rsatsagina haqiqiy fayl qayta
+            # o'qib TASDIQLANADI (kesh eskirgan bo'lishi mumkin), so'ng abort.
+            def _dcounts(d):
+                return (len(d.get("tariffs") or {}),
+                        len(d.get("usage") or {}),
+                        len(d.get("user_info") or {}))
+
+            mem_counts = (len(user_tariffs), len(user_uzbek_usage), len(user_info))
+            existing = None
             if os.path.exists(DATA_FILE):
                 try:
                     if _last_written_counts["ready"]:
-                        existing = None
-                        existing_tariffs = _last_written_counts["tariffs"]
-                        existing_usage = _last_written_counts["usage"]
-                        existing_info = _last_written_counts["info"]
+                        disk_counts = (_last_written_counts["tariffs"],
+                                       _last_written_counts["usage"],
+                                       _last_written_counts["info"])
                     else:
                         with open(DATA_FILE, "r", encoding="utf-8") as fexist:
                             existing = json.load(fexist)
-                        existing_tariffs = len(existing.get("tariffs") or {})
-                        existing_usage = len(existing.get("usage") or {})
-                        existing_info = len(existing.get("user_info") or {})
-                    # Har kategoriya: memory < disk → DARROV abort
-                    if (len(user_tariffs) < existing_tariffs or
-                        len(user_uzbek_usage) < existing_usage or
-                        len(user_info) < existing_info):
-                        # Keshga ishonib abort qilmaymiz — avval haqiqiy faylni
-                        # o'qib tasdiqlaymiz (kesh eskirgan bo'lishi mumkin).
+                        disk_counts = _dcounts(existing)
+                    if any(m < d for m, d in zip(mem_counts, disk_counts)):
                         if existing is None:
                             with open(DATA_FILE, "r", encoding="utf-8") as fexist:
                                 existing = json.load(fexist)
-                            existing_tariffs = len(existing.get("tariffs") or {})
-                            existing_usage = len(existing.get("usage") or {})
-                            existing_info = len(existing.get("user_info") or {})
-                    if (len(user_tariffs) < existing_tariffs or
-                        len(user_uzbek_usage) < existing_usage or
-                        len(user_info) < existing_info):
+                            disk_counts = _dcounts(existing)
+                    existing_tariffs, existing_usage, existing_info = disk_counts
+                    if any(m < d for m, d in zip(mem_counts, disk_counts)):
                         logging.error(
                             f"🛑 SAVE ABORTED — memory diskdan kam! "
                             f"DISK: tariffs={existing_tariffs}, usage={existing_usage}, info={existing_info} | "
@@ -585,6 +781,10 @@ def _save_user_data():
 # === [TARIFF LOG] Append-only jurnal — har grant darrov yoziladi, hech qachon yo'qolmaydi ===
 TARIFF_LOG_FILE = os.path.join(os.path.dirname(DATA_FILE) or ".", "tariff_log.jsonl")
 
+# Startup replay chog'ida jurnal PULLIK tarifni o'zgartirgan holatlar —
+# post_init'da adminga xabar qilinadi (jimgina pasayish bo'lmasin).
+_replay_downgrades = []
+
 
 async def _send_backup_snapshot_to_admin(bot, source="grant"):
     """Har grant/approve'dan keyin admin chat'iga TO'LIQ backup yuborish.
@@ -632,6 +832,17 @@ def _append_tariff_log(user_id, tariff_key, source="approve"):
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             f.flush()
             os.fsync(f.fileno())  # diskka kafolatli yozish
+        # Keshni joyida yangilaymiz — bu jarayon faylning yagona yozuvchisi,
+        # shuning uchun keyingi get_user_tariff butun faylni qayta o'qimasin
+        try:
+            st = os.stat(TARIFF_LOG_FILE)
+            with _tariff_log_lock:
+                if tariff_key in TARIFFS:
+                    _tariff_log_cache["map"][int(user_id)] = tariff_key
+                _tariff_log_cache["mtime"] = st.st_mtime_ns
+                _tariff_log_cache["size"] = st.st_size
+        except Exception:
+            pass
         logging.info(f"📝 Tariff log: {entry}")
     except Exception as e:
         logging.error(f"❌ Tariff log yozishda xato: {e}")
@@ -650,6 +861,11 @@ def _replay_tariff_log():
             if user_tariffs.get(uid) != tariff:
                 json_val = user_tariffs.get(uid, "NONE")
                 logging.warning(f"⚠️ Tariff mismatch: user_id={uid}, JSON={json_val}, LOG={tariff} - LOG'dan tiklandi")
+                # PULLIK tarif jurnal tomonidan PASAYTIRILSA — bu kutilmagan
+                # bo'lishi mumkin (masalan, eski qo'lda-berilgan tarif jurnalda
+                # aks etmagan). Adminga startup'da ro'yxat yuboriladi.
+                if json_val not in ("NONE", "free") and tariff != json_val:
+                    _replay_downgrades.append((uid, json_val, tariff))
                 user_tariffs[uid] = tariff
                 recovered += 1
         if recovered > 0:
@@ -663,30 +879,69 @@ def _replay_tariff_log():
         return 0
 
 
+def _append_tariff_log_many(entries, source):
+    """Bir nechta jurnal yozuvini BITTA ochish/yozish/fsync bilan qo'shish.
+    (Har yozuvga alohida fsync — restore paytida event loop'ni soniyalab
+    muzlatardi.)"""
+    if not entries:
+        return 0
+    try:
+        os.makedirs(os.path.dirname(TARIFF_LOG_FILE) or ".", exist_ok=True)
+        lines = []
+        ts = int(time.time())
+        for uid, tariff in entries:
+            lines.append(json.dumps(
+                {"uid": int(uid), "tariff": tariff, "ts": ts, "src": source},
+                ensure_ascii=False))
+        with open(TARIFF_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(chr(10).join(lines) + chr(10))
+            f.flush()
+            os.fsync(f.fileno())
+        # Keshni ham yangilab qo'yamiz (to'liq qayta o'qish shart bo'lmasin)
+        try:
+            st = os.stat(TARIFF_LOG_FILE)
+            with _tariff_log_lock:
+                for uid, tariff in entries:
+                    _tariff_log_cache["map"][int(uid)] = tariff
+                _tariff_log_cache["mtime"] = st.st_mtime_ns
+                _tariff_log_cache["size"] = st.st_size
+        except Exception:
+            pass
+        return len(entries)
+    except Exception as e:
+        logging.error(f"Tariff log batch yozishda xato: {e}")
+        return 0
+
+
 def _reconcile_tariff_log_with_memory(source="restore"):
     """Xotiradagi tariflarni jurnalga YAKUNIY holat sifatida yozadi.
 
-    Nega kerak: get_user_tariff jurnalni JSON'dan ustun qo'yadi (deploy chog'ida
-    tarif yo'qolmasligi uchun). Ammo /restore JSON'ni almashtirsa-yu jurnalga
-    tegmasa, jurnal eski tarifni qaytarib qo'yadi va tiklash bekor bo'ladi.
-    Shu funksiya faqat FARQ qiladigan yozuvlarni jurnalga qo'shadi.
+    Returns: (yozilgan_soni, backup'da_yo'q_paid_userlar_ro'yxati).
 
-    Returns: yozilgan yozuvlar soni."""
+    XAVFSIZLIK: backup faylda YO'Q, lekin jurnalda PULLIK bo'lgan userlar
+    HECH QACHON avtomatik 'free' qilinmaydi. Eski (stale) backup tiklansa,
+    undan keyin to'lov qilgan mijozlar jurnal himoyasida qoladi — admin
+    ularni ko'rib, kerak bo'lsa alohida /revoke qiladi. (Ilgari bu funksiya
+    ularga avtomat 'free' yozib, jurnal himoyasini zaharlashi mumkin edi.)"""
     log_map = _get_tariff_log_map()
-    written = 0
-    # 1) Xotirada bor, jurnalda boshqacha
+    to_write = []
+    # Xotirada bor, jurnalda boshqacha -> jurnalga backup holati yoziladi
     for uid, tariff in list(user_tariffs.items()):
         if log_map.get(uid) != tariff:
-            _append_tariff_log(uid, tariff, source=source)
-            written += 1
-    # 2) Jurnalda pullik, xotirada umuman yo'q → backup'da o'chirilgan demak
-    for uid, tariff in log_map.items():
-        if tariff != "free" and uid not in user_tariffs:
-            _append_tariff_log(uid, "free", source=f"{source}_removed")
-            written += 1
+            to_write.append((uid, tariff))
+    written = _append_tariff_log_many(to_write, source=source)
+    # Jurnalda pullik, backup'da yo'q -> TEGMAYMIZ, faqat ro'yxatini qaytaramiz
+    absent_paid = sorted(
+        uid for uid, tariff in log_map.items()
+        if tariff != "free" and uid not in user_tariffs
+    )
     if written:
         logging.info(f"🗂 Tariff jurnali moslashtirildi ({source}): {written} yozuv")
-    return written
+    if absent_paid:
+        logging.warning(
+            f"⚠️ Backup'da yo'q, jurnalda PULLIK userlar (tegilmadi): {absent_paid}"
+        )
+    return written, absent_paid
 
 
 def track_user(update):
@@ -874,7 +1129,10 @@ def _is_duplicate_grant(user_id, tariff_key):
         for k in [k for k, ts in _recent_grants.items() if now - ts > GRANT_DEDUPE_WINDOW_SEC]:
             _recent_grants.pop(k, None)
         prev = _recent_grants.get(key)
-        if prev is not None and now - prev <= GRANT_DEDUPE_WINDOW_SEC:
+        # Faqat oldingi grant hali AMALDA bo'lsa dublikat hisoblanadi.
+        # /revoke qilingan bo'lsa (joriy tarif boshqa) — bu yangi, qonuniy grant.
+        if (prev is not None and now - prev <= GRANT_DEDUPE_WINDOW_SEC
+                and user_tariffs.get(int(user_id)) == tariff_key):
             return True
         _recent_grants[key] = now
         return False
@@ -1123,10 +1381,14 @@ def _run_yt_dlp(url, output_template, use_cookies=True, player_client=None):
         "--audio-format", "wav",
         "--no-playlist",
         "--no-warnings",
-        "--js-runtimes", "node",
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     ]
+    # YouTube imzolarini yechish uchun JS runtime. Docker image'da nodejs bor
+    # (Dockerfile'ga qo'shildi); lokal mashinada node bo'lmasa flag'ni
+    # bermaymiz — yt-dlp o'zi topganini ishlatadi yoki runtime'siz urinadi.
+    if have_cmd("node"):
+        cmd.extend(["--js-runtimes", "node"])
     if use_cookies:
         cookies_path = _prepare_cookies_file()
         if cookies_path:
@@ -1147,6 +1409,35 @@ def _run_yt_dlp(url, output_template, use_cookies=True, player_client=None):
             stdout = ""
         return _T()
     return result
+
+
+# yt-dlp o'z-o'zini yangilash — YouTube tez-tez himoyasini o'zgartiradi va
+# eski yt-dlp "Sign in to confirm you're not a bot" / extraction xatolari bera
+# boshlaydi. Yangi versiya odatda 1-2 kun ichida tuzatadi. Har 6 soatda ko'pi
+# bilan bir marta urinamiz (spam bo'lmasin).
+_yt_dlp_last_update = {"ts": 0.0}
+_YT_DLP_UPDATE_INTERVAL = 6 * 3600
+
+
+def _try_self_update_yt_dlp():
+    """pip orqali yt-dlp'ni yangilashga urinadi. Returns True — yangilandi."""
+    now = time.time()
+    if now - _yt_dlp_last_update["ts"] < _YT_DLP_UPDATE_INTERVAL:
+        return False
+    _yt_dlp_last_update["ts"] = now
+    try:
+        logging.warning("🔄 yt-dlp yangilanmoqda (YouTube himoyasi o'zgargan bo'lishi mumkin)...")
+        r = subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--no-cache-dir", "-U", "yt-dlp"],
+            capture_output=True, text=True, timeout=180,
+        )
+        if r.returncode == 0:
+            logging.info("✅ yt-dlp yangilandi")
+            return True
+        logging.warning(f"yt-dlp yangilash xato: {(r.stderr or '')[:200]}")
+    except Exception as e:
+        logging.warning(f"yt-dlp yangilash istisno: {e}")
+    return False
 
 
 def download_audio_from_url(url):
@@ -1192,20 +1483,34 @@ def download_audio_from_url(url):
                 {"use_cookies": False, "player_client": None},
             ]
 
-        result = None
-        last_stderr = ""
-        for i, attempt in enumerate(attempts):
-            logging.info(f"yt-dlp urinish #{i+1}: cookies={attempt['use_cookies']}, player={attempt['player_client']}")
-            result = _run_yt_dlp(url, output_template, **attempt)
-            if result.returncode == 0:
-                logging.info(f"✅ yt-dlp urinish #{i+1} muvaffaqiyatli")
-                break
-            last_stderr = (result.stderr or "").strip()
-            # Bo'sh bot detection xatosi bo'lsa keyingi urinish; boshqa xato bo'lsa to'xtatamiz
-            low = last_stderr.lower()
-            if not ("sign in" in low or "not a bot" in low or "confirm" in low or
-                    "http error 403" in low or "forbidden" in low):
-                break
+        def _run_attempts():
+            res, last_err = None, ""
+            for i, attempt in enumerate(attempts):
+                logging.info(f"yt-dlp urinish #{i+1}: cookies={attempt['use_cookies']}, player={attempt['player_client']}")
+                res = _run_yt_dlp(url, output_template, **attempt)
+                if res.returncode == 0:
+                    logging.info(f"✅ yt-dlp urinish #{i+1} muvaffaqiyatli")
+                    return res, last_err
+                last_err = (res.stderr or "").strip()
+                # Bot-detection xatosi bo'lsa keyingi strategiya; boshqa xato bo'lsa to'xtaymiz
+                low_e = last_err.lower()
+                if not ("sign in" in low_e or "not a bot" in low_e or "confirm" in low_e or
+                        "http error 403" in low_e or "forbidden" in low_e):
+                    return res, last_err
+            return res, last_err
+
+        result, last_stderr = _run_attempts()
+
+        # Hamma strategiya yiqildi + xato "YouTube himoyasi" turida bo'lsa —
+        # yt-dlp'ni yangilab, BIR marta qayta urinamiz. YouTube himoya
+        # o'zgarishlarini yt-dlp yangi versiyalari tezda tuzatadi.
+        if result.returncode != 0:
+            low_r = last_stderr.lower()
+            if ("sign in" in low_r or "not a bot" in low_r or "confirm" in low_r
+                    or "unable to extract" in low_r or "signature" in low_r
+                    or "http error 403" in low_r):
+                if _try_self_update_yt_dlp():
+                    result, last_stderr = _run_attempts()
 
         if result.returncode != 0:
             stderr = last_stderr
@@ -1608,22 +1913,6 @@ def _find_font(candidates=None):
     return None
 
 
-def md_escape(text):
-    """Telegram Markdown (V1) uchun maxsus belgilarni qochirish.
-
-    NEGA KERAK: foydalanuvchi ismi yoki matni escape'siz `parse_mode="Markdown"`
-    xabarga qo'yilsa, Telegram butun xabarni RAD ETADI ("Can't parse entities").
-    Ya'ni ismida `_` bo'lgan odam /start ololmasdi, `*` yuborgan odamning
-    murojaati adminga umuman yetmasdi — jimgina yo'qolardi.
-    """
-    if not text:
-        return ""
-    out = str(text)
-    for ch in ("_", "*", "`", "["):
-        out = out.replace(ch, "\\" + ch)
-    return out
-
-
 def _normalize_uzbek_apostrophes(text):
     """O'zbek tilidagi noto'g'ri apostroflarni to'g'rilash:
     `o``, `o'` → `o'` (tipografik); `g`` → `g'`. Bu PDF/matn sifati uchun.
@@ -1642,36 +1931,6 @@ def _normalize_uzbek_apostrophes(text):
         out = out.replace(a, b)
     return out
 
-
-def _is_user_pro_tariff(user_id):
-    """User Pro Uzbek tarifida (pro_* yoki legacy pro)mi?"""
-    tariff = get_user_tariff(user_id)
-    return tariff.startswith("pro_") or tariff == "pro"
-
-
-def _enforce_alphabet_by_tariff(user_id, requested_alphabet):
-    """Cyrillic alifbo faqat Pro Uzbek tarif user'lar uchun.
-    Oddiy/Free tarif user Cyrillic so'rasa — Latin'ga qaytariladi va xabar yuboriladi.
-    Returns: effective_alphabet (latin yoki cyrillic)."""
-    if requested_alphabet != "cyrillic":
-        return requested_alphabet
-    if _is_user_pro_tariff(user_id):
-        return "cyrillic"
-    # Oddiy user Cyrillic so'radi — Latin majburiy
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-        requests.post(url, json={
-            "chat_id": user_id,
-            "text": (
-                "ℹ️ *Eslatma:* Kirill alifbosi faqat *Pro Uzbek* tarifi uchun.\n\n"
-                "Sizning matn Lotin alifbosida tayyorlandi.\n"
-                "Kirill alifbo + yuqori sifat uchun: /tariflar → ✨ O'zbek tili pro"
-            ),
-            "parse_mode": "Markdown",
-        }, timeout=15)
-    except Exception as e:
-        logging.debug(f"Alphabet warning yuborish xato: {e}")
-    return "latin"
 
 
 # O'zbek Lotin → Kirill: ko'p belgili (digraf) tokenlar (o'/g' alohida ishlanadi)
@@ -1755,9 +2014,6 @@ def make_pdf(text, title="Audio & Konspekt — Matn"):
     pdf.add_page()
     pdf.set_title(title)
 
-    # Eslatma: ilgari bu yerda alohida "Arabic" font ham qo'shilardi, lekin
-    # pdf.set_font("Arabic") hech qachon chaqirilmasdi — ya'ni foydasiz edi.
-    # Arab yozuvi DejaVu/Noto ichidagi qamrov bilan chiqadi.
     body_font = _find_font()
 
     if body_font:
@@ -3406,7 +3662,7 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
     # allaqachon o'z retry/backoff'i bor, shuning uchun bu yerda uzoq kutish
     # ortiqcha edi.
     chunk_idx_to_path = {idx: path for idx, path in enumerate(chunks_to_process, 1)}
-    whisper_pass_waits = [15, 45, 90]  # jami ~2.5 daqiqa (avval ~8 daqiqa)
+    whisper_pass_waits = [30, 60, 180]  # jami ~4.5 daq: 429-storm'dan chiqishga yetadi, slotni 8 daq band qilmaydi
     for pass_num, wait_sec in enumerate(whisper_pass_waits, 1):
         if not failed_chunks or len(failed_chunks) >= total:
             break
@@ -3706,87 +3962,31 @@ def _format_lost_chunks_text(lost_chunks):
 # ── BOT HELPERS ─────────────────────────────────────────────────────────────
 
 async def send_result(update, msg, text):
-    """Transkripsiya natijasini 2 ta PDF qilib yuborish (Lotin + Kirill).
+    """Transkripsiya natijasini yetkazish — sync _send_text_card'ga delegatsiya.
 
-    Returns True — kamida bitta PDF (yoki fallback matn) haqiqatan yetkazilgan
-    bo'lsa. Chaqiruvchi shu qiymatga qarab tarif daqiqasini yechadi."""
+    Returns True — natija haqiqatan yetkazilgan bo'lsa (chaqiruvchi shu
+    qiymatga qarab tarif daqiqasini yechadi).
+
+    MUHIM: bu funksiya ATAYLAB yupqa wrapper. Ilgari bu yerda _send_text_and_pdf
+    bilan deyarli bir xil (lekin sekin farqlanib borayotgan) dublikat delivery
+    kodi bor edi — billing-critical mantiq ikki joyda yashardi va bittasiga
+    qilingan tuzatish ikkinchisidan o'tib ketardi. Endi yagona yo'l:
+    _send_text_card -> _send_text_and_pdf (sifat ogohlantirishi, 2 PDF,
+    fallback matn, remember_transcript — hammasi o'sha yerda)."""
     if not text:
-        await msg.edit_text("Matn aniqlanmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi.")
-        return False
-
-    user_id = update.effective_user.id
-    # Matnni RAM'da eslab qolish (diskka yozilmaydi — fayl shishmasin)
-    remember_transcript(user_id, text)
-
-    word_count = len(text.split())
-    char_count = len(text)
-
-    await msg.edit_text(
-        f"✅ <b>Transkripsiya tayyor!</b>\n\n"
-        f"📊 {word_count:,} ta so'z • {char_count:,} ta belgi\n\n"
-        f"📥 2 ta PDF tayyorlanmoqda (Lotin va Kirill)..."
-        + html.escape(_unclear_marker_note(text)),
-        parse_mode="HTML",
-    )
-
-    # 1) Lotin PDF
-    latin_ok = False
-    try:
-        latin_pdf = await asyncio.to_thread(make_pdf, text)
         try:
-            with open(latin_pdf, "rb") as f:
-                await update.message.reply_document(
-                    document=f,
-                    filename="mnsm-lotin.pdf",
-                    caption="📄 Lotin alifbosida",
-                )
-            latin_ok = True
-        finally:
-            try: os.remove(latin_pdf)
-            except Exception: pass
-    except Exception as e:
-        logging.error(f"Lotin PDF xato: {e}")
-
-    # 2) Kirill PDF
-    cyrillic_ok = False
-    try:
-        await update.message.reply_text("🔤 Kirill PDF tayyorlanmoqda...")
-        cyrillic_text = await asyncio.to_thread(convert_latin_to_cyrillic, text)
-        cyrillic_pdf = await asyncio.to_thread(make_pdf, cyrillic_text, "Audio & Konspekt — Кирилл")
-        try:
-            with open(cyrillic_pdf, "rb") as f:
-                await update.message.reply_document(
-                    document=f,
-                    filename="mnsm-kirill.pdf",
-                    caption="📄 Кирилл алифбосида",
-                )
-            cyrillic_ok = True
-        finally:
-            try: os.remove(cyrillic_pdf)
-            except Exception: pass
-    except Exception as e:
-        logging.error(f"Kirill PDF xato: {e}")
-        await update.message.reply_text("⚠️ Kirill PDF tayyorlashda muammo bo'ldi.")
-
-    if latin_ok or cyrillic_ok:
-        return True
-
-    # Hech qaysi PDF yetkazilmadi — matnni xabar sifatida berishga urinamiz
-    logging.error(f"⛔ send_result: hech qanday PDF yetkazilmadi (user {user_id})")
-    try:
-        for i in range(0, len(text), 4000):
-            await update.message.reply_text(text[i:i + 4000])
-        return True
-    except Exception as e:
-        logging.error(f"Fallback matn ham yetkazilmadi: {e}")
-        try:
-            await update.message.reply_text(
-                "❌ Natijani yetkazib bo'lmadi (texnik nosozlik).\n\n"
-                "💚 Daqiqa hisobingizdan yechilmadi. Iltimos qayta urinib ko'ring."
-            )
+            await msg.edit_text("Matn aniqlanmadi.\n\n💚 Daqiqa hisobingizdan yechilmadi.")
         except Exception:
             pass
         return False
+    # Status xabarini olib tashlaymiz — _send_text_card o'zi "Tayyor!" yuboradi
+    try:
+        await msg.delete()
+    except Exception:
+        pass
+    return await asyncio.to_thread(
+        _send_text_card, update.effective_user.id, text
+    )
 
 
 def make_progress_cb(loop, msg, base_label="🎙 Tanilmoqda"):
@@ -3815,6 +4015,26 @@ def make_progress_cb(loop, msg, base_label="🎙 Tanilmoqda"):
     return cb
 
 
+async def _transcribe_flow(update, msg, path, language, actual_duration):
+    """Umumiy transkripsiya oqimi: pool'da STT -> natija -> billing.
+
+    Uchta Telegram flow (lokal audio, file_id, URL) ilgari shu blokni
+    nusxalab yurar edi — billing qoidasi o'zgartirilsa uchta joyni unutmasdan
+    tuzatish kerak bo'lardi. Endi bitta joy.
+    Busy-guard chaqiruvchi handler ustidagi @busy_guard'da (yuklab olishdan OLDIN)."""
+    loop = asyncio.get_running_loop()
+    cb = make_progress_cb(loop, msg)
+    failed_ranges = []
+    text = await _run_heavy(transcribe_unified, path, cb, language, failed_ranges)
+    if failed_ranges:
+        await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
+    # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
+    delivered = await send_result(update, msg, text)
+    if delivered and not is_admin(update) and actual_duration > 0:
+        add_user_usage(update.effective_user.id, actual_duration)
+
+
+@busy_guard
 async def process_local_audio(update, context, file_path, duration=0, language="uz"):
     # Tarif limiti — barcha tillarda qo'llanadi
     if not await can_process_uzbek(update, duration):
@@ -3861,29 +4081,13 @@ async def process_local_audio(update, context, file_path, duration=0, language="
                     )
                     return
 
-        # heavy_task: bitta user bir vaqtda bitta ish + umumiy parallellik cheklovi
-        async with heavy_task(update.effective_user.id) as slot:
-            if not slot.entered:
-                await msg.edit_text(
-                    "⏳ Sizning oldingi faylingiz hali tayyorlanmoqda.\n"
-                    "Iltimos tugashini kuting."
-                )
-                return
-            loop = asyncio.get_running_loop()
-            cb = make_progress_cb(loop, msg)
-            failed_ranges = []
-            text = await asyncio.to_thread(transcribe_unified, file_path, cb, language, failed_ranges)
-            if failed_ranges:
-                await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
-            # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
-            delivered = await send_result(update, msg, text)
-            if delivered and not is_admin(update) and actual_duration > 0:
-                add_user_usage(update.effective_user.id, actual_duration)
+        await _transcribe_flow(update, msg, file_path, language, actual_duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
 
 
+@busy_guard
 async def process_file(update, context, file_id, suffix, duration=0, language="uz"):
     # Tarif limiti — barcha tillarda qo'llanadi
     uid = update.effective_user.id if update.effective_user else None
@@ -3956,24 +4160,7 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
                     )
                     return
 
-        # heavy_task: bitta user bir vaqtda bitta ish + umumiy parallellik cheklovi
-        async with heavy_task(update.effective_user.id) as slot:
-            if not slot.entered:
-                await msg.edit_text(
-                    "⏳ Sizning oldingi faylingiz hali tayyorlanmoqda.\n"
-                    "Iltimos tugashini kuting."
-                )
-                return
-            loop = asyncio.get_running_loop()
-            cb = make_progress_cb(loop, msg)
-            failed_ranges = []
-            text = await asyncio.to_thread(transcribe_unified, tmp_path, cb, language, failed_ranges)
-            if failed_ranges:
-                await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
-            # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
-            delivered = await send_result(update, msg, text)
-            if delivered and not is_admin(update) and actual_duration > 0:
-                add_user_usage(update.effective_user.id, actual_duration)
+        await _transcribe_flow(update, msg, tmp_path, language, actual_duration)
     except Exception as e:
         logging.error(f"Xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
@@ -3983,6 +4170,7 @@ async def process_file(update, context, file_id, suffix, duration=0, language="u
             except Exception: pass
 
 
+@busy_guard
 async def process_url(update, context, url, language="uz"):
     logging.info(f"🔗 process_url chaqirildi: lang={language}, url={url[:80]}")
     # Tarif limiti — barcha tillarda qo'llanadi (davomiylik yuklab olingach tekshiriladi)
@@ -4049,24 +4237,7 @@ async def process_url(update, context, url, language="uz"):
 
         await msg.edit_text("✅ Yuklanidi! 🎙 Matn tanilmoqda...")
 
-        # heavy_task: bitta user bir vaqtda bitta ish + umumiy parallellik cheklovi
-        async with heavy_task(update.effective_user.id) as slot:
-            if not slot.entered:
-                await msg.edit_text(
-                    "⏳ Sizning oldingi faylingiz hali tayyorlanmoqda.\n"
-                    "Iltimos tugashini kuting."
-                )
-                return
-            loop = asyncio.get_running_loop()
-            cb = make_progress_cb(loop, msg)
-            failed_ranges = []
-            text = await asyncio.to_thread(transcribe_unified, audio_path, cb, language, failed_ranges)
-            if failed_ranges:
-                await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
-            # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
-            delivered = await send_result(update, msg, text)
-            if delivered and not is_admin(update) and actual_duration > 0:
-                add_user_usage(update.effective_user.id, actual_duration)
+        await _transcribe_flow(update, msg, audio_path, language, actual_duration)
     except Exception as e:
         logging.error(f"URL xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
@@ -4105,8 +4276,9 @@ def webapp_keyboard(chat_id=None, username=None):
 
 # ── BOT HANDLERS ────────────────────────────────────────────────────────────
 
-def fresh_webapp_url(chat_id=None):
-    # chat_id argumenti backward-compat uchun qoldirildi, lekin URL'ga qo'shilmaydi.
+def fresh_webapp_url():
+    """Cache-buster bilan WebApp URL (user parametri YO'Q — autentifikatsiya
+    faqat imzolangan initData orqali)."""
     sep = "&" if "?" in WEBAPP_URL else "?"
     return f"{WEBAPP_URL}{sep}v={int(time.time())}"
 
@@ -4137,7 +4309,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=update.effective_chat.id,
             menu_button=MenuButtonWebApp(
                 text="🎙 MNSM",
-                web_app=WebAppInfo(url=fresh_webapp_url(chat_id)),
+                web_app=WebAppInfo(url=fresh_webapp_url()),
             ),
         )
     except Exception as e:
@@ -4664,6 +4836,10 @@ async def admin_revoke_callback(update: Update, context: ContextTypes.DEFAULT_TY
     label = md_escape(_user_label(target_id))
     user_tariffs[target_id] = "free"
     user_uzbek_usage[target_id] = 0
+    # Dedupe oynasini tozalaymiz — revoke'dan keyin qayta berish qonuniy
+    with _grant_lock:
+        for k in [k for k in _recent_grants if k[0] == target_id]:
+            _recent_grants.pop(k, None)
     _append_tariff_log(target_id, "free", source="revoke")
     _save_user_data()
     back = [[InlineKeyboardButton("⬅️ Panelga qaytish", callback_data="adm:back")]]
@@ -4846,6 +5022,10 @@ async def revoke_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Bepul tarifga qaytarish + daqiqalarni tiklash
     user_tariffs[target_id] = "free"
     user_uzbek_usage[target_id] = 0
+    # Dedupe oynasini tozalaymiz — revoke'dan keyin qayta berish qonuniy
+    with _grant_lock:
+        for k in [k for k in _recent_grants if k[0] == target_id]:
+            _recent_grants.pop(k, None)
     _append_tariff_log(target_id, "free", source="revoke")
     _save_user_data()
     await update.message.reply_text(
@@ -5615,6 +5795,21 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
                 return True
         except Exception as e:
             logging.debug(f"edit_message_text xato: {e}")
+        # Markdown yiqildi (masalan, username'da _ bor edi va Telegram saqlangan
+        # matnda escape'lar yo'q) — PLAIN matn bilan qayta urinamiz, status
+        # admin uchun baribir ko'rinsin (* belgilarisiz).
+        plain_suffix = suffix.replace("*", "")
+        try:
+            if query.message.caption is not None:
+                await query.edit_message_caption(
+                    caption=(query.message.caption or "") + plain_suffix)
+                return True
+            if query.message.text is not None:
+                await query.edit_message_text(
+                    text=(query.message.text or "") + plain_suffix)
+                return True
+        except Exception as e:
+            logging.debug(f"plain edit ham xato: {e}")
         try:
             # Tugmalarni olib tashlash (eng kam mumkin)
             await query.edit_message_reply_markup(reply_markup=None)
@@ -5628,7 +5823,8 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
             # Takroriy bosish — tarif allaqachon berilgan, ikkinchi marta bermaymiz
             await query.answer(
                 f"ℹ️ Bu tarif allaqachon berilgan ({t['name']}). "
-                f"Ikkinchi marta berilmadi.",
+                f"Ikkinchi marta berilmadi."
+                f"Ikkinchi TO'LOV bo'lsa: /grant {target_id} {tariff_key} force",
                 show_alert=True,
             )
             await _update_admin_message("\n\n↩️ *Takroriy bosish e'tiborsiz qoldirildi*")
@@ -5897,13 +6093,18 @@ async def restore_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # USTUN qo'yadi. Shuning uchun log'ga tegmasak, backup'dagi tarif darrov
         # log tomonidan qayta yozilardi — ya'ni /restore tarifni pasaytira olmasdi.
         # Backup holatini log'ga yakuniy yozuv sifatida qo'shamiz.
-        reconciled = _reconcile_tariff_log_with_memory(source="restore")
+        reconciled, absent_paid = await asyncio.to_thread(
+            _reconcile_tariff_log_with_memory, "restore"
+        )
 
         await update.message.reply_text(
             f"✅ *Data tiklandi!*\n\n"
             f"👥 Userlar: *{len(user_uzbek_usage)}*\n"
             f"💎 Paid: *{sum(1 for t in user_tariffs.values() if t != 'free')}*\n"
-            f"🗂 Jurnal moslashtirildi: *{reconciled}* ta yozuv\n\n"
+            f"🗂 Jurnal moslashtirildi: *{reconciled}* ta yozuv"
+            + (f"\n⚠️ {len(absent_paid)} ta PULLIK user backup'da yo'q — tegilmadi: `{', '.join(str(u) for u in absent_paid[:20])}`"
+               if absent_paid else "") +
+            f"\n\n"
             f"Tekshirish: /stats",
             parse_mode="Markdown",
         )
@@ -6089,12 +6290,15 @@ async def process_pdf_via_translation(update, context, file_id, source_lang, tar
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
             tmp_path = tmp.name
         await file.download_to_drive(tmp_path)
-        # process_pdf_translation_for_user — sinxron, threadda ishlatamiz
-        threading.Thread(
-            target=process_pdf_translation_for_user,
-            args=(int(user_id), tmp_path, source_lang, target_lang),
-            daemon=True,
-        ).start()
+        # Umumiy navbat orqali — cap, duplicate himoyasi va navbat cheklovi bilan.
+        # (Ilgari bu yo'l xom threading.Thread ochib, hamma cheklovni chetlab o'tardi.)
+        accepted = submit_job(
+            user_id, process_pdf_translation_for_user,
+            (user_id, tmp_path, source_lang, target_lang),
+            label="pdf-tarjima-tg", cleanup_path=tmp_path,
+        )
+        if not accepted:
+            return  # submit_job foydalanuvchiga sababini yozdi va faylni o'chirdi
     except Exception as e:
         logging.error(f"PDF tarjima yuklash xato: {e}")
         await update.message.reply_text(
@@ -6105,6 +6309,7 @@ async def process_pdf_via_translation(update, context, file_id, source_lang, tar
             except Exception: pass
 
 
+@busy_guard
 async def process_pdf_to_voice(update, context, file_id):
     """PDF dan matn ajratib, faqat ovozga aylantirib yuboradi (matn ko'rsatilmaydi).
     Tarif limiti qo'llanadi — natija audio davomiyligi ishlatilgan daqiqaga qo'shiladi."""
@@ -6190,6 +6395,7 @@ async def process_pdf_to_voice(update, context, file_id):
 
 
 # === [TARJIMA MODULI — ASOSIY WORKFLOW] =========================================
+@busy_guard
 async def process_translation(update, context, file_path, duration_sec, source_lang, target_lang="uz"):
     """Audio'ni xorijiy tildan tanlangan tilga tarjima qilish.
     Workflow: Whisper STT → GPT-4o tarjima → matn + PDF + audio (TTS) target tilda.
@@ -6267,6 +6473,7 @@ async def process_translation_from_file_id(update, context, file_id, suffix, dur
 # === [/TARJIMA MODULI — ASOSIY WORKFLOW] =======================================
 
 
+@busy_guard
 async def text_to_voice(update, context, text):
     """Berilgan matnni ovozli MP3 ga aylantirib yuboradi.
     Tarif limiti qo'llanadi — natija audio davomiyligi ishlatilgan daqiqaga qo'shiladi."""
@@ -6867,7 +7074,8 @@ async def ai_tools_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not record or not record.get("text"):
         await context.bot.send_message(
             chat_id=user_id,
-            text="⚠️ Saqlangan matn yo'q (24 soatdan oshgan bo'lishi mumkin).\n"
+            text="⚠️ Saqlangan matn topilmadi — 24 soatdan oshgan yoki bot"
+                 " yangilangan bo'lishi mumkin.\n"
                  "Iltimos audio/videoni qayta yuboring.",
         )
         return
@@ -7497,12 +7705,9 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
                     "• Mikrofon yaqinroq bo'lsin"
                 )
             else:
-                # === [ALIFBO] Kirill so'ralsa matnni o'tkazamiz ===
-                # Cyrillic faqat Pro tariflar uchun
-                output_alphabet = _enforce_alphabet_by_tariff(user_id, output_alphabet)
-                if output_alphabet == "cyrillic":
-                    telegram_send_message(user_id, "🔤 Matn Kirill alifbosiga o'tkazilmoqda...")
-                    text = convert_latin_to_cyrillic(text)
+                # _send_text_and_pdf LOTIN matndan ikkala alifboda PDF yasaydi.
+                # Oldindan Kirillga o'girish MUMKIN EMAS: ikkinchi konversiya
+                # matnni buzadi va "Lotin" nomli PDF aslida Kirill chiqadi.
                 # success FAQAT natija haqiqatan yetkazilgan bo'lsa True bo'ladi
                 success = _send_text_and_pdf(user_id, text)
         else:
@@ -7622,12 +7827,7 @@ def process_translation_for_user(user_id, file_path, source_lang, target_lang="u
             # 3) Natija — matn + PDF
             src_label = TRANSLATION_LANGS.get(source_lang, source_lang)
             tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
-            # === [ALIFBO] target=uz va Kirill so'ralsa, kirill alifbosiga o'tkazamiz ===
-            output_alphabet = _enforce_alphabet_by_tariff(user_id, output_alphabet)
-            if output_alphabet == "cyrillic" and target_lang == "uz":
-                progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
-                translated = convert_latin_to_cyrillic(translated)
-                tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
+            # Ikkala alifbo PDF'i baribir yuboriladi — oldindan konversiya YO'Q
             header = f"🌐 <b>Tarjima ({html.escape(src_label)} → {html.escape(tgt_label)}):</b>"
             # success FAQAT natija haqiqatan yetkazilgan bo'lsa True
             success = _send_text_card(user_id, translated, header=header)
@@ -7832,12 +8032,7 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
             return
         # 4) Natija — matn + PDF + audio (target tilda)
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
-        # === [ALIFBO] Kirill so'ralsa O'zbek matni kirillga o'tkazamiz ===
-        output_alphabet = _enforce_alphabet_by_tariff(user_id, output_alphabet)
-        if output_alphabet == "cyrillic" and target_lang == "uz":
-            progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
-            translated = convert_latin_to_cyrillic(translated)
-            tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
+        # Ikkala alifbo PDF'i baribir yuboriladi — oldindan konversiya YO'Q
         header = f"🌐 <b>PDF tarjima ({html.escape(tgt_label)}):</b>"
         # success FAQAT natija haqiqatan yetkazilgan bo'lsa True
         success = _send_text_card(user_id, translated, header=header)
@@ -7948,12 +8143,7 @@ def process_url_translation_for_user(user_id, url, source_lang, target_lang="uz"
         # 5) Natija — matn + PDF
         src_label = TRANSLATION_LANGS[source_lang]
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
-        # === [ALIFBO] Kirill so'ralsa O'zbek matni kirillga o'tkazamiz ===
-        output_alphabet = _enforce_alphabet_by_tariff(user_id, output_alphabet)
-        if output_alphabet == "cyrillic" and target_lang == "uz":
-            progress.set_text("Matn Kirill alifbosiga o'tkazilmoqda...")
-            translated = convert_latin_to_cyrillic(translated)
-            tgt_label = "🇺🇿 Ўзбекча (Кирилл)"
+        # Ikkala alifbo PDF'i baribir yuboriladi — oldindan konversiya YO'Q
         header = f"🌐 <b>Tarjima ({html.escape(src_label)} → {html.escape(tgt_label)}):</b>"
         # success FAQAT natija haqiqatan yetkazilgan bo'lsa True
         success = _send_text_card(user_id, translated, header=header)
@@ -8026,11 +8216,7 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
             _send_failed_ranges_notice(user_id, failed_ranges)
         success = False
         if text and text.strip() != "Matn aniqlanmadi.":
-            # === [ALIFBO] Kirill faqat Pro tariflar uchun (boshqa oqimlar bilan bir xil) ===
-            output_alphabet = _enforce_alphabet_by_tariff(user_id, output_alphabet)
-            if output_alphabet == "cyrillic":
-                telegram_send_message(user_id, "🔤 Matn Kirill alifbosiga o'tkazilmoqda...")
-                text = convert_latin_to_cyrillic(text)
+            # Oldindan konversiya YO'Q — _send_text_and_pdf ikkala alifboni yuboradi
             success = _send_text_and_pdf(user_id, text)
         else:
             telegram_send_message(
@@ -8051,157 +8237,6 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
             shutil.rmtree(os.path.dirname(audio_path), ignore_errors=True)
 
 
-# === [JOB QUEUE] Og'ir ishlarni cheklangan sonda bajarish =======================
-# Har WebApp so'rovi ilgari to'g'ridan-to'g'ri `threading.Thread(...).start()`
-# qilardi — cheklovsiz. Endi hamma og'ir ish shu navbatdan o'tadi.
-_job_semaphore = threading.Semaphore(MAX_CONCURRENT_JOBS)
-_job_counter_lock = threading.Lock()
-_job_stats = {"running": 0, "queued": 0}
-
-
-def _job_slots_info():
-    with _job_counter_lock:
-        return _job_stats["running"], _job_stats["queued"]
-
-
-# Telegram'ga to'g'ridan-to'g'ri yuborilgan fayllar (voice/audio/video/PDF)
-# submit_job'dan o'tmaydi — ular asyncio handler'ida ishlanadi. Ular ham
-# cheklanmasa, 5 ta ovozli xabar ketma-ket yuborilganda 5 ta parallel
-# transkripsiya boshlanib ketardi. Shuning uchun alohida async semafor.
-_async_job_semaphore = None
-
-
-def _get_async_job_semaphore():
-    """asyncio.Semaphore'ni birinchi ishlatishda yaratamiz (event loop kerak)."""
-    global _async_job_semaphore
-    if _async_job_semaphore is None:
-        _async_job_semaphore = asyncio.Semaphore(MAX_CONCURRENT_JOBS)
-    return _async_job_semaphore
-
-
-class heavy_task:
-    """Telegram handler'lari uchun `async with heavy_task(user_id):`.
-
-    Ikki ish qiladi:
-      1) Bitta foydalanuvchi bir vaqtda bitta og'ir ish (duplicate himoyasi)
-      2) Umumiy parallellikni MAX_CONCURRENT_JOBS bilan cheklaydi
-
-    Band bo'lsa `entered` False bo'ladi va handler darrov chiqib ketishi kerak."""
-
-    def __init__(self, user_id):
-        self.user_id = user_id
-        self.entered = False
-
-    async def __aenter__(self):
-        if _is_user_processing(self.user_id):
-            self.entered = False
-            return self
-        _mark_processing(self.user_id)
-        try:
-            await _get_async_job_semaphore().acquire()
-        except Exception:
-            _unmark_processing(self.user_id)
-            raise
-        self.entered = True
-        return self
-
-    async def __aexit__(self, *exc):
-        if self.entered:
-            _get_async_job_semaphore().release()
-            _unmark_processing(self.user_id)
-        return False
-
-
-def submit_job(user_id, target, args=(), label="ish", cleanup_path=None):
-    """Og'ir ishni navbatga qo'yadi. Returns True — qabul qilindi.
-
-    Navbat to'lib ketgan bo'lsa False qaytaradi va foydalanuvchiga xabar
-    yuboradi (jimgina yo'qotishdan ko'ra ochiq rad etish yaxshi).
-
-    cleanup_path — rad etilganda o'chiriladigan vaqtinchalik fayl. Odatda uni
-    ishning o'zi finally'da o'chiradi, lekin ish umuman boshlanmasa kim ham
-    o'chirmasdi.
-
-    MUHIM: bu funksiya aiohttp event loop thread'idan chaqiriladi, shuning uchun
-    ichida bloklaydigan I/O YO'Q — hisoblash tez, xabar yuborish esa alohida
-    thread'da."""
-    # Bitta foydalanuvchi bir vaqtda bitta og'ir ish. Ilgari bu himoya faqat
-    # process_audio_for_user ichida edi — tarjima, URL va PDF oqimlarida yo'q edi,
-    # ya'ni tugmani bir necha marta bosgan foydalanuvchi bir necha ish ochib,
-    # navbatni band qilib, ortiqcha API xarajati keltirardi.
-    if _is_user_processing(user_id):
-        if cleanup_path:
-            try: os.remove(cleanup_path)
-            except Exception: pass
-        threading.Thread(
-            target=telegram_send_message,
-            args=(user_id,
-                  "⏳ Sizning oldingi faylingiz hali tayyorlanmoqda.\n"
-                  "Iltimos tugashini kuting — daqiqalar ortiqcha yechilmasligi uchun."),
-            daemon=True,
-        ).start()
-        return False
-
-    with _job_counter_lock:
-        if _job_stats["queued"] >= MAX_QUEUED_JOBS:
-            logging.warning(
-                f"🚦 Navbat to'la ({_job_stats['queued']}), rad etildi: "
-                f"user={user_id}, {label}"
-            )
-            if cleanup_path:
-                try: os.remove(cleanup_path)
-                except Exception: pass
-            threading.Thread(
-                target=telegram_send_message,
-                args=(user_id,
-                      "🚦 Hozir server juda band.\n\n"
-                      "Iltimos 5-10 daqiqadan keyin qayta yuboring.\n"
-                      "💚 Daqiqa hisobingizdan yechilmadi."),
-                daemon=True,
-            ).start()
-            return False
-        _job_stats["queued"] += 1
-    # Navbatga qo'yilgan paytdan belgilaymiz — kutayotgan ish ham "band" hisoblanadi
-    _mark_processing(user_id)
-
-    def _runner():
-        waited_notice_sent = False
-        # Slot bo'shashini kutamiz. Uzoq kutilsa foydalanuvchini ogohlantiramiz.
-        acquired = _job_semaphore.acquire(timeout=5)
-        if not acquired:
-            running, queued = _job_slots_info()
-            telegram_send_message(
-                user_id,
-                f"⏳ Navbatdasiz — hozir {running} ta fayl qayta ishlanmoqda.\n"
-                f"Sizniki avtomat boshlanadi, kutib turing."
-            )
-            waited_notice_sent = True
-            _job_semaphore.acquire()
-        with _job_counter_lock:
-            _job_stats["queued"] -= 1
-            _job_stats["running"] += 1
-        try:
-            if waited_notice_sent:
-                telegram_send_message(user_id, "▶️ Navbatingiz keldi, boshlandi...")
-            target(*args)
-        except Exception as e:
-            logging.error(f"Job xatosi ({label}, user={user_id}): {e}", exc_info=True)
-            telegram_send_message(
-                user_id,
-                f"❌ Kutilmagan xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
-            )
-        finally:
-            with _job_counter_lock:
-                _job_stats["running"] -= 1
-            _job_semaphore.release()
-            # MUHIM: belgini olib tashlash — aks holda user 30 daqiqaga bloklanadi
-            _unmark_processing(user_id)
-
-    threading.Thread(target=_runner, daemon=True, name=f"job-{label}-{user_id}").start()
-    return True
-# === [/JOB QUEUE] ==============================================================
-
-
 # === [WEBAPP AUTH] Telegram initData imzosini tekshirish ========================
 # MUHIM: user_id NI HECH QACHON klient tanasidan olmaymiz. Telegram WebApp
 # `initData` qatorini bot token bilan imzolaydi; imzoni serverda tekshirib,
@@ -8214,7 +8249,10 @@ def submit_job(user_id, target, args=(), label="ish", cleanup_path=None):
 # data_check_string — `hash` va `signature` dan tashqari barcha maydonlar
 # "key=value" ko'rinishida, kalit bo'yicha saralanib "\n" bilan birlashtirilgan.
 
-INIT_DATA_MAX_AGE = 24 * 3600  # 24 soat — undan eski initData qabul qilinmaydi
+# initData replay oynasi. Qisqa oyna = o'g'irlangan initData tezroq eskiradi.
+# 6 soat default: WebApp'da 2-3 soatlik mikrofon yozuvi ham yakunlangunicha
+# imzo amal qilishi kerak (Telegram initData'ni faqat ochilishda beradi).
+INIT_DATA_MAX_AGE = int(os.getenv("INIT_DATA_MAX_AGE_HOURS", "6")) * 3600
 
 
 def _verify_init_data(init_data):
@@ -8236,9 +8274,8 @@ def _verify_init_data(init_data):
         return None
 
     data_check_string = "\n".join(f"{k}={fields[k]}" for k in sorted(fields))
-    secret_key = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
     expected_hash = hmac.new(
-        secret_key, data_check_string.encode(), hashlib.sha256
+        _WEBAPP_SECRET, data_check_string.encode(), hashlib.sha256
     ).hexdigest()
     if not hmac.compare_digest(expected_hash, received_hash):
         logging.warning("🚫 WebApp initData imzosi mos kelmadi")
@@ -8301,14 +8338,23 @@ async def handle_webapp_audio(request):
         if not ext.startswith('.'):
             ext = '.' + ext
         tmp_path = save_base64_audio(audio_data, ext)
-        # === [TARJIMA] Tarjima rejimi yoqilgan bo'lsa, thread'iga target_lang bilan uzatamiz ===
-        if translation_lang:
-            submit_job(user_id, process_translation_for_user,
+        # === [TARJIMA] Tarjima faqat source != target bo'lsa (upload/url bilan bir xil).
+        # Ilgari bu guard yo'q edi: uz->uz mikrofon yozuvi tarjima pipeline'idan
+        # o'tib, oddiy STT o'rniga 2x narxda hisoblanardi.
+        if translation_lang and translation_lang != target_lang:
+            accepted = submit_job(user_id, process_translation_for_user,
                        (user_id, tmp_path, translation_lang, target_lang), label="tarjima",
                        cleanup_path=tmp_path)
         else:
-            submit_job(user_id, process_audio_for_user,
-                       (user_id, tmp_path, language), label="audio", cleanup_path=tmp_path)
+            stt_lang = translation_lang if translation_lang else language
+            if stt_lang not in ("uz", "ru", "en"):
+                stt_lang = "uz"
+            accepted = submit_job(user_id, process_audio_for_user,
+                       (user_id, tmp_path, stt_lang), label="audio", cleanup_path=tmp_path)
+        if not accepted:
+            # WebApp toast'i ham xatoni ko'rsatsin (ilgari confetti chiqardi!)
+            return web.json_response(
+                {"error": "busy", "message": BUSY_MESSAGE}, status=429, headers=cors_headers())
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP audio xatosi: {e}")
@@ -8373,14 +8419,16 @@ async def handle_webapp_upload(request):
                 with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
                     tmp_path = tmp.name
                     while True:
-                        block = await part.read_chunk(256 * 1024)
+                        block = await part.read_chunk(1024 * 1024)
                         if not block:
                             break
                         written += len(block)
                         if written > MAX_UPLOAD_BYTES:
                             too_big = True
                             break
-                        tmp.write(block)
+                        # Diskka yozish thread'da — sekin disk katta yuklamada
+                        # boshqa HTTP so'rovlarni (index, /url) muzlatmasin
+                        await asyncio.to_thread(tmp.write, block)
                 if too_big or written == 0:
                     try: os.remove(tmp_path)
                     except Exception: pass
@@ -8398,29 +8446,34 @@ async def handle_webapp_upload(request):
             return web.json_response({"error": "fayl yo'q"}, status=400, headers=cors_headers())
         # === [PDF → MP3] WebApp PDF flow — faqat audio chiqsin (matn yo'q) ===
         if ext == ".pdf" and pdf_audio_lang:
-            submit_job(user_id, process_pdf_audio_only,
+            accepted = submit_job(user_id, process_pdf_audio_only,
                        (user_id, tmp_path, pdf_audio_lang), label="pdf-mp3", cleanup_path=tmp_path)
         # === [TARJIMA] PDF + translation_lang -> PDF tarjima (har doim O'zbek tiliga) ===
         elif ext == ".pdf" and translation_lang:
             # PDF tarjima uchun target HAR DOIM O'zbek (klient talabi)
-            submit_job(user_id, process_pdf_translation_for_user,
+            accepted = submit_job(user_id, process_pdf_translation_for_user,
                        (user_id, tmp_path, translation_lang, "uz", output_alphabet),
                        label="pdf-tarjima", cleanup_path=tmp_path)
         # PDF tarjimasiz — oddiy PDF -> ovoz (default O'zbekcha)
         elif ext == ".pdf":
-            submit_job(user_id, process_pdf_for_user, (user_id, tmp_path),
+            accepted = submit_job(user_id, process_pdf_for_user, (user_id, tmp_path),
                        label="pdf-audio", cleanup_path=tmp_path)
         # Audio/video + translation_lang -> tarjima (faqat source != target bo'lsa)
         elif translation_lang and translation_lang != target_lang:
-            submit_job(user_id, process_translation_for_user,
+            accepted = submit_job(user_id, process_translation_for_user,
                        (user_id, tmp_path, translation_lang, target_lang, output_alphabet),
                        label="tarjima", cleanup_path=tmp_path)
         # Oddiy audio/video -> oddiy STT (source==target yoki til tanlanmagan)
         else:
             stt_lang = translation_lang if translation_lang else language
-            submit_job(user_id, process_audio_for_user,
+            accepted = submit_job(user_id, process_audio_for_user,
                        (user_id, tmp_path, stt_lang, output_alphabet), label="audio",
                        cleanup_path=tmp_path)
+        if not accepted:
+            # Rad etildi (band/navbat to'la) — WebApp toast'i xatoni ko'rsatsin,
+            # ilgari bu holatda ham "ok" + confetti chiqardi
+            return web.json_response(
+                {"error": "busy", "message": BUSY_MESSAGE}, status=429, headers=cors_headers())
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP upload xatosi: {e}")
@@ -8460,13 +8513,16 @@ async def handle_webapp_url_post(request):
         # === [TARJIMA] Tarjima rejimi (source + target) ===
         # MUHIM: agar source == target (masalan, Uz->Uz) tarjimasiz oddiy STT
         if translation_lang and translation_lang != target_lang:
-            submit_job(user_id, process_url_translation_for_user,
+            accepted = submit_job(user_id, process_url_translation_for_user,
                        (user_id, url, translation_lang, target_lang, output_alphabet), label="url-tarjima")
         else:
             # Oddiy transkripsiya — manba til tanlangan bo'lsa shuni ishlatamiz
             stt_lang = translation_lang if translation_lang else language
-            submit_job(user_id, process_url_for_user,
+            accepted = submit_job(user_id, process_url_for_user,
                        (user_id, url, stt_lang, output_alphabet), label="url")
+        if not accepted:
+            return web.json_response(
+                {"error": "busy", "message": BUSY_MESSAGE}, status=429, headers=cors_headers())
         return web.json_response({"status": "ok"}, headers=cors_headers())
     except Exception as e:
         logging.error(f"HTTP URL xatosi: {e}")
@@ -8568,10 +8624,29 @@ def main():
         print("   ffmpeg: https://www.gyan.dev/ffmpeg/builds/ (winget: Gyan.FFmpeg)")
         print("   yt-dlp: pip install -U yt-dlp")
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    # concurrent_updates: PTB default holatda update'larni KETMA-KET ishlaydi —
+    # ya'ni bitta uzun transkripsiya paytida /start ham, /balance ham javobsiz
+    # qolardi. Og'ir ishlar endi umumiy pool (3 slot) va busy_guard bilan
+    # cheklangani uchun parallel update'lar xavfsiz. 32 — yengil handlerlar
+    # uchun yetarli yuqori, xotira uchun xavfsiz past chegara.
+    app = Application.builder().token(BOT_TOKEN).concurrent_updates(32).build()
     bot_app = app
 
     async def _setup_commands(application):
+        # Startup replay pullik tarifni o'zgartirgan bo'lsa — adminga xabar
+        # (jimgina pasayish mijoz shikoyatigacha sezilmay qolmasin)
+        if _replay_downgrades and ADMIN_CHAT_ID["id"]:
+            try:
+                lines = ["⚠️ Startup: jurnal quyidagi PULLIK tariflarni o'zgartirdi:"]
+                for uid, old_t, new_t in _replay_downgrades[:20]:
+                    lines.append(f"• {uid}: {old_t} → {new_t}")
+                lines.append("")
+                lines.append("Noto'g'ri bo'lsa: /grant <id> <tarif> force")
+                await application.bot.send_message(
+                    chat_id=ADMIN_CHAT_ID["id"], text="\n".join(lines)
+                )
+            except Exception as e:
+                logging.warning(f"Replay-downgrade xabari yuborilmadi: {e}")
         try:
             await application.bot.set_my_commands([
                 BotCommand("start",    "Botni ishga tushirish"),

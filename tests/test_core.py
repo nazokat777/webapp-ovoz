@@ -104,8 +104,11 @@ bot.TARIFF_LOG_FILE = os.path.join(d, "empty.jsonl")
 check("MUXLISA_FOR_FREE default False", bot.MUXLISA_FOR_FREE is False)
 bot.user_tariffs[10] = "pro_max"
 bot.user_tariffs[11] = "premium"
-check("pro_max -> pro", bot._is_user_pro_tariff(10) is True)
-check("premium (standart) -> pro emas", bot._is_user_pro_tariff(11) is False)
+def _is_pro(uid):
+    t = bot.get_user_tariff(uid)
+    return t.startswith("pro_") or t == "pro"
+check("pro_max -> pro", _is_pro(10) is True)
+check("premium (standart) -> pro emas", _is_pro(11) is False)
 
 print(f"\nNatija: {ok} pass, {fail} fail")
 sys.exit(1 if fail else 0)

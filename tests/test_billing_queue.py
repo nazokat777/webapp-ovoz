@@ -54,9 +54,20 @@ bot._tariff_log_cache.update({"mtime": None, "size": None, "map": {}})
 check("log'da pro_max", bot.get_user_tariff(700) == "pro_max")
 # Backup tiklandi deb faraz: xotirada endi bu user yo'q
 bot.user_tariffs.clear()
-n = bot._reconcile_tariff_log_with_memory(source="restore")
-check("moslashtirish yozuv qo'shdi", n >= 1, n)
-check("endi log ham free", bot.get_user_tariff(700) == "free",
+n, absent = bot._reconcile_tariff_log_with_memory(source="restore")
+# XAVFSIZLIK: backup'da YO'Q pullik user endi avtomatik 'free' QILINMAYDI —
+# u "absent" ro'yxatida qaytadi va jurnal himoyasida qoladi.
+check("yozuv qo'shilmadi (mass-downgrade yo'q)", n == 0, n)
+check("absent ro'yxatida", 700 in absent, absent)
+check("log'da hali pro_max (himoya)", bot.get_user_tariff(700) == "pro_max",
+      bot.get_user_tariff(700))
+# Backup'da user BOR va farq qilsa — yoziladi (restore pasaytira oladi)
+bot.user_tariffs[700] = "basic"
+n2, absent2 = bot._reconcile_tariff_log_with_memory(source="restore")
+check("backup'dagi farq yozildi", n2 == 1 and 700 not in absent2, (n2, absent2))
+bot.user_tariffs.pop(700, None)
+bot._tariff_log_cache.update({"mtime": None, "size": None, "map": {}})
+check("endi log basic deydi", bot.get_user_tariff(700) == "basic",
       bot.get_user_tariff(700))
 
 print("\n[15] last_transcripts — RAM, diskka yozilmaydi")
@@ -164,7 +175,7 @@ check("JSON'da last_transcripts yo'q", "last_transcripts" not in disk)
 
 print("\n[17] Retry kutish vaqti")
 src = open(r"D:\webapp ovoz\bot.py", encoding="utf-8").read()
-check("whisper_pass_waits qisqartirildi", "whisper_pass_waits = [15, 45, 90]" in src)
+check("whisper_pass_waits qisqartirildi", "whisper_pass_waits = [30, 60, 180]" in src)
 
 print("\n[18] O'lik kod tozalandi")
 for name in ("_uzbek_transcription_quality", "_is_fatal_error", "GOOGLE_LANG",
@@ -176,6 +187,86 @@ reqs = open(r"D:\webapp ovoz\requirements.txt", encoding="utf-8").read()
 check("requirements'da SpeechRecognition yo'q", "SpeechRecognition" not in reqs)
 check("nixpacks.toml o'chirildi", not os.path.exists(r"D:\webapp ovoz\nixpacks.toml"))
 check("hardcoded user ID yo'q", "8128034276" not in src)
+
+
+
+print("\n[R2] Yangi tur: atomik mark, revoke-dedupe, busy_guard, YT throttle")
+# Atomik try-mark
+bot.processing_users.clear()
+check("try_mark 1-marta True", bot._try_mark_processing(4000) is True)
+check("try_mark 2-marta False", bot._try_mark_processing(4000) is False)
+bot._unmark_processing(4000)
+check("unmark'dan keyin yana True", bot._try_mark_processing(4000) is True)
+bot._unmark_processing(4000)
+
+# Grant dedupe: revoke'dan keyin qayta berish o'tadi
+reset()
+bot._activate_tariff_with_carryover(5000, "basic", source="approve")
+check("dup hali bloklaydi", bot._activate_tariff_with_carryover(5000, "basic", source="approve") is None)
+# /revoke simulyatsiyasi: tarif free + dedupe kaliti tozalanadi
+bot.user_tariffs[5000] = "free"
+with bot._grant_lock:
+    for k in [k for k in bot._recent_grants if k[0] == 5000]:
+        bot._recent_grants.pop(k, None)
+c = bot._activate_tariff_with_carryover(5000, "basic", source="approve")
+check("revoke'dan keyin qayta grant o'tadi", c is not None, c)
+# Tarif amalda BOSHQA bo'lsa ham dedupe ushlamasligi kerak (holat sharti)
+reset()
+bot._activate_tariff_with_carryover(5001, "basic", source="approve")
+bot.user_tariffs[5001] = "free"   # revoke, lekin kalit tozalanmagan deb faraz
+c2 = bot._activate_tariff_with_carryover(5001, "basic", source="approve")
+check("holat sharti: free bo'lsa dup emas", c2 is not None, c2)
+
+# busy_guard: oddiy async oqim
+import asyncio as _aio
+class _Msg:
+    def __init__(self): self.texts = []
+    async def reply_text(self, t, **kw): self.texts.append(t)
+class _Upd:
+    def __init__(self, uid):
+        class U: pass
+        self.effective_user = U(); self.effective_user.id = uid
+        self.effective_user.username = None
+        self.effective_user.first_name = "Test"
+        self.effective_user.last_name = ""
+        self.effective_user.language_code = "uz"
+        self.message = _Msg()
+calls = []
+@bot.busy_guard
+async def _flow(update, context):
+    calls.append(1)
+    # guard ichida qayta kirish (nested) bloklanmasligi kerak
+    return await _inner(update, context)
+@bot.busy_guard
+async def _inner(update, context):
+    calls.append(2)
+    return "ok"
+async def _scenario():
+    u = _Upd(6000)
+    r1 = await _flow(u, None)
+    # Guard tugagach belgi olib tashlangan bo'lishi kerak
+    free_after = not bot._is_user_processing(6000)
+    # Band paytda ikkinchi chaqiruv rad etiladi
+    bot._mark_processing(6000)
+    u2 = _Upd(6000)
+    r2 = await _flow(u2, None)
+    bot._unmark_processing(6000)
+    return r1, free_after, r2, u2.message.texts
+r1, free_after, r2, busy_texts = _aio.run(_scenario())
+check("busy_guard ichida nested chaqiruv ishlaydi", r1 == "ok" and calls == [1, 2], (r1, calls))
+check("guard tugagach belgi olib tashlandi", free_after)
+check("band paytda rad + xabar", r2 is None and len(busy_texts) == 1, (r2, busy_texts))
+
+# yt-dlp self-update throttle (real pip chaqirmaymiz)
+bot._yt_dlp_last_update["ts"] = bot.time.time()
+check("yaqinda yangilangan -> False (throttle)", bot._try_self_update_yt_dlp() is False)
+
+# _run_heavy statistikasi
+async def _rh():
+    return await bot._run_heavy(lambda a, b: a + b, 2, 3)
+check("_run_heavy natija", _aio.run(_rh()) == 5)
+run, q = bot._job_slots_info()
+check("_run_heavy hisobi 0 ga qaytdi", (run, q) == (0, 0), (run, q))
 
 print(f"\nNatija: {ok} pass, {fail} fail")
 sys.exit(1 if fail else 0)

@@ -6,9 +6,12 @@
 FROM python:3.12-slim
 
 # ffmpeg — audio konvertatsiya/bo'laklash uchun MAJBURIY.
+# nodejs — yt-dlp uchun JS runtime: YouTube imzo yechishda kerak (busiz
+#   ko'p YouTube videolar 'unable to extract'/'signature' bilan yiqiladi).
 # fonts-dejavu / fonts-noto — PDF'da o'zbek o'/g', kirill va arab yozuvi uchun.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    nodejs \
     ca-certificates \
     fonts-dejavu-core \
     fonts-dejavu-extra \

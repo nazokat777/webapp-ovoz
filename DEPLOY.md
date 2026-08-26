@@ -33,17 +33,20 @@ tashlandi: Dockerfile mavjud bo'lsa Railway nixpacks'ni e'tiborga olmaydi, va
 nixpacks konfiguratsiyasida **fontlar yo'q** edi — u yo'l bilan qurilganda
 PDF'lardagi `o'`, `g'` va kirill harflari buzilardi.
 
-Dockerfile o'rnatadi: `ffmpeg` (audio uchun majburiy), DejaVu + Noto fontlari
-(PDF uchun majburiy).
+Dockerfile o'rnatadi: `ffmpeg` (audio uchun majburiy), `nodejs` (yt-dlp'ning
+YouTube imzo yechishi uchun — busiz ko'p YouTube havolalari ishlamaydi),
+DejaVu + Noto fontlari (PDF uchun majburiy). Bot YouTube himoyasi
+o'zgarganda yt-dlp'ni o'zi yangilashga urinadi (6 soatda ko'pi bilan 1 marta).
 
 ## 4. Resurs sozlamalari
 
 | Env | Default | Izoh |
 |---|---|---|
 | `MAX_UPLOAD_MB` | 300 | Fayl RAM'ga emas, bo'lak-bo'lak diskka yoziladi |
-| `MAX_CONCURRENT_JOBS` | 3 | Bir vaqtda nechta STT/tarjima/TTS. Har ish ichida yana 4 ta parallel so'rov bor |
+| `MAX_CONCURRENT_JOBS` | 3 | Bir vaqtda nechta og'ir ish — GLOBAL cap (WebApp + Telegram birga). Har ish ichida yana 4 ta parallel so'rov bor |
 | `MAX_QUEUED_JOBS` | 12 | Navbat to'lsa foydalanuvchi darrov ochiq rad javobini oladi |
 | `MUXLISA_FOR_FREE` | o'chiq | Yoqilsa bepul tarif ham Muxlisa'ga ketadi (~7x qimmat) |
+| `INIT_DATA_MAX_AGE_HOURS` | 6 | WebApp imzosi amal qilish muddati (replay himoyasi) |
 
 1 vCPU / 1 GB uchun `MAX_CONCURRENT_JOBS=3` mos. RAM qo'shsangiz oshiring.
 
