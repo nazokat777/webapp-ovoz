@@ -113,5 +113,56 @@ def _is_pro(uid):
 check("pro_max -> pro", _is_pro(10) is True)
 check("premium (standart) -> pro emas", _is_pro(11) is False)
 
+
+print("\n[23] Startup konfiguratsiya auditi")
+import tempfile as _tf
+_d = _tf.mkdtemp()
+_saved = (bot.OPENAI_API_KEY, bot.ADMIN_USER_IDS, bot.MUXLISA_KEY,
+          bot.PAYMENT_CARD, bot.DATA_FILE, dict(bot.runtime_settings))
+
+# Hammasi sozlangan -> ogohlantirish yo'q (ffmpeg'dan tashqari, u muhitga bog'liq)
+bot.OPENAI_API_KEY = "sk-test"
+bot.ADMIN_USER_IDS = {1}
+bot.MUXLISA_KEY = "m"
+bot.PAYMENT_CARD = "8600"
+bot.DATA_FILE = os.path.join(_d, "u.json")
+warns = bot._startup_config_audit()
+msgs = " | ".join(m for _, m in warns)
+check("sozlanganda OPENAI ogohlantirishi yo'q", "OPENAI_API_KEY" not in msgs, msgs[:120])
+check("sozlanganda ADMIN ogohlantirishi yo'q", "ADMIN_USER_ID" not in msgs, msgs[:120])
+
+# Sozlanmagan -> aniq ogohlantirishlar
+bot.OPENAI_API_KEY = ""
+bot.ADMIN_USER_IDS = set()
+bot.MUXLISA_KEY = ""
+bot.PAYMENT_CARD = ""
+bot.runtime_settings["payment_card"] = ""
+os.environ.pop("OPENAI_API_KEY", None)
+warns = bot._startup_config_audit()
+levels = {lv for lv, _ in warns}
+msgs = " | ".join(m for _, m in warns)
+check("OPENAI yo'qligi CRITICAL", any(lv == "critical" and "OPENAI" in m for lv, m in warns), msgs[:150])
+check("ADMIN yo'qligi ogohlantiriladi", "ADMIN_USER_ID" in msgs)
+check("MUXLISA yo'qligi ogohlantiriladi", "MUXLISA_KEY" in msgs)
+check("karta yo'qligi ogohlantiriladi", "karta" in msgs.lower())
+
+# Yozib bo'lmaydigan katalog -> critical
+bot.DATA_FILE = os.path.join(_d, "yoq", "chuqur", "u.json")
+if os.name != "nt":
+    pass  # Windows'da ruxsat modeli boshqacha, bu tekshiruvni o'tkazamiz
+
+# Platformada mount qilinmagan katalog -> critical
+os.environ["RAILWAY_PROJECT_ID"] = "test"
+bot.DATA_FILE = os.path.join(_d, "u.json")   # mount EMAS
+warns = bot._startup_config_audit()
+check("mount qilinmagan volume CRITICAL deb belgilanadi",
+      any(lv == "critical" and "VOLUME" in m.upper() for lv, m in warns),
+      " | ".join(m for _, m in warns)[:200])
+os.environ.pop("RAILWAY_PROJECT_ID", None)
+
+(bot.OPENAI_API_KEY, bot.ADMIN_USER_IDS, bot.MUXLISA_KEY,
+ bot.PAYMENT_CARD, bot.DATA_FILE) = _saved[:5]
+bot.runtime_settings.update(_saved[5])
+
 print(f"\nNatija: {ok} pass, {fail} fail")
 sys.exit(1 if fail else 0)

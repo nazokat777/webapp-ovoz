@@ -69,6 +69,25 @@ sirli javob berardi, sabab esa faqat deploy logida qolardi. Endi nosozlik
 KO'RINADI. Bu xatoni yashirish emas: hech qanday ish qabul qilinmaydi
 (tokensiz imzoni tekshirib bo'lmaydi, shuning uchun barcha so'rov rad etiladi).
 
+## 4.6 Startup konfiguratsiya auditi
+
+Bot ishga tushganda JIM ishlaydigan noto'g'ri sozlamalarni topib, logda
+baland ovozda e'lon qiladi, `/health` ichida qaytaradi, jiddiylarini
+adminga Telegram orqali yuboradi va `/debug` da ko'rsatadi:
+
+| Tekshiruv | Daraja | Nima bo'ladi sozlanmasa |
+|---|---|---|
+| `OPENAI_API_KEY` | jiddiy | STT, tarjima, premium TTS ishlamaydi |
+| `ffmpeg` | jiddiy | audio/video umuman qayta ishlanmaydi |
+| `/data` MOUNT qilinganmi | jiddiy | **tariflar har deploy'da yo'qoladi** |
+| `ADMIN_USER_ID` | ogohlantirish | admin faqat username bo'yicha (xavfli) |
+| `MUXLISA_KEY` | ogohlantirish | Premium tarif Whisper'ga tushadi |
+| To'lov kartasi | ogohlantirish | `/buy` oqimi chala |
+
+Volume tekshiruvi `os.path.ismount()` orqali: yo'l NOMI hech narsani
+isbotlamaydi, chunki kod Railway'da uni majburan `/data` qiladi. Mount
+qilinmagan `/data` — konteyner ichidagi vaqtinchalik disk.
+
 ## 5. Sinovlar
 
 ```bash

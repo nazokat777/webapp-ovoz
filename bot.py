@@ -6321,6 +6321,10 @@ async def debug_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"• Kutmoqda: {_job_stats['queued']} / {MAX_QUEUED_JOBS}",
         f"• Faol thread: {threading.active_count()}",
         "",
+        ("⛔ Sozlama ogohlantirishlari: "
+         + (str(len(STARTUP_WARNINGS)) + " ta" if STARTUP_WARNINGS else "yo'q")),
+    ] + [f"  • [{lv}] {m}" for lv, m in STARTUP_WARNINGS] + [
+        "",
         "🔐 Sozlamalar:",
         f"• ADMIN_USER_IDS: {sorted(ADMIN_USER_IDS) or 'sozlanmagan (username fallback!)'}",
         "• Muxlisa bepulga: " + ("ha" if MUXLISA_FOR_FREE else "yo'q"),
@@ -8770,6 +8774,78 @@ async def serve_static(request):
     return web.FileResponse(full, headers={"Cache-Control": "public, max-age=3600"})
 
 
+# Startup'da aniqlangan sozlama muammolari — /health'da ham ko'rsatiladi.
+# NEGA: bu sessiyada BOT_TOKEN yo'qligi soatlab sir bo'lib qoldi. Xuddi
+# shunday JIM ishlaydigan boshqa nosozliklar ham bor edi — masalan /data
+# volume mount qilinmasa, tariflar HAR DEPLOY'DA yo'qoladi va buni hech kim
+# aytmaydi. Endi hammasi startup'da baland ovozda e'lon qilinadi.
+STARTUP_WARNINGS = []
+
+
+def _startup_config_audit():
+    """Jim ishlaydigan noto'g'ri sozlamalarni topib, ro'yxat qaytaradi.
+    Har element: (daraja, xabar). Daraja: 'critical' | 'warning'."""
+    out = []
+
+    if not _ensure_openai_key():
+        out.append(("critical",
+                    "OPENAI_API_KEY yo'q — matnga aylantirish, tarjima va "
+                    "premium TTS ISHLAMAYDI (har so'rov xato bilan tugaydi)."))
+
+    if not ADMIN_USER_IDS:
+        out.append(("warning",
+                    "ADMIN_USER_ID yo'q — admin faqat username bo'yicha "
+                    "aniqlanadi. Username bo'shatilsa, uni boshqa odam "
+                    "egallab admin bo'lib qolishi mumkin."))
+
+    if not have_cmd("ffmpeg"):
+        out.append(("critical",
+                    "ffmpeg topilmadi — audio/video umuman qayta ishlanmaydi."))
+
+    # DATA_FILE yoziladimi va DOIMIYMI — eng jim yo'qotish manbai
+    data_dir = os.path.dirname(DATA_FILE) or "."
+    try:
+        os.makedirs(data_dir, exist_ok=True)
+        probe = os.path.join(data_dir, ".write_probe")
+        with open(probe, "w") as f:
+            f.write("x")
+        os.remove(probe)
+    except Exception as e:
+        out.append(("critical",
+                    f"DATA_FILE yozib bo'lmaydi ({data_dir}): {e} — "
+                    f"tariflar va hisob SAQLANMAYDI."))
+    else:
+        on_platform = bool(os.getenv("RAILWAY_PUBLIC_DOMAIN")
+                           or os.getenv("RAILWAY_PROJECT_ID")
+                           or os.getenv("FLY_APP_NAME"))
+        # MUHIM: yo'l NOMI hech narsani isbotlamaydi — _resolve_data_file()
+        # Railway'da uni majburan "/data" qiladi. Haqiqiy savol: bu katalog
+        # rostdan MOUNT qilingan volume'mi? Mount bo'lmasa — konteyner ichidagi
+        # vaqtinchalik disk, ya'ni tariflar har deploy'da yo'qoladi.
+        if on_platform:
+            try:
+                mounted = os.path.ismount(data_dir)
+            except Exception:
+                mounted = True   # aniqlay olmasak, bezovta qilmaymiz
+            if not mounted:
+                out.append(("critical",
+                            f"{data_dir} MOUNT QILINGAN VOLUME EMAS — tariflar va "
+                            f"hisob HAR DEPLOY'DA YO'QOLADI. Railway: Settings -> "
+                            f"Volumes -> Mount path = {data_dir}"))
+
+    if not MUXLISA_KEY:
+        out.append(("warning",
+                    "MUXLISA_KEY yo'q — Premium tarif ham OpenAI Whisper "
+                    "orqali ishlaydi (o'zbek sifati pastroq bo'lishi mumkin)."))
+
+    if not (runtime_settings.get("payment_card") or PAYMENT_CARD):
+        out.append(("warning",
+                    "To'lov kartasi sozlanmagan — /buy oqimi chala. "
+                    "Tuzatish: /setcard <raqam> va /setholder <ism>."))
+
+    return out
+
+
 async def handle_health(request):
     """Holat endpointi — deploy tirikligini va sozlanganini bir so'rovda
     aniqlash uchun (tools/live_check.py shundan foydalanadi)."""
@@ -8782,6 +8858,7 @@ async def handle_health(request):
         "admin_configured": bool(ADMIN_USER_IDS),
         "openai_configured": bool(OPENAI_API_KEY),
         "data_file": DATA_FILE,
+        "warnings": [{"level": lv, "message": m} for lv, m in STARTUP_WARNINGS],
     }
     return web.json_response(payload, status=503 if DEGRADED_REASON else 200,
                              headers=cors_headers())
@@ -8852,6 +8929,25 @@ def main():
     # Saqlangan usage va tariflarni yuklash
     _load_user_data()
 
+    # Jim ishlaydigan noto'g'ri sozlamalarni BALAND OVOZDA e'lon qilamiz
+    try:
+        STARTUP_WARNINGS.extend(_startup_config_audit())
+    except Exception as e:
+        logging.warning(f"Config audit xato: {e}")
+    if STARTUP_WARNINGS:
+        crit = sum(1 for lv, _ in STARTUP_WARNINGS if lv == "critical")
+        print("=" * 62, flush=True)
+        print(f"SOZLAMA OGOHLANTIRISHLARI: {len(STARTUP_WARNINGS)} ta "
+              f"({crit} ta jiddiy)", flush=True)
+        for lv, msg in STARTUP_WARNINGS:
+            mark = "⛔" if lv == "critical" else "⚠️"
+            print(f"  {mark} {msg}", flush=True)
+            (logging.error if lv == "critical" else logging.warning)("%s %s", mark, msg)
+        print("Batafsil: GET /health", flush=True)
+        print("=" * 62, flush=True)
+    else:
+        logging.info("✅ Sozlamalar auditi toza")
+
     # MUHIM: Tariff log'dan tiklash — JSON eski/buzilgan bo'lsa ham tarif yo'qolmaydi
     try:
         _replay_tariff_log()
@@ -8889,6 +8985,19 @@ def main():
     bot_app = app
 
     async def _setup_commands(application):
+        # Jiddiy sozlama muammolari bo'lsa — adminga xabar (jim qolmasin)
+        crit = [m for lv, m in STARTUP_WARNINGS if lv == "critical"]
+        if crit and ADMIN_CHAT_ID["id"]:
+            try:
+                await application.bot.send_message(
+                    chat_id=ADMIN_CHAT_ID["id"],
+                    text="⛔ Startup: jiddiy sozlama muammolari\n\n"
+                         + "\n".join(f"• {m}" for m in crit[:8])
+                         + "\n\nBatafsil: /debug",
+                )
+            except Exception as e:
+                logging.warning(f"Startup ogohlantirish yuborilmadi: {e}")
+
         # Startup replay pullik tarifni o'zgartirgan bo'lsa — adminga xabar
         # (jimgina pasayish mijoz shikoyatigacha sezilmay qolmasin)
         if _replay_downgrades and ADMIN_CHAT_ID["id"]:

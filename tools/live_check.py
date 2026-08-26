@@ -140,6 +140,13 @@ if st_h == 200:
           "OPENAI_API_KEY yo'q — STT/tarjima ishlamaydi")
     print(f"        navbat: {hj.get('jobs')}")
     print(f"        data_file: {hj.get('data_file')}")
+    warns = hj.get("warnings") or []
+    crit = [w for w in warns if w.get("level") == "critical"]
+    check("jiddiy sozlama muammosi yo'q", not crit,
+          " || ".join(w.get("message", "") for w in crit))
+    for w in warns:
+        if w.get("level") != "critical":
+            print(f"        ⚠️ {w.get('message')}")
 elif st_h == 503:
     hj = json.loads(body_h) if body_h.startswith("{") else {}
     check("/health javob berdi", True)
