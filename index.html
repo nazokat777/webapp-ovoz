@@ -2354,15 +2354,24 @@
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(urlBody)
           });
-          const json = await r.json();
-          if (!r.ok) throw new Error(json.message || json.error || 'Server xato');
+          const json = await r.json().catch(() => ({}));
+          if (!r.ok) {
+            // Server ATAYLAB rad etdi (band/navbat to'la/auth) — bu tarmoq
+            // xatosi EMAS, sendData fallback'iga tushish noto'g'ri: u xuddi
+            // shu ishni serverga boshqa yo'ldan qayta yuborib, "band" degan
+            // javobni yashirgan bo'lardi. Foydalanuvchiga sababni ko'rsatamiz.
+            hideProcessing();
+            showToast(json.message || json.error || 'Server xato', 'error', 6000);
+            return;
+          }
           hideProcessing();
           showToast(t('t_url_sent'), 'success');
           fireConfetti();
           setTimeout(() => { try { tg && tg.close && tg.close(); } catch (e) {} }, 1500);
           return;
         } catch (err) {
-          console.warn('fetch /url fail, sendData fallback:', err);
+          // Faqat HAQIQIY tarmoq xatosi (fetch o'zi yiqildi) sendData'ga tushadi
+          console.warn('fetch /url network fail, sendData fallback:', err);
         }
       }
       // Fallback: tg.sendData (faqat KeyboardButton orqali ishlaydi)

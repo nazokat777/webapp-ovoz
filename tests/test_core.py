@@ -89,7 +89,10 @@ bot._append_tariff_log(555, "free", source="revoke")
 bot.user_tariffs.pop(555, None)
 check("revoke keyin free", bot.get_user_tariff(555) == "free")
 m1 = bot._get_tariff_log_map()
-check("kesh bir xil obyekt (qayta o'qimadi)", bot._get_tariff_log_map() is m1)
+# Endi NUSXA qaytariladi (chaqiruvchi iteratsiyasi paytida kesh mutatsiyasi
+# xavfsiz bo'lishi uchun) — tenglik saqlanadi, obyekt esa har safar yangi
+check("kesh mazmuni barqaror (qayta o'qilmaydi)", bot._get_tariff_log_map() == m1)
+check("kesh nusxasi qaytadi (mutatsiya izolyatsiyasi)", bot._get_tariff_log_map() is not m1)
 
 print("\n[9] MAX_UPLOAD / MAX_AUDIO_CHUNKS")
 check("MAX_UPLOAD_BYTES = 300MB", bot.MAX_UPLOAD_BYTES == 300 * 1024 * 1024)

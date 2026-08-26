@@ -46,7 +46,7 @@ o'zgarganda yt-dlp'ni o'zi yangilashga urinadi (6 soatda ko'pi bilan 1 marta).
 | `MAX_CONCURRENT_JOBS` | 3 | Bir vaqtda nechta og'ir ish — GLOBAL cap (WebApp + Telegram birga). Har ish ichida yana 4 ta parallel so'rov bor |
 | `MAX_QUEUED_JOBS` | 12 | Navbat to'lsa foydalanuvchi darrov ochiq rad javobini oladi |
 | `MUXLISA_FOR_FREE` | o'chiq | Yoqilsa bepul tarif ham Muxlisa'ga ketadi (~7x qimmat) |
-| `INIT_DATA_MAX_AGE_HOURS` | 6 | WebApp imzosi amal qilish muddati (replay himoyasi) |
+| `INIT_DATA_MAX_AGE_HOURS` | 24 | WebApp imzosi amal qilish muddati; qisqartirish = xavfsizroq, lekin ochiq turgan WebApp'dan kelgan yozuv auth'dan yiqilishi mumkin |
 
 1 vCPU / 1 GB uchun `MAX_CONCURRENT_JOBS=3` mos. RAM qo'shsangiz oshiring.
 

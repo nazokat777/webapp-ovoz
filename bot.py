@@ -270,18 +270,25 @@ def remember_transcript(user_id, text):
                 last_transcripts.pop(uid, None)
 
 # === [PROCESSING TRACKER] User aynan hozir audio yuborganmi (duplicate click oldini olish) ===
-# {user_id: start_timestamp}
+# {user_id: (timestamp, token)} — token EGALIK belgisi: faqat belgini qo'ygan
+# oqim uni olib tashlay oladi. Busiz uzun ish stale bo'lib, yangi ish belgi
+# qo'ygach, ESKI ishning finally'si YANGI ishning belgisini o'chirib yuborardi
+# (bitta user ikki parallel ish + ikki marta billing).
 processing_users = {}
 processing_lock = threading.Lock()
+# Stale chegara: 3 soatlik audio STT ~1 soat olishi mumkin. 2 soat — uzun ish
+# hali tugamagan bo'lsa belgi ushlab turadi; jarayon o'lsa xotira baribir
+# tozalanadi (restart), shuning uchun "abadiy qulf" xavfi yo'q.
+PROCESSING_STALE_SEC = int(os.getenv("PROCESSING_STALE_SEC", str(2 * 3600)))
+_processing_seq = {"n": 0}
 
 
 def _is_user_processing(user_id):
-    """User aynan hozir audio/url ishlanmoqdami? Duplicate click oldini olish.
-    30 daqiqadan eski yozuvlar stale deb hisoblanadi va o'chiriladi."""
+    """User aynan hozir audio/url ishlanmoqdami? Duplicate click oldini olish."""
     with processing_lock:
-        if user_id in processing_users:
-            elapsed = time.time() - processing_users[user_id]
-            if elapsed < 1800:  # 30 daqiqa
+        entry = processing_users.get(user_id)
+        if entry is not None:
+            if time.time() - entry[0] < PROCESSING_STALE_SEC:
                 return True
             # Stale — eski entry, o'chiramiz
             del processing_users[user_id]
@@ -289,30 +296,39 @@ def _is_user_processing(user_id):
 
 
 def _mark_processing(user_id):
-    """User ishlash boshlandi deb belgilash."""
+    """User ishlash boshlandi deb belgilash (tokensiz — legacy chaqiruvlar uchun)."""
     with processing_lock:
-        processing_users[user_id] = time.time()
+        _processing_seq["n"] += 1
+        processing_users[user_id] = (time.time(), _processing_seq["n"])
 
 
 def _try_mark_processing(user_id):
-    """ATOMIK check-and-mark. Returns True — belgi qo'yildi (ish boshlash mumkin).
+    """ATOMIK check-and-mark. Returns: token (truthy) — belgi qo'yildi,
+    None — user band (ish boshlash MUMKIN EMAS).
 
-    NEGA KERAK: alohida _is_user_processing() + _mark_processing() chaqirish
-    ikki thread (PTB loop va aiohttp loop) orasida race ochardi — user bir
-    vaqtda Telegram'dan voice va WebApp'dan fayl yuborsa, ikkalasi ham
-    tekshiruvdan o'tib, bitta audio uchun ikki marta hisob yechilishi mumkin edi."""
+    NEGA ATOMIK: alohida check + mark ikki thread (PTB loop va aiohttp loop)
+    orasida race ochardi — user bir vaqtda Telegram'dan voice va WebApp'dan
+    fayl yuborsa, ikkalasi ham o'tib, bitta audio ikki marta hisoblanardi."""
     now = time.time()
     with processing_lock:
         prev = processing_users.get(user_id)
-        if prev is not None and now - prev < 1800:
-            return False
-        processing_users[user_id] = now
-        return True
+        if prev is not None and now - prev[0] < PROCESSING_STALE_SEC:
+            return None
+        _processing_seq["n"] += 1
+        token = _processing_seq["n"]
+        processing_users[user_id] = (now, token)
+        return token
 
 
-def _unmark_processing(user_id):
-    """User ishlash tugadi (yoki xato) — belgini olib tashlash."""
+def _unmark_processing(user_id, token=None):
+    """Belgini olib tashlash. token berilsa — faqat EGASI o'chira oladi
+    (stale-takeover'dan keyin eski ish yangi ishning belgisiga tegmaydi)."""
     with processing_lock:
+        entry = processing_users.get(user_id)
+        if entry is None:
+            return
+        if token is not None and entry[1] != token:
+            return  # belgi endi boshqa ishniki
         processing_users.pop(user_id, None)
 # === [JOB QUEUE] Og'ir ishlar uchun YAGONA umumiy pool ==========================
 # BITTA ThreadPoolExecutor(MAX_CONCURRENT_JOBS) — WebApp ham, Telegram ham
@@ -351,13 +367,28 @@ def _notify_async(user_id, text):
     ).start()
 
 
+class JobQueueFullError(Exception):
+    """Umumiy og'ir-ish navbati to'la — foydalanuvchiga ochiq rad javobi."""
+
+
 async def _run_heavy(fn, *args):
     """Telegram (asyncio) yo'lidagi og'ir sync ishni umumiy pool'da bajarish.
 
-    asyncio.to_thread EMAS: u default executor'ni ishlatadi (cheklovsiz bo'lardi);
-    bu yerda esa aynan _job_executor — WebApp ishlari bilan bitta budjet."""
+    asyncio.to_thread EMAS: u default executor'ni ishlatadi (cheklovsiz va
+    5 ta thread'lik — pool'dan tashqari yuk + delivery starvation bo'lardi);
+    bu yerda aynan _job_executor — WebApp ishlari bilan bitta budjet.
+
+    MAX_QUEUED_JOBS: Telegram yo'li ham WebApp bilan bir xil navbat capiga
+    bo'ysunadi — aks holda 15 ta Telegram-kutuvchi umumiy hisoblagichni
+    to'ldirib, barcha WebApp yuklamalarini 429 bilan qaytarardi, o'zi esa
+    cheksiz kutib concurrent_updates slotlarini band qilardi.
+    Navbat to'la bo'lsa JobQueueFullError ko'tariladi — busy_guard uni
+    QUEUE_FULL_MESSAGE javobiga aylantiradi.
+    """
     loop = asyncio.get_running_loop()
     with _job_counter_lock:
+        if _job_stats["queued"] >= MAX_QUEUED_JOBS:
+            raise JobQueueFullError()
         _job_stats["queued"] += 1
 
     def _tracked():
@@ -370,13 +401,17 @@ async def _run_heavy(fn, *args):
             with _job_counter_lock:
                 _job_stats["running"] -= 1
 
+    cfut = _job_executor.submit(_tracked)
     try:
-        return await loop.run_in_executor(_job_executor, _tracked)
+        return await asyncio.wrap_future(cfut, loop=loop)
     except BaseException:
-        # Bekor qilinsa (CancelledError ham!) queued hisobini to'g'rilash —
-        # _tracked hali boshlanmagan bo'lishi mumkin. run_in_executor future
-        # bekor qilinsa ham executor ishni baribir bajaradi, shuning uchun
-        # hisob faqat "hali navbatda" holatda tuzatiladi.
+        # Kutish bekor qilinsa (CancelledError ham) va ish HALI BOSHLANMAGAN
+        # bo'lsa, _tracked hech qachon ishlamaydi — queued hisobini shu yerda
+        # to'g'rilaymiz, aks holda +1 abadiy qolib, oxir-oqibat hamma
+        # so'rovlar "navbat to'la" bilan rad etilardi.
+        if cfut.cancel() or cfut.cancelled():
+            with _job_counter_lock:
+                _job_stats["queued"] -= 1
         raise
 
 
@@ -388,10 +423,13 @@ _busy_owner = contextvars.ContextVar("busy_owner", default=None)
 def busy_guard(func):
     """Async flow'ni "bitta user — bitta og'ir ish" qoidasi bilan o'raydi.
 
-    Handler KIRISHIDA (fayl yuklab olishdan OLDIN) atomik belgi qo'yiladi —
-    ilgari belgi yuklab olishdan keyin qo'yilar, ikki marta yuborilgan katta
-    video ikkala safar to'liq yuklab olinardi. CancelledError'da ham belgi
-    kafolatli olib tashlanadi (finally)."""
+    Handler KIRISHIDA (fayl yuklab olishdan OLDIN) atomik belgi qo'yiladi.
+    CancelledError'da ham belgi kafolatli olib tashlanadi (finally).
+    _run_heavy JobQueueFullError ko'tarsa — foydalanuvchiga navbat-to'la javobi.
+
+    MUHIM: bu yerda is_admin() EMAS, _is_admin_user() — is_admin track_user
+    orqali _save_user_data'ni (to'liq JSON + .bak nusxa, lock ostida)
+    to'g'ridan-to'g'ri event loop'da chaqirardi."""
     import functools
 
     @functools.wraps(func)
@@ -400,22 +438,30 @@ def busy_guard(func):
         uid = user.id if user else None
         if uid is None or _busy_owner.get() == uid:
             return await func(update, *args, **kwargs)
-        if is_admin(update):
+        if _is_admin_user(user):
             # Admin uchun guard yo'q (test/tezkor ishlar)
             return await func(update, *args, **kwargs)
-        if not _try_mark_processing(uid):
+        mark_token = _try_mark_processing(uid)
+        if not mark_token:
             try:
                 if getattr(update, "message", None):
                     await update.message.reply_text(BUSY_MESSAGE)
             except Exception:
                 pass
             return None
-        token = _busy_owner.set(uid)
+        ctx_token = _busy_owner.set(uid)
         try:
             return await func(update, *args, **kwargs)
+        except JobQueueFullError:
+            try:
+                if getattr(update, "message", None):
+                    await update.message.reply_text(QUEUE_FULL_MESSAGE)
+            except Exception:
+                pass
+            return None
         finally:
-            _busy_owner.reset(token)
-            _unmark_processing(uid)
+            _busy_owner.reset(ctx_token)
+            _unmark_processing(uid, mark_token)
 
     return wrapper
 
@@ -438,12 +484,13 @@ def submit_job(user_id, target, args=(), label="ish", cleanup_path=None):
     # ATOMIK duplicate himoyasi — Telegram yo'lidagi busy_guard bilan bitta
     # processing_users store, shuning uchun user ikki kanaldan bir vaqtda
     # ikkita ish ochib yubora olmaydi.
-    if not _try_mark_processing(user_id):
+    mark_token = _try_mark_processing(user_id)
+    if not mark_token:
         return _reject(BUSY_MESSAGE)
 
     with _job_counter_lock:
         if _job_stats["queued"] >= MAX_QUEUED_JOBS:
-            _unmark_processing(user_id)
+            _unmark_processing(user_id, mark_token)
             logging.warning(f"🚦 Navbat to'la, rad etildi: user={user_id}, {label}")
             return _reject(QUEUE_FULL_MESSAGE)
         _job_stats["queued"] += 1
@@ -471,8 +518,8 @@ def submit_job(user_id, target, args=(), label="ish", cleanup_path=None):
         finally:
             with _job_counter_lock:
                 _job_stats["running"] -= 1
-            # MUHIM: belgini olib tashlash — aks holda user 30 daqiqaga bloklanadi
-            _unmark_processing(user_id)
+            # MUHIM: belgini (faqat O'ZIMIZNIKINI) olib tashlash
+            _unmark_processing(user_id, mark_token)
 
     _job_executor.submit(_runner)
     return True
@@ -1036,7 +1083,7 @@ def _get_tariff_log_map():
     with _tariff_log_lock:
         if (_tariff_log_cache["mtime"] == st.st_mtime_ns
                 and _tariff_log_cache["size"] == st.st_size):
-            return _tariff_log_cache["map"]
+            return dict(_tariff_log_cache["map"])
         latest = {}
         try:
             with open(TARIFF_LOG_FILE, "r", encoding="utf-8") as f:
@@ -1052,12 +1099,15 @@ def _get_tariff_log_map():
                         continue
         except Exception as e:
             logging.error(f"Tariff log o'qishda xato: {e}")
-            return _tariff_log_cache["map"]
+            return dict(_tariff_log_cache["map"])
         _tariff_log_cache["mtime"] = st.st_mtime_ns
         _tariff_log_cache["size"] = st.st_size
         _tariff_log_cache["map"] = latest
         logging.info(f"🗂 Tariff log keshi yangilandi: {len(latest)} user")
-        return latest
+        # NUSXA qaytaramiz: _append_tariff_log keshni joyida yangilaydi,
+        # chaqiruvchi (masalan, reconcile) iteratsiya qilayotgan dict o'rtada
+        # o'zgarib ketmasin
+        return dict(latest)
 
 
 def get_user_tariff(user_id):
@@ -1079,6 +1129,13 @@ def get_user_tariff(user_id):
         user_tariffs[uid] = latest_tariff
         return latest_tariff
     return "free"
+
+
+def _is_user_pro_tariff(user_id):
+    """User Premium (pro_*) tarifdami? Muxlisa marshruti va statistika uchun
+    YAGONA predikat — test ham aynan shu funksiyani tekshiradi."""
+    tariff = get_user_tariff(user_id)
+    return tariff.startswith("pro_") or tariff == "pro"
 
 
 def get_user_bonus_min(user_id):
@@ -1129,10 +1186,12 @@ def _is_duplicate_grant(user_id, tariff_key):
         for k in [k for k, ts in _recent_grants.items() if now - ts > GRANT_DEDUPE_WINDOW_SEC]:
             _recent_grants.pop(k, None)
         prev = _recent_grants.get(key)
-        # Faqat oldingi grant hali AMALDA bo'lsa dublikat hisoblanadi.
-        # /revoke qilingan bo'lsa (joriy tarif boshqa) — bu yangi, qonuniy grant.
-        if (prev is not None and now - prev <= GRANT_DEDUPE_WINDOW_SEC
-                and user_tariffs.get(int(user_id)) == tariff_key):
+        # Sof vaqt-oynali dedupe. Holatga qarash YO'Q: "joriy tarif boshqa
+        # bo'lsa dup emas" sharti eskirgan approve tugmasi (5 daq ichida)
+        # boshqa grant ustidan QAYTA ishlashiga yo'l ochardi. /revoke'dan
+        # keyin qonuniy qayta berish esa revoke'ning o'zi kalitlarni
+        # tozalashi bilan hal qilingan.
+        if prev is not None and now - prev <= GRANT_DEDUPE_WINDOW_SEC:
             return True
         _recent_grants[key] = now
         return False
@@ -1801,7 +1860,7 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
                         failed_ranges_out.append((start_sec, end_sec, err))
 
         # MULTI FINAL PASS — 3 marta, har biri ko'proq kutib
-        pass_waits = [60, 120, 300]  # 1min, 2min, 5min
+        pass_waits = [30, 60, 180]  # whisper_pass_waits bilan bir xil — slot 8 daq band bo'lmasin  # 1min, 2min, 5min
         for pass_num, wait_sec in enumerate(pass_waits, 1):
             if not failed_chunks_muhlisa or len(failed_chunks_muhlisa) >= total:
                 break  # Hech narsa qoldimagan yoki hammasi yiqilgan — to'xtatamiz
@@ -1877,8 +1936,7 @@ def _transcribe_for_user(user_id, file_path, language="uz", progress_cb=None, fa
     Qolgan hamma holat → OpenAI Whisper.
     """
     tariff = get_user_tariff(user_id)
-    is_pro_tariff = tariff.startswith("pro_") or tariff == "pro"
-    use_muxlisa = is_pro_tariff or (MUXLISA_FOR_FREE and tariff == "free")
+    use_muxlisa = _is_user_pro_tariff(user_id) or (MUXLISA_FOR_FREE and tariff == "free")
     if use_muxlisa and language == "uz" and MUXLISA_KEY:
         logging.info(f"🌟 Muhlisa STT (tarif={tariff}) user_id={user_id}")
         try:
@@ -3984,8 +4042,10 @@ async def send_result(update, msg, text):
         await msg.delete()
     except Exception:
         pass
+    chat = getattr(update, "effective_chat", None)
+    chat_id = chat.id if chat else update.effective_user.id
     return await asyncio.to_thread(
-        _send_text_card, update.effective_user.id, text
+        _send_text_card, chat_id, text, "📝 <b>Matn:</b>", update.effective_user.id
     )
 
 
@@ -4199,7 +4259,8 @@ async def process_url(update, context, url, language="uz"):
     audio_path = None
     actual_duration = 0
     try:
-        audio_path = await asyncio.to_thread(download_audio_from_url, url)
+        # yt-dlp + ffmpeg — og'ir: umumiy pool orqali (cap + /debug hisobida)
+        audio_path = await _run_heavy(download_audio_from_url, url)
         # Yuklangan audio davomiyligini aniqlash (event loop'ni bloklamaslik uchun thread'da)
         def _probe_duration(path):
             try:
@@ -4402,6 +4463,21 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ Web App dan ma'lumot xato keldi.")
 
 
+def _peek_translation_state(user_id):
+    """Tarjima rejimini O'CHIRMASDAN qaytaradi. Handlerlar yo'nalishni shu
+    bilan tanlaydi; holat esa busy_guard MUVAFFAQIYATLI o'tgach, guarded
+    funksiya ichida _pop_translation_state bilan iste'mol qilinadi.
+    (Ilgari handler pop qilardi — busy rad etilsa user tanlagan tarjima
+    rejimi butunlay yo'qolardi.)"""
+    if user_id and user_id in pending_translations:
+        val = pending_translations.get(user_id)
+        if isinstance(val, dict):
+            return val
+        if isinstance(val, str):
+            return {"source": val, "target": "uz"}
+    return None
+
+
 def _pop_translation_state(user_id):
     """=== [TARJIMA] User tarjima rejimida bo'lsa {source, target} qaytaradi. ===
     Backward compat: agar eski format (string) bo'lsa, target='uz' deb qaytariladi.
@@ -4422,7 +4498,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Ovozli xabaringiz topilmadi. Iltimos qayta yuboring.")
         return
     # === [TARJIMA INTEGRATSIYASI] ===
-    state = _pop_translation_state(update.effective_user.id)
+    state = _peek_translation_state(update.effective_user.id)
     if state and state.get("source"):
         await process_translation_from_file_id(
             update, context, v.file_id, ".ogg", v.duration or 0,
@@ -4438,7 +4514,7 @@ async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     a = update.message.audio
     ext = os.path.splitext(a.file_name or "audio.mp3")[1] or ".mp3"
     # === [TARJIMA INTEGRATSIYASI] ===
-    state = _pop_translation_state(update.effective_user.id)
+    state = _peek_translation_state(update.effective_user.id)
     if state and state.get("source"):
         await process_translation_from_file_id(
             update, context, a.file_id, ext, a.duration or 0,
@@ -4454,7 +4530,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     v = update.message.video
     ext = os.path.splitext(v.file_name or "video.mp4")[1] or ".mp4"
     # === [TARJIMA INTEGRATSIYASI] ===
-    state = _pop_translation_state(update.effective_user.id)
+    state = _peek_translation_state(update.effective_user.id)
     if state and state.get("source"):
         await process_translation_from_file_id(
             update, context, v.file_id, ext, v.duration or 0,
@@ -4469,7 +4545,7 @@ async def handle_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_video_note(update: Update, context: ContextTypes.DEFAULT_TYPE):
     v = update.message.video_note
     # === [TARJIMA INTEGRATSIYASI] ===
-    state = _pop_translation_state(update.effective_user.id)
+    state = _peek_translation_state(update.effective_user.id)
     if state and state.get("source"):
         await process_translation_from_file_id(
             update, context, v.file_id, ".mp4", v.duration or 0,
@@ -4881,8 +4957,7 @@ async def openai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     pro_sec = 0
     whisper_sec = 0
     for uid, sec in user_uzbek_usage.items():
-        tariff = get_user_tariff(uid)
-        if tariff.startswith("pro_") or tariff == "pro":
+        if _is_user_pro_tariff(uid):
             pro_sec += sec
         else:
             whisper_sec += sec
@@ -4922,8 +4997,7 @@ async def openai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sec <= 0:
             continue
         label = _user_label(uid)
-        tariff = get_user_tariff(uid)
-        is_pro = tariff.startswith("pro_") or tariff == "pro"
+        is_pro = _is_user_pro_tariff(uid)
         per_min_uzs = PRICE_MUHLISA_PER_MIN_UZS if is_pro else PRICE_WHISPER_PER_MIN * USD_TO_UZS
         cost_uzs = sec / 60 * per_min_uzs
         top_lines.append(f"  • {label}: {sec/60:.1f} daq (~{cost_uzs:,.0f} so'm)")
@@ -5823,7 +5897,7 @@ async def approve_reject_callback(update: Update, context: ContextTypes.DEFAULT_
             # Takroriy bosish — tarif allaqachon berilgan, ikkinchi marta bermaymiz
             await query.answer(
                 f"ℹ️ Bu tarif allaqachon berilgan ({t['name']}). "
-                f"Ikkinchi marta berilmadi."
+                f"Ikkinchi marta berilmadi.\n"
                 f"Ikkinchi TO'LOV bo'lsa: /grant {target_id} {tariff_key} force",
                 show_alert=True,
             )
@@ -6244,7 +6318,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     video_exts = [".mp4", ".avi", ".mov", ".mkv", ".webm", ".3gp"]
     if any(e in mime for e in ["audio", "video"]) or ext in audio_exts + video_exts:
         # === [TARJIMA INTEGRATSIYASI] document audio/video ham tarjima qilinishi mumkin ===
-        state = _pop_translation_state(update.effective_user.id)
+        state = _peek_translation_state(update.effective_user.id)
         if state and state.get("source"):
             await process_translation_from_file_id(
                 update, context, doc.file_id, ext or ".mp3", 0,
@@ -6257,7 +6331,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if ext == ".pdf" or "pdf" in mime:
         # === [TARJIMA INTEGRATSIYASI] PDF + tarjima rejimi → tarjima qilingan PDF + audio ===
-        state = _pop_translation_state(update.effective_user.id)
+        state = _peek_translation_state(update.effective_user.id)
         if state and state.get("source"):
             await process_pdf_via_translation(
                 update, context, doc.file_id,
@@ -6272,9 +6346,16 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def process_pdf_via_translation(update, context, file_id, source_lang, target_lang="uz"):
     """Chat'dan kelgan PDF + tarjima rejimi: PDF yuklab olinadi va
-    process_pdf_translation_for_user (HTTP yo'l bilan ishlaydigan) chaqiriladi.
-    Natija: matn + tarjima PDF + audio (target tilda)."""
+    process_pdf_translation_for_user chaqiriladi (submit_job orqali).
+
+    busy_guard EMAS: atomik belgini submit_job qo'yadi (ish tugaguncha ushlab
+    turadi). Bu yerda faqat ADVISORY tekshiruv — band bo'lsa PDF'ni yuklab
+    o'tirmaymiz (Telegram PDF ≤20MB, xavf kichik). Tarjima rejimi FAQAT
+    submit qabul qilingandan keyin iste'mol qilinadi."""
     user_id = update.effective_user.id
+    if not _is_admin_user(update.effective_user) and _is_user_processing(user_id):
+        await update.message.reply_text(BUSY_MESSAGE)
+        return
     if not is_admin(update):
         if not await can_process_uzbek(update, 0):
             return
@@ -6298,7 +6379,9 @@ async def process_pdf_via_translation(update, context, file_id, source_lang, tar
             label="pdf-tarjima-tg", cleanup_path=tmp_path,
         )
         if not accepted:
-            return  # submit_job foydalanuvchiga sababini yozdi va faylni o'chirdi
+            return  # submit_job sababini yozdi; tarjima rejimi saqlanib qoldi
+        # Ish qabul qilindi — endi rejimni iste'mol qilamiz
+        _pop_translation_state(user_id)
     except Exception as e:
         logging.error(f"PDF tarjima yuklash xato: {e}")
         await update.message.reply_text(
@@ -6328,7 +6411,7 @@ async def process_pdf_to_voice(update, context, file_id):
             tmp_path = tmp.name
         await file.download_to_drive(tmp_path)
 
-        text = await asyncio.to_thread(extract_pdf_text, tmp_path)
+        text = await _run_heavy(extract_pdf_text, tmp_path)
         if not text or not text.strip():
             await msg.edit_text("❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).")
             return
@@ -6340,7 +6423,7 @@ async def process_pdf_to_voice(update, context, file_id):
                 await msg.delete()
                 return
 
-        tts_path = await asyncio.to_thread(make_tts, text)
+        tts_path = await _run_heavy(make_tts, text)
         if not tts_path:
             await msg.edit_text("❌ Ovoz yaratib bo'lmadi.")
             return
@@ -6417,7 +6500,7 @@ async def process_translation(update, context, file_path, duration_sec, source_l
 
         # 2) Whisper STT
         failed_ranges = []
-        original_text = await asyncio.to_thread(transcribe_whisper, file_path, source_lang, None, failed_ranges)
+        original_text = await _run_heavy(transcribe_whisper, file_path, source_lang, None, failed_ranges)
         if failed_ranges:
             await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
         if not original_text or not original_text.strip():
@@ -6430,7 +6513,7 @@ async def process_translation(update, context, file_path, duration_sec, source_l
             audio_lang = "uz"  # default TTS uchun (manba tilini bilmasak)
         else:
             lost_chunks = []
-            translated = await asyncio.to_thread(
+            translated = await _run_heavy(
                 translate_with_claude, original_text, source_lang, None, target_lang, lost_chunks
             )
             if lost_chunks:
@@ -6445,8 +6528,11 @@ async def process_translation(update, context, file_path, duration_sec, source_l
         tgt_label = TRANSLATION_TARGETS.get(target_lang, "🇺🇿 O'zbekcha")
         src_label = TRANSLATION_LANGS.get(source_lang, source_lang) if source_lang else "🌐 Avto"
         header = f"🌐 <b>Tarjima ({html.escape(src_label)} → {html.escape(tgt_label)}):</b>"
+        _chat = getattr(update, "effective_chat", None)
         delivered = await asyncio.to_thread(
-            _send_text_card, update.effective_user.id, translated, header
+            _send_text_card,
+            _chat.id if _chat else update.effective_user.id,
+            translated, header, update.effective_user.id,
         )
 
         # 5) Tarif daqiqalari — faqat natija yetkazilgan bo'lsa
@@ -6457,8 +6543,17 @@ async def process_translation(update, context, file_path, duration_sec, source_l
         await msg.edit_text(f"❌ Tarjima xato: {str(e)[:300]}")
 
 
+@busy_guard
 async def process_translation_from_file_id(update, context, file_id, suffix, duration_sec, source_lang, target_lang="uz"):
-    """File_id orqali kelgan audio/video uchun wrapper."""
+    """File_id orqali kelgan audio/video uchun wrapper.
+
+    @busy_guard SHU yerda — yuklab olish guard ichida bo'lsin (ikki marta
+    yuborilgan video ikki marta to'liq yuklab olinmasin). Ichkaridagi
+    process_translation ham guard'langan, lekin _busy_owner contextvar
+    tufayli o'zimizni bloklamaydi (re-entrant)."""
+    # Guard o'tdi — endi tarjima rejimini iste'mol qilamiz. Busy rad etilsa
+    # bu nuqtaga kelinmaydi va user tanlagan rejim saqlanib qoladi.
+    _pop_translation_state(update.effective_user.id)
     tmp_path = None
     try:
         file = await context.bot.get_file(file_id)
@@ -6487,7 +6582,7 @@ async def text_to_voice(update, context, text):
     msg = await update.message.reply_text("🔊 Matn ovozga aylantirilmoqda...")
     tts_path = None
     try:
-        tts_path = await asyncio.to_thread(make_tts, text)
+        tts_path = await _run_heavy(make_tts, text)
         if not tts_path:
             await msg.edit_text("❌ Matn bo'sh ekan.")
             return
@@ -7438,15 +7533,19 @@ def _send_quality_warning(user_id, text):
         logging.debug(f"Quality warning yuborish xato: {e}")
 
 
-def _send_text_card(user_id, text, header="📝 <b>Matn:</b>"):
+def _send_text_card(chat_id, text, header="📝 <b>Matn:</b>", remember_uid=None):
     """Matnni 2 ta PDF (Lotin + Kirill) qilib avtomat yuborish.
     Audio transkripsiya VA PDF tarjima uchun ishlatiladi.
     Sync — async kontekstda ham xavfsiz ishlaydi (requests orqali).
 
+    chat_id — natija YUBORILADIGAN chat (guruhda ishlatilsa guruhning o'zi;
+    ilgari bu yerga user_id berilardi va guruhdagi so'rov natijasi user'ning
+    shaxsiy chatiga ketardi). remember_uid — matn keshining egasi (default: chat).
+
     Returns True — natija haqiqatan yetkazilgan bo'lsa (billing shunga qarab)."""
     # Sifat tekshiruvi va ogohlantirish (faqat past sifat)
-    _send_quality_warning(user_id, text)
-    return _send_text_and_pdf(user_id, text)
+    _send_quality_warning(chat_id, text)
+    return _send_text_and_pdf(chat_id, text, remember_uid=remember_uid)
 
 
 def _send_pdf_variant(user_id, text, filename, caption, title=None):
@@ -7465,7 +7564,7 @@ def _send_pdf_variant(user_id, text, filename, caption, title=None):
             except Exception: pass
 
 
-def _send_text_and_pdf(user_id, text):
+def _send_text_and_pdf(user_id, text, remember_uid=None):
     """2 ta PDF yuboradi (Lotin + Kirill).
 
     Returns True — kamida BITTA PDF haqiqatan yetkazilgan bo'lsa.
@@ -7519,7 +7618,7 @@ def _send_text_and_pdf(user_id, text):
             return False
 
     # Oxirgi matnni RAM'da eslab qolamiz (diskka yozilmaydi)
-    remember_transcript(user_id, text)
+    remember_transcript(remember_uid if remember_uid is not None else user_id, text)
     return True
 
 
@@ -8249,10 +8348,12 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
 # data_check_string — `hash` va `signature` dan tashqari barcha maydonlar
 # "key=value" ko'rinishida, kalit bo'yicha saralanib "\n" bilan birlashtirilgan.
 
-# initData replay oynasi. Qisqa oyna = o'g'irlangan initData tezroq eskiradi.
-# 6 soat default: WebApp'da 2-3 soatlik mikrofon yozuvi ham yakunlangunicha
-# imzo amal qilishi kerak (Telegram initData'ni faqat ochilishda beradi).
-INIT_DATA_MAX_AGE = int(os.getenv("INIT_DATA_MAX_AGE_HOURS", "6")) * 3600
+# initData replay oynasi. Default 24h — Telegram WebApp'ni yopmasdan uzoq
+# ishlatadigan foydalanuvchilar (uzun mikrofon sessiyalari) yozuvini yubora
+# olishi uchun. Qisqartirish xavfsizroq, lekin ochiq turgan WebApp'dan kelgan
+# so'rov auth'dan yiqilib, YOZUV YO'QOLADI — shuning uchun default konservativ,
+# qisqartirish esa ongli qaror sifatida env orqali: INIT_DATA_MAX_AGE_HOURS=6
+INIT_DATA_MAX_AGE = int(os.getenv("INIT_DATA_MAX_AGE_HOURS", "24")) * 3600
 
 
 def _verify_init_data(init_data):
@@ -8346,9 +8447,9 @@ async def handle_webapp_audio(request):
                        (user_id, tmp_path, translation_lang, target_lang), label="tarjima",
                        cleanup_path=tmp_path)
         else:
+            # Upload yo'li bilan bir xil: clamp YO'Q — 'ar'/'auto' ham o'tadi,
+            # process_audio_for_user Whisper orqali barcha tillarni biladi
             stt_lang = translation_lang if translation_lang else language
-            if stt_lang not in ("uz", "ru", "en"):
-                stt_lang = "uz"
             accepted = submit_job(user_id, process_audio_for_user,
                        (user_id, tmp_path, stt_lang), label="audio", cleanup_path=tmp_path)
         if not accepted:

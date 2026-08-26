@@ -193,11 +193,17 @@ check("hardcoded user ID yo'q", "8128034276" not in src)
 print("\n[R2] Yangi tur: atomik mark, revoke-dedupe, busy_guard, YT throttle")
 # Atomik try-mark
 bot.processing_users.clear()
-check("try_mark 1-marta True", bot._try_mark_processing(4000) is True)
-check("try_mark 2-marta False", bot._try_mark_processing(4000) is False)
-bot._unmark_processing(4000)
-check("unmark'dan keyin yana True", bot._try_mark_processing(4000) is True)
-bot._unmark_processing(4000)
+tok1 = bot._try_mark_processing(4000)
+check("try_mark 1-marta token (truthy)", bool(tok1), tok1)
+check("try_mark 2-marta None", bot._try_mark_processing(4000) is None)
+# EGALIK: begona token bilan unmark ISHLAMAYDI
+bot._unmark_processing(4000, token=999999)
+check("begona token unmark qilolmadi", bot._is_user_processing(4000) is True)
+bot._unmark_processing(4000, token=tok1)
+check("egasining tokeni unmark qildi", bot._is_user_processing(4000) is False)
+tok2 = bot._try_mark_processing(4000)
+check("unmark'dan keyin yana token", bool(tok2))
+bot._unmark_processing(4000, tok2)
 
 # Grant dedupe: revoke'dan keyin qayta berish o'tadi
 reset()
@@ -210,12 +216,14 @@ with bot._grant_lock:
         bot._recent_grants.pop(k, None)
 c = bot._activate_tariff_with_carryover(5000, "basic", source="approve")
 check("revoke'dan keyin qayta grant o'tadi", c is not None, c)
-# Tarif amalda BOSHQA bo'lsa ham dedupe ushlamasligi kerak (holat sharti)
+# Dedupe endi SOF vaqt-oynali (holat sharti ATAYLAB yo'q — eskirgan approve
+# tugmasi 5 daq ichida boshqa grant ustidan qayta ishlamasin). Kalit
+# tozalanmagan bo'lsa, hatto tarif farq qilsa ham dup hisoblanadi:
 reset()
 bot._activate_tariff_with_carryover(5001, "basic", source="approve")
 bot.user_tariffs[5001] = "free"   # revoke, lekin kalit tozalanmagan deb faraz
 c2 = bot._activate_tariff_with_carryover(5001, "basic", source="approve")
-check("holat sharti: free bo'lsa dup emas", c2 is not None, c2)
+check("kalit tozalanmagan -> hali dup", c2 is None, c2)
 
 # busy_guard: oddiy async oqim
 import asyncio as _aio
@@ -267,6 +275,63 @@ async def _rh():
 check("_run_heavy natija", _aio.run(_rh()) == 5)
 run, q = bot._job_slots_info()
 check("_run_heavy hisobi 0 ga qaytdi", (run, q) == (0, 0), (run, q))
+
+
+
+print("\n[R3] Workflow-topilmalari: navbat cap, JobQueueFullError, tarjima holati")
+# _run_heavy navbat to'la bo'lsa JobQueueFullError ko'taradi
+bot._job_stats.update({"running": 0, "queued": bot.MAX_QUEUED_JOBS})
+async def _rh_full():
+    try:
+        await bot._run_heavy(lambda: 1)
+        return "yiqilmadi"
+    except bot.JobQueueFullError:
+        return "raised"
+check("navbat to'la -> JobQueueFullError", _aio.run(_rh_full()) == "raised")
+bot._job_stats.update({"running": 0, "queued": 0})
+
+# busy_guard JobQueueFullError'ni QUEUE_FULL_MESSAGE javobiga aylantiradi
+@bot.busy_guard
+async def _always_full(update, context):
+    raise bot.JobQueueFullError()
+async def _scenario_full():
+    u = _Upd(7000)
+    r = await _always_full(u, None)
+    return r, u.message.texts, bot._is_user_processing(7000)
+r, texts, still = _aio.run(_scenario_full())
+check("queue-full javobi yuborildi", r is None and len(texts) == 1 and "band" in texts[0], texts)
+check("belgi tozalandi (queue-full'dan keyin)", still is False)
+
+# Tarjima holati: peek O'CHIRMAYDI, pop o'chiradi
+bot.pending_translations.clear()
+bot.pending_translations[8000] = {"source": "ru", "target": "uz"}
+check("peek holatni qaytaradi", bot._peek_translation_state(8000)["source"] == "ru")
+check("peek holatni O'CHIRMADI", 8000 in bot.pending_translations)
+check("pop holatni qaytaradi", bot._pop_translation_state(8000)["source"] == "ru")
+check("pop holatni o'chirdi", 8000 not in bot.pending_translations)
+# eski string format ham
+bot.pending_translations[8001] = "en"
+check("peek eski format", bot._peek_translation_state(8001) == {"source": "en", "target": "uz"})
+bot.pending_translations.clear()
+
+# INIT default konservativ 24h (env qisqartirishi mumkin)
+check("INIT_DATA_MAX_AGE default 24h", bot.INIT_DATA_MAX_AGE == 24 * 3600,
+      bot.INIT_DATA_MAX_AGE)
+
+# Muxlisa retry ham qisqartirilgan
+src2 = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
+check("muxlisa pass_waits ham [30,60,180]", "pass_waits = [30, 60, 180]" in src2)
+check("eski [60,120,300] TAYINLASH qolmagan",
+      "pass_waits = [60, 120, 300]" not in src2)  # izohda eslatma qolishi mumkin
+
+# Kesh nusxasi: append paytida iteratsiya xavfsiz
+bot.TARIFF_LOG_FILE = os.path.join(d, "iter.jsonl")
+bot._tariff_log_cache.update({"mtime": None, "size": None, "map": {}})
+bot._append_tariff_log(9001, "basic", source="t")
+m = bot._get_tariff_log_map()
+bot._append_tariff_log(9002, "basic", source="t")   # kesh ichida yangilanadi
+check("olingan nusxa o'zgarmadi", 9002 not in m, sorted(m))
+check("yangi so'rov yangisini ko'radi", 9002 in bot._get_tariff_log_map())
 
 print(f"\nNatija: {ok} pass, {fail} fail")
 sys.exit(1 if fail else 0)
