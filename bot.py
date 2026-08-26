@@ -71,7 +71,12 @@ def _load_dotenv(path=None):
         return 0
     loaded = 0
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        # utf-8-sig: Windows Notepad UTF-8 ni BOM bilan saqlashi mumkin.
+        # Oddiy "utf-8" bilan birinchi kalit "﻿BOT_TOKEN" bo'lib qolar,
+        # ya'ni BOT_TOKEN JIMGINA topilmas va bot DEGRADED rejimga tushardi —
+        # foydalanuvchi esa .env to'g'ri to'ldirilganini ko'rib turardi.
+        # BOM bo'lmasa utf-8-sig oddiy utf-8 kabi ishlaydi.
+        with open(path, "r", encoding="utf-8-sig") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#") or "=" not in line:
@@ -224,20 +229,31 @@ TRANSLATION_LANG_NAMES = {"uz": "o'zbek", "ru": "rus", "en": "ingliz", "ar": "ar
 # 2) WEBAPP_URL env (manual sozlangan bo'lsa)
 # 3) Hardcoded Railway URL (oxirgi chora)
 def _resolve_webapp_url():
+    # ANIQ sozlangan qiymat HAR DOIM ustun turadi.
+    #
+    # Ilgari bu yerda `manual and "ngrok" not in manual` sharti bor edi:
+    # .env'da ngrok manzili turgan bo'lsa u JIMGINA tashlab yuborilardi va
+    # kod qattiq yozilgan Railway manziliga qaytardi. Natijada foydalanuvchi
+    # sozlagan manzil ishlamas, "Web ilovani ochish" esa MUTLAQO BOSHQA
+    # saytga olib borardi. Yuqoridagi izoh ngrok'ni tavsiya qilgani holda
+    # kod uni rad etishi — hujjat bilan xatti-harakat orasidagi ziddiyat edi.
+    manual = os.getenv("WEBAPP_URL", "").strip()
+    if manual:
+        return manual.rstrip("/")
     rw_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()
     if rw_domain:
-        # Railway avtomatik domen beradi — ngrok yoki manual qiymat'dan ustun
         return f"https://{rw_domain}"
-    manual = os.getenv("WEBAPP_URL", "").strip()
-    if manual and "ngrok" not in manual:
-        # Manual qiymat bor va ngrok emas — ishonchli
-        return manual
-    # Fallback: webapp-ovoz Railway URL
-    return "https://webapp-ovoz-production.up.railway.app"
+    # Sozlanmagan. Ilgari bu yerda qattiq yozilgan Railway manzili qaytarilardi —
+    # u ALLAQACHON O'LIK bo'lsa ham tugma ko'rinaverardi va foydalanuvchi
+    # "ilova ochilmayapti" degan xatoga duch kelardi (aynan shu sodir bo'ldi).
+    # Endi bo'sh qaytadi: tugma KO'RSATILMAYDI. Yo'q tugma — o'lik tugmadan
+    # yaxshi, chunki bot buzuq degan taassurot tug'dirmaydi.
+    return ""
 
 
 WEBAPP_URL = _resolve_webapp_url()
-print(f"🔗 WEBAPP_URL = {WEBAPP_URL}")  # Deploy logda ko'rinadi
+print("🔗 WEBAPP_URL = " + (WEBAPP_URL or
+      "(sozlanmagan — Web ilova tugmasi berkitiladi)"))  # Deploy logda ko'rinadi
 # Railway/Heroku PORT env, lokal sinov uchun HTTP_PORT yoki default 8000
 HTTP_PORT  = int(os.getenv("HTTP_PORT") or os.getenv("PORT") or 8000)
 
@@ -1952,13 +1968,13 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
     progress_cb(current, total) — har bo'lak tugagach.
     failed_ranges_out: list — yiqilgan vaqt oraliqlari to'ldiriladi.
     """
-    # WEBAPP_URL aniq sozlanganmi — zaxira qiymat ESKIRGAN bo'lishi mumkin
-    if not (os.getenv("WEBAPP_URL", "").strip()
-            or os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()):
+    # WEBAPP_URL sozlanmagan bo'lsa Web ilova qismi umuman ishlamaydi
+    if not WEBAPP_URL:
         out.append(("warning",
-                    f"WEBAPP_URL sozlanmagan — zaxira qiymat ishlatilyapti "
-                    f"({WEBAPP_URL}). Agar bu manzil eskirgan bo'lsa, "
-                    f"'Web ilovani ochish' tugmasi O'LIK sahifaga olib boradi."))
+                    "WEBAPP_URL sozlanmagan — 'Web ilovani ochish' tugmasi "
+                    "berkitildi. Bot Telegram ichida TO'LIQ ishlayveradi "
+                    "(audio, video, PDF, tarjima). Web ilova ham kerak bo'lsa "
+                    ".env faylga WEBAPP_URL=https://... yozing."))
 
     if not MUXLISA_KEY:
         raise Exception("MUXLISA_KEY sozlanmagan. Pro Uzbek tarifi uchun Railway env qo'shing.")
@@ -4572,11 +4588,13 @@ async def process_url(update, context, url, language="uz"):
 def webapp_keyboard(chat_id=None, username=None):
     # Cache buster. `user=` parametri OLIB TASHLANDI — u autentifikatsiyani
     # chetlab o'tish yo'li edi. Endi user_id faqat imzolangan initData'dan olinadi.
-    sep = "&" if "?" in WEBAPP_URL else "?"
-    url = f"{WEBAPP_URL}{sep}v={int(time.time())}"
-
-    rows = [
-        [KeyboardButton(text="🎙 Web ilovani ochish", web_app=WebAppInfo(url=url))],
+    rows = []
+    # WEBAPP_URL sozlanmagan bo'lsa tugmani UMUMAN qo'shmaymiz: bosilganda
+    # "sahifa ochilmadi" chiqib, bot butunlay buzuq degan taassurot berardi.
+    if WEBAPP_URL:
+        rows.append([KeyboardButton(text="🎙 Web ilovani ochish",
+                                    web_app=WebAppInfo(url=fresh_webapp_url()))])
+    rows += [
         [KeyboardButton(text="🌐 Tarjima")],
         [KeyboardButton(text="📊 Balansim"), KeyboardButton(text="💎 Tariflar")],
         [KeyboardButton(text="💳 Sotib olish"), KeyboardButton(text="❓ Yordam")],
@@ -4601,7 +4619,9 @@ def webapp_keyboard(chat_id=None, username=None):
 
 def fresh_webapp_url():
     """Cache-buster bilan WebApp URL (user parametri YO'Q — autentifikatsiya
-    faqat imzolangan initData orqali)."""
+    faqat imzolangan initData orqali). Sozlanmagan bo'lsa bo'sh satr."""
+    if not WEBAPP_URL:
+        return ""
     sep = "&" if "?" in WEBAPP_URL else "?"
     return f"{WEBAPP_URL}{sep}v={int(time.time())}"
 
@@ -4628,13 +4648,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.warning(f"Referral parse xato: {e}")
     # Menu button'ni har gal yangi URL bilan o'rnatish — eski cache buziladi
     try:
-        await context.bot.set_chat_menu_button(
-            chat_id=update.effective_chat.id,
-            menu_button=MenuButtonWebApp(
-                text="🎙 MNSM",
-                web_app=WebAppInfo(url=fresh_webapp_url()),
-            ),
-        )
+        if WEBAPP_URL:
+            await context.bot.set_chat_menu_button(
+                chat_id=update.effective_chat.id,
+                menu_button=MenuButtonWebApp(
+                    text="🎙 MNSM",
+                    web_app=WebAppInfo(url=fresh_webapp_url()),
+                ),
+            )
     except Exception as e:
         logging.error(f"Menu button set xato: {e}")
 
