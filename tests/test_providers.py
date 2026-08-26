@@ -93,18 +93,24 @@ check("_has_any_ai_key False", bot._has_any_ai_key() is False)
 set_keys(gemini="gm-test", groq="gk-test", openai="sk-test")
 c = bot._chat_attempts()
 nomlar = [x[0] for x in c]
-check("Gemini Pro birinchi (o'zbek uchun kuchli)",
-      nomlar[0] == "gemini-2.5-pro", nomlar)
-check("Pro dan keyin Flash keladi (limit zaxirasi)",
-      nomlar.index("gemini-2.5-flash") > nomlar.index("gemini-2.5-pro"), nomlar)
-check("Groq eng oxirida", nomlar[-1].startswith("groq/"), nomlar)
+# Tartib TAXMIN emas, o'lchov natijasi (gemini-3.5-flash 100%, qwen 96.6%)
+check("eng aniq model birinchi", nomlar[0] == "gemini-3.5-flash", nomlar)
+check("Gemini limitga urilsa Groq o'rnini to'ldiradi",
+      nomlar[1].startswith("groq/"), nomlar)
+check("ikkala provayder ham zanjirda ALMASHIB keladi",
+      any(x.startswith("gemini") for x in nomlar[2:])
+      and any(x.startswith("groq/") for x in nomlar[2:]), nomlar)
+check("ishlamaydigan modellar YO'Q (404/503/429 o'lchandi)",
+      not any(x in nomlar for x in ("gemini-2.5-pro", "gemini-3.7-flash",
+                                     "gemini-pro-latest")), nomlar)
 check("Gemini manzili OpenAI-mos endpoint",
       all(x[2] == bot.GEMINI_CHAT_URL for x in c if "gemini" in x[0]))
 check("Gemini manzilida 'gemini' so'zi YO'Q (soxta testlar shunga aldanadi)",
       "gemini" not in bot.GEMINI_CHAT_URL, bot.GEMINI_CHAT_URL)
 
 set_keys(gemini="gm-test")
-check("faqat Gemini: ikki model qoladi", len(bot._chat_attempts()) == 2)
+check("faqat Gemini: ikki model qoladi (flash + flash-lite)",
+      len(bot._chat_attempts()) == 2, [x[0] for x in bot._chat_attempts()])
 
 print("[3] _chat_request — zaxiraga o'tish")
 
@@ -135,7 +141,7 @@ def _post_429_keyin_ok(url, **kw):
     # `"gemini" in url` deb yozgan edim va soxta javob hech qachon 429
     # qaytarmasdi, ya'ni test zaxiraga o'tishni umuman sinamasdi.
     _log.append(kw["json"]["model"])
-    if kw["json"]["model"] == "gemini-2.5-pro":
+    if kw["json"]["model"] == "gemini-3.5-flash":
         return _R(429, text="quota")
     return _R(200, _javob("NATIJA"))
 
@@ -145,8 +151,8 @@ _log.clear()
 bot.requests.post = _post_429_keyin_ok
 txt, err = bot._chat_request({"messages": []}, label="sinov")
 check("429 dan keyin natija olindi", txt == "NATIJA" and err is None, (txt, err))
-check("Pro bir marta sinaldi, KUTILMADI (kvota tiklanmaydi)",
-      _log.count("gemini-2.5-pro") == 1, _log)
+check("birinchi model bir marta sinaldi, KUTILMADI (kvota tiklanmaydi)",
+      _log.count("gemini-3.5-flash") == 1, _log)
 check("keyingi provayderga o'tdi", len(_log) >= 2, _log)
 
 bot.requests.post = lambda url, **kw: _R(500, text="server xato")
@@ -236,7 +242,152 @@ check("Groq chegarasi 8192 dan oshmaydi (400/413 sabab)",
       all(x[4] <= 8192 for x in _c if x[0].startswith("groq/")),
       [(x[0], x[4]) for x in _c])
 
-print("[10] Sozlamalar")
+print("[10] Uzun matn tozalash — PARALLEL, tartib va to'liqlik")
+# 3 soatlik ma'ruza ~20 bo'lak. Eng aniq model bo'lakka ~1 daqiqa
+# "o'ylaydi" — ketma-ket bo'lsa 20 DAQIQA kutish. Parallel shart,
+# lekin tartib buzilsa ma'ruza aralashib ketadi.
+import threading as _th2
+# DIQQAT: yuqorida bot.time.sleep bo'sh funksiyaga almashtirilgan (retry
+# kutishlarini tezlatish uchun). `bot.time` — bu AYNAN `time` moduli,
+# ya'ni yamoq global. Shu sababli bu yerda `time.sleep` ishlamaydi va
+# bo'laklar bir zumda tugab, parallellik o'lchanmay qolardi (o'lchov 1
+# ko'rsatardi, holbuki kod parallel ishlayotgan edi). Saqlab qo'yilgan
+# HAQIQIY sleep ishlatiladi.
+_faol = {"hozir": 0, "cho_qqi": 0}
+_lk = _th2.Lock()
+_eski_cleanup = bot._cleanup_uzbek_transcript_chunk
+
+
+def _soxta_cleanup(t):
+    with _lk:
+        _faol["hozir"] += 1
+        _faol["cho_qqi"] = max(_faol["cho_qqi"], _faol["hozir"])
+    # Keyingi bo'laklar TEZROQ tugasin — tartib tasodifan to'g'ri
+    # chiqib qolmasin, haqiqatan indeks bo'yicha joylanishi sinalsin
+    _real_sleep(0.25 if t[:40].count("A") > 3 else 0.05)
+    with _lk:
+        _faol["hozir"] -= 1
+    return "[T]" + t
+
+
+bot._cleanup_uzbek_transcript_chunk = _soxta_cleanup
+try:
+    _uzun = " ".join(("A" if i < 1200 else "B") + str(i) for i in range(3000))
+    _natija = bot._cleanup_uzbek_transcript(_uzun)
+    _bolaklar = _natija.split(chr(10) + chr(10))
+    check("uzun matn bo'laklandi", len(_bolaklar) >= 2, len(_bolaklar))
+    check("PARALLEL ishladi (ketma-ket EMAS)", _faol["cho_qqi"] > 1,
+          _faol["cho_qqi"])
+    check("TARTIB saqlandi — birinchi bo'lak boshida",
+          _bolaklar[0].startswith("[T]A0 "), _bolaklar[0][:16])
+    check("oxirgi bo'lak oxirida", _natija.rstrip().endswith("B2999"),
+          _natija[-20:])
+    check("hech bir so'z YO'QOLMADI",
+          all(("B" + str(i)) in _natija for i in (1200, 2000, 2999)))
+    check("har bo'lak tozalashdan o'tdi",
+          all(p.startswith("[T]") for p in _bolaklar))
+
+    # Bir bo'lak yiqilsa — ASL matn saqlanadi, bo'shliq qolmaydi
+    def _yiqiluvchi(t):
+        if "B1500" in t:
+            raise RuntimeError("sinov uchun yiqilish")
+        return "[T]" + t
+
+    bot._cleanup_uzbek_transcript_chunk = _yiqiluvchi
+    _n2 = bot._cleanup_uzbek_transcript(_uzun)
+    check("yiqilgan bo'lak matni SAQLANADI (bo'shliq yo'q)",
+          "B1500" in _n2 and "B2999" in _n2, _n2[-30:])
+finally:
+    bot._cleanup_uzbek_transcript_chunk = _eski_cleanup
+
+print("[11] Eskirgan klaviatura KESHI o'z-o'zidan tuzaladi")
+# Telegram reply-keyboard'ni klientda saqlaydi. WEBAPP_URL o'zgarsa
+# MAVJUD foydalanuvchilarning HAMMASIDA tugma o'lik manzilga ishora
+# qilib turaveradi — kod to'g'ri bo'lsa ham "bot buzuq" ko'rinadi.
+import asyncio as _aio
+
+
+class _SoxtaBot:
+    def __init__(self):
+        self.xabarlar = []
+        self.menyular = []
+
+    async def send_message(self, chat_id, text, reply_markup=None, **kw):
+        self.xabarlar.append((chat_id, text, reply_markup))
+
+    async def set_chat_menu_button(self, chat_id, menu_button=None, **kw):
+        self.menyular.append(chat_id)
+
+
+class _SoxtaUser:
+    def __init__(self, uid, username=None):
+        self.id = uid
+        self.username = username
+
+
+class _SoxtaUpdate:
+    def __init__(self, uid):
+        self.effective_user = _SoxtaUser(uid)
+
+
+class _SoxtaCtx:
+    def __init__(self, b):
+        self.bot = b
+
+
+_eski_url = bot.WEBAPP_URL
+_eski_seen = dict(bot.user_webapp_seen)
+_eski_save = bot._save_user_data
+bot._save_user_data = lambda: None
+try:
+    bot.WEBAPP_URL = "https://yangi.example"
+    bot.user_webapp_seen.clear()
+
+    # TANISH foydalanuvchi (allaqachon botdan foydalangan)
+    bot.user_info[555001] = {"username": "sinov"}
+    b = _SoxtaBot()
+    _aio.run(bot._refresh_stale_keyboard(_SoxtaUpdate(555001), _SoxtaCtx(b)))
+    check("tanish foydalanuvchiga yangi menyu YUBORILDI",
+          len(b.xabarlar) == 1, b.xabarlar)
+    check("yangi klaviatura ilova tugmasini o'z ichiga oladi",
+          any(getattr(btn, "web_app", None)
+              for row in b.xabarlar[0][2].keyboard for btn in row))
+    check("pastdagi doimiy tugma ham yangilandi", b.menyular == [555001], b.menyular)
+    check("manzil eslab qolindi",
+          bot.user_webapp_seen.get(555001) == "https://yangi.example")
+
+    # IKKINCHI marta yubormasligi kerak (spam bo'lmasin)
+    b2 = _SoxtaBot()
+    _aio.run(bot._refresh_stale_keyboard(_SoxtaUpdate(555001), _SoxtaCtx(b2)))
+    check("ikkinchi marta YUBORILMAYDI", b2.xabarlar == [], b2.xabarlar)
+
+    # YANGI foydalanuvchi: /start baribir klaviatura beradi, xabar ortiqcha
+    b3 = _SoxtaBot()
+    _aio.run(bot._refresh_stale_keyboard(_SoxtaUpdate(555002), _SoxtaCtx(b3)))
+    check("yangi foydalanuvchi chalg'itilmaydi", b3.xabarlar == [], b3.xabarlar)
+    check("lekin manzili baribir eslab qolinadi",
+          bot.user_webapp_seen.get(555002) == "https://yangi.example")
+
+    # MANZIL YANA o'zgarsa — qaytadan yuboriladi
+    bot.WEBAPP_URL = "https://boshqa.example"
+    b4 = _SoxtaBot()
+    _aio.run(bot._refresh_stale_keyboard(_SoxtaUpdate(555001), _SoxtaCtx(b4)))
+    check("manzil qayta o'zgarsa yana yuboriladi", len(b4.xabarlar) == 1)
+
+    # WEBAPP_URL yo'q bo'lsa hech narsa yuborilmaydi
+    bot.WEBAPP_URL = ""
+    b5 = _SoxtaBot()
+    _aio.run(bot._refresh_stale_keyboard(_SoxtaUpdate(555003), _SoxtaCtx(b5)))
+    check("WEBAPP_URL yo'q bo'lsa jim turadi", b5.xabarlar == [])
+finally:
+    bot.WEBAPP_URL = _eski_url
+    bot.user_webapp_seen.clear()
+    bot.user_webapp_seen.update(_eski_seen)
+    bot._save_user_data = _eski_save
+    for _u in (555001, 555002, 555003):
+        bot.user_info.pop(_u, None)
+
+print("[12] Sozlamalar")
 check("sifat turlari kamida 1", bot.STT_QUALITY_ROUNDS >= 1, bot.STT_QUALITY_ROUNDS)
 check("turlar orasida kutish belgilangan", len(bot.STT_ROUND_WAITS) >= 1)
 check("5 soatlik ma'ruza sig'adi (2-3 soat talabi)",

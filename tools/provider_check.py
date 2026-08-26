@@ -127,9 +127,9 @@ def main():
     print("\nTARJIMA / TOZALASH:")
     kichik = {"messages": [{"role": "user", "content": "salom"}], "max_tokens": 5}
     for nom, kalit, url, model in (
-            ("Gemini 2.5 Flash", gm,
+            ("Gemini 3.5 Flash", gm,
              "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-             "gemini-2.5-flash"),
+             "gemini-3.5-flash"),
             ("Groq qwen3.8-27b", gq,
              "https://api.groq.com/openai/v1/chat/completions",
              "qwen/qwen3.8-27b"),

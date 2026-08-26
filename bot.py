@@ -30,7 +30,7 @@ from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
-    PreCheckoutQueryHandler, filters, ContextTypes,
+    PreCheckoutQueryHandler, TypeHandler, filters, ContextTypes,
 )
 from telegram.error import BadRequest
 from aiohttp import web
@@ -300,21 +300,31 @@ def _chat_attempts():
     yoki 413 qaytaradi va tozalash BUTUNLAY yiqiladi (amalda shunday
     bo'ldi — matn tozalanmay o'tib ketdi).
 
-    Gemini 2.5 Pro birinchi: o'zbek kabi kam resursli tillarda kuchli.
-    Bepul tarifda kuniga atigi ~50 so'rov, shuning uchun limitga urilganda
-    (429) Flash'ga tushadi — u ham kuchli, lekin kuniga ~1500 so'rov.
+    TARTIB TAXMIN EMAS, O'LCHOV NATIJASI. Bir xil "iflos" o'zbek
+    transkripti hamma modelga berilib, natija asl matn bilan solishtirildi:
+
+        gemini-3.5-flash       100.0%   13.6s
+        groq/qwen3.8-27b        96.6%    1.0s
+        gemini-3.1-flash-lite   94.7%    1.3s
+        gemini-2.5-flash        93.1%    8.3s
+
+    Ishlatilmaydigan modellar va sababi:
+        gemini-2.5-pro    — HTTP 404, yangi hisoblarga berilmaydi
+        gemini-3.7-flash  — HTTP 503, doimiy band
+        gemini-pro-latest — HTTP 429, bepul kvota juda kichik
+        llama-3.3-70b     — Groq ro'yxatidan olib tashlangan (404)
+
+    Sifat birinchi o'rinda: eng aniq model birinchi, lekin u sekin (13.6s)
+    va kunlik kvotasi bor. Limitga urilganda (429) DARHOL Groq'ga o'tadi —
+    u 13 barobar tez va deyarli shu darajada aniq. Ya'ni ikkala provayder
+    ham faol va biri tugasa ikkinchisi o'rnini to'ldiradi.
     """
     oa = _ensure_openai_key()
     gm = _ensure_gemini_key()
     gq = _ensure_groq_key()
     out = []
     if gm:
-        out.append(("gemini-2.5-pro", "gemini-2.5-pro", GEMINI_CHAT_URL,
-                    _bearer(gm), 8192))
-    if oa:
-        out.append(("gpt-4o", "gpt-4o", OPENAI_CHAT_URL, _bearer(oa), 16000))
-    if gm:
-        out.append(("gemini-2.5-flash", "gemini-2.5-flash", GEMINI_CHAT_URL,
+        out.append(("gemini-3.5-flash", "gemini-3.5-flash", GEMINI_CHAT_URL,
                     _bearer(gm), 8192))
     if gq:
         # Modellar HAQIQIY Groq ro'yxatidan olingan va o'zbek matnida
@@ -327,6 +337,12 @@ def _chat_attempts():
         # qwen3.6-27b ATAYLAB yo'q: u <think> fikrlashini matnga qo'shib yubordi.
         out.append(("groq/qwen3.8-27b", "qwen/qwen3.8-27b",
                     GROQ_CHAT_URL, _bearer(gq), 8192))
+    if gm:
+        out.append(("gemini-3.1-flash-lite", "gemini-3.1-flash-lite",
+                    GEMINI_CHAT_URL, _bearer(gm), 8192))
+    if oa:
+        out.append(("gpt-4o", "gpt-4o", OPENAI_CHAT_URL, _bearer(oa), 16000))
+    if gq:
         out.append(("groq/compound", "groq/compound",
                     GROQ_CHAT_URL, _bearer(gq), 8192))
         out.append(("groq/gpt-oss-120b", "openai/gpt-oss-120b",
@@ -870,6 +886,12 @@ user_referral_minutes = {}
 user_referrals = {}
 # {invited_user_id: True} — taklif qilingan user bonus'ini olgan bo'lsa (real foydalanish tasdiq)
 user_referral_claimed = {}
+# Foydalanuvchi OXIRGI MARTA qaysi WEBAPP_URL bilan klaviatura olgan.
+# Telegram reply-keyboard'ni KLIENTDA saqlaydi: manzil o'zgarsa eski tugma
+# o'lik saytga ishora qilib turaveradi va foydalanuvchi "bot buzuq" deb
+# o'ylaydi. /start bosishini kutib bo'lmaydi — ko'pchilik buni bilmaydi
+# va tugma ham ko'rinmasligi mumkin.
+user_webapp_seen = {}
 # === [/REFERRAL] ============================================
 
 # Admin tomonidan /setcard va /setholder orqali sozlanadigan karta ma'lumotlari
@@ -1035,6 +1057,11 @@ def _load_user_data():
                 user_referrals[int(k)] = int(v)
             except (ValueError, TypeError) as _e:
                 _skip("yozuv", k, _e)
+        for k, v in (data.get("user_webapp_seen") or {}).items():
+            try:
+                user_webapp_seen[int(k)] = str(v)
+            except (ValueError, TypeError) as _e:
+                _skip("yozuv", k, _e)
         for k, v in (data.get("user_referral_claimed") or {}).items():
             try:
                 if v:
@@ -1080,6 +1107,7 @@ def _save_user_data():
                 "user_referral_minutes": {str(k): int(v) for k, v in user_referral_minutes.items()},
                 "user_referrals": {str(k): int(v) for k, v in user_referrals.items()},
                 "user_referral_claimed": {str(k): True for k in user_referral_claimed},
+                "user_webapp_seen": {str(k): v for k, v in user_webapp_seen.items()},
                 "runtime_settings": dict(runtime_settings),
             }
 
@@ -3603,9 +3631,35 @@ def _cleanup_uzbek_transcript(text):
         if cur:
             chunks.append(" ".join(cur))
         logging.info(f"🧹 Uzun matn ({len(text)} belgi) → {len(chunks)} bo'lakda tozalanadi")
-        cleaned_parts = []
-        for ch in chunks:
-            cleaned_parts.append(_cleanup_uzbek_transcript_chunk(ch))
+        # PARALLEL: ilgari bo'laklar KETMA-KET tozalanardi. Eng aniq model
+        # (gemini-3.5-flash) uzun prompt bilan ~1 daqiqa "o'ylaydi", ya'ni
+        # 3 soatlik ma'ruza ~20 bo'lak x 1 daqiqa = 20 DAQIQA kutish edi.
+        #
+        # 3 ta oqim ATAYLAB: bepul Gemini daqiqasiga ~15 so'rovga ruxsat
+        # beradi. Chegaraga urilgan bo'lak 429 oladi va zanjir uni DARHOL
+        # Groq'ga uzatadi (13 barobar tez, 96.6% aniq). Ya'ni yuk oshganda
+        # tizim o'zini o'zi muvozanatlaydi: sifat tushmaydi, faqat qaysi
+        # model xizmat qilgani o'zgaradi.
+        #
+        # TARTIB SAQLANADI — natijalar indeks bo'yicha joylanadi.
+        from concurrent.futures import ThreadPoolExecutor
+        cleaned_parts = [None] * len(chunks)
+
+        def _one(i_ch):
+            i, ch = i_ch
+            try:
+                return i, _cleanup_uzbek_transcript_chunk(ch)
+            except Exception as e:
+                logging.error("Tozalash bo'lagi %d xato: %s", i, e)
+                return i, ch      # asl matn saqlanadi, YO'QOLMAYDI
+
+        with ThreadPoolExecutor(max_workers=3) as ex:
+            for i, res in ex.map(_one, list(enumerate(chunks))):
+                cleaned_parts[i] = res
+        # Hech bir bo'lak bo'sh qolmasin (to'liqlik kafolati)
+        for i, ch in enumerate(chunks):
+            if not cleaned_parts[i]:
+                cleaned_parts[i] = ch
         return "\n\n".join(cleaned_parts)
     return _cleanup_uzbek_transcript_chunk(text)
 
@@ -5001,6 +5055,62 @@ def fresh_webapp_url():
     return f"{WEBAPP_URL}{sep}v={int(time.time())}"
 
 
+async def _refresh_stale_keyboard(update, context):
+    """Klaviatura KESHI eskirgan bo'lsa uni jimgina yangilaydi.
+
+    MUAMMO: Telegram reply-keyboard'ni KLIENT XOTIRASIDA saqlaydi.
+    WEBAPP_URL o'zgarsa (server ko'chdi, tunnel almashdi) eski tugma
+    O'LIK manzilga ishora qilib turaveradi. Foydalanuvchi uni bosadi,
+    "sahifa ochilmadi" ko'radi va BUTUN bot buzuq deb o'ylaydi.
+
+    Bu MAVJUD foydalanuvchilarning HAMMASIGA ta'sir qiladi — kod
+    to'g'ri bo'lsa ham. /start bosishini kutib bo'lmaydi: ko'pchilik
+    buni bilmaydi va eski klaviaturada /start tugmasi ham yo'q.
+
+    YECHIM: foydalanuvchi biror xabar yozishi bilan, u ko'rgan manzil
+    hozirgisidan farq qilsa — yangi klaviatura yuboriladi. Bir marta,
+    o'z-o'zidan, hech qanday amal talab qilmasdan.
+    """
+    try:
+        user = update.effective_user
+        if not user or not WEBAPP_URL:
+            return
+        cid = user.id
+        if user_webapp_seen.get(cid) == WEBAPP_URL:
+            return
+
+        # YANGI foydalanuvchi: /start baribir klaviatura yuboradi, shuning
+        # uchun "yangilandi" xabari ortiqcha va chalg'ituvchi bo'lardi.
+        tanish = (cid in user_info or cid in user_tariffs
+                  or cid in user_uzbek_usage or cid in user_total_usage)
+        user_webapp_seen[cid] = WEBAPP_URL
+        try:
+            _save_user_data()
+        except Exception:
+            pass
+        if not tanish:
+            return
+
+        await context.bot.send_message(
+            chat_id=cid,
+            text="🔄 Menyu yangilandi — «🎙 Web ilovani ochish» tugmasi "
+                 "endi to'g'ri ishlaydi.",
+            reply_markup=webapp_keyboard(chat_id=cid, username=user.username),
+        )
+        # Pastdagi doimiy tugma ham eski manzilni ushlab turadi
+        try:
+            await context.bot.set_chat_menu_button(
+                chat_id=cid,
+                menu_button=MenuButtonWebApp(
+                    text="🎙 MNSM", web_app=WebAppInfo(url=fresh_webapp_url())),
+            )
+        except Exception as e:
+            logging.debug("Menu tugmasi yangilanmadi: %s", e)
+        logging.info("🔄 %s uchun klaviatura keshi yangilandi", cid)
+    except Exception as e:
+        logging.warning("Klaviatura keshini yangilash xatosi: %s", e)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_user.id
     # Admin /start yuborgan bo'lsa ADMIN_CHAT_ID ni darrov saqlash
@@ -5708,6 +5818,57 @@ async def openai_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"💡 Eslatma: Bu taxminiy. Real OpenAI: platform.openai.com/usage"
     )
     await update.message.reply_text(text)
+
+
+async def keshyangila_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Admin: HAMMA foydalanuvchiga yangi klaviatura yuboradi.
+
+    _refresh_stale_keyboard eskirgan keshni o'z-o'zidan tuzatadi, lekin
+    faqat foydalanuvchi biror xabar YOZGANDA. Bu buyruq esa kutmasdan,
+    darhol hammasiga yuboradi — manzil o'zgargandan keyin bir marta
+    ishlatiladi.
+
+    Telegram cheklovi: sekundiga ~30 xabar. Shuning uchun har yuborishdan
+    keyin qisqa pauza bor, aks holda 429 olib yarmi yetib bormaydi.
+    """
+    if not is_admin(update):
+        await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
+        return
+    if not WEBAPP_URL:
+        await update.message.reply_text(
+            "⚠️ WEBAPP_URL sozlanmagan — yuboradigan tugma yo'q.")
+        return
+
+    hammasi = set(user_info) | set(user_tariffs) | set(user_uzbek_usage) | set(user_total_usage)
+    if not hammasi:
+        await update.message.reply_text("Foydalanuvchi topilmadi.")
+        return
+
+    await update.message.reply_text(
+        "🔄 " + str(len(hammasi)) + " ta foydalanuvchiga yangi menyu yuborilmoqda...")
+    yubordi = xato = 0
+    for uid in sorted(hammasi):
+        try:
+            await context.bot.send_message(
+                chat_id=uid,
+                text="🔄 Menyu yangilandi — «🎙 Web ilovani ochish» tugmasi "
+                     "endi to'g'ri ishlaydi.",
+                reply_markup=webapp_keyboard(chat_id=uid,
+                                             username=(user_info.get(uid) or {}).get("username")),
+            )
+            user_webapp_seen[uid] = WEBAPP_URL
+            yubordi += 1
+        except Exception as e:
+            xato += 1
+            logging.debug("Kesh yangilash %s ga yetmadi: %s", uid, e)
+        await asyncio.sleep(0.05)   # Telegram: ~30 xabar/sekund
+    try:
+        _save_user_data()
+    except Exception:
+        pass
+    await update.message.reply_text(
+        "✅ Yuborildi: " + str(yubordi) + " ta" + chr(10)
+        + "❌ Yetmadi: " + str(xato) + " ta (bot bloklangan yoki chat o'chirilgan)")
 
 
 async def stats_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -9644,6 +9805,10 @@ def main():
             logging.error(f"setMyCommands xato: {e}")
     app.post_init = _setup_commands
 
+    # Klaviatura KESHI eskirganini o'z-o'zidan tuzatish — group=-1 bo'lgani
+    # uchun har qanday update'dan OLDIN ishlaydi va qolgan handlerlarni
+    # to'smaydi (PTB har guruhni alohida yuritadi).
+    app.add_handler(TypeHandler(Update, _refresh_stale_keyboard), group=-1)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(CommandHandler("audit", audit_cmd))
@@ -9655,6 +9820,7 @@ def main():
     app.add_handler(CommandHandler("openai", openai_cmd))
     app.add_handler(CommandHandler("test", test_cmd))
     app.add_handler(CommandHandler("stats", stats_cmd))
+    app.add_handler(CommandHandler("keshyangila", keshyangila_cmd))
     app.add_handler(CommandHandler("reset", reset_cmd))
     app.add_handler(CommandHandler("grant", grant_cmd))
     app.add_handler(CommandHandler("refund", refund_cmd))
