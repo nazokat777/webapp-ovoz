@@ -189,5 +189,42 @@ check("mavjud bo'lmagan fayl xavfsiz", bot._load_dotenv(os.path.join(_ed, "yoq")
 for _k in ("YANGI_KALIT", "EXPORTLI", "BOSH_QATOR"):
     os.environ.pop(_k, None)
 
+
+print("[25] .dockerignore — runtime fayllar image'da qoladi")
+import fnmatch as _fn, subprocess as _sp
+_pats, _negs = [], []
+for _ln in open(os.path.join(ROOT, ".dockerignore"), encoding="utf-8"):
+    _ln = _ln.strip()
+    if not _ln or _ln.startswith("#"):
+        continue
+    (_negs if _ln.startswith("!") else _pats).append(_ln.lstrip("!"))
+_tracked = _sp.run(["git", "ls-files"], capture_output=True, text=True,
+                   cwd=ROOT).stdout.split()
+
+def _ignored(f):
+    if any(_fn.fnmatch(f, n) or f.split("/")[0] == n for n in _negs):
+        return False
+    return any(_fn.fnmatch(f, p) or f.split("/")[0] == p for p in _pats)
+
+_kept = [f for f in _tracked if not _ignored(f)]
+if not _tracked:
+    print("  SKIP  git ro'yxati olinmadi")
+else:
+    # Runtime uchun SHART bo'lgan fayllar image'ga tushishi kerak
+    for _need in ["bot.py", "index.html", "logo.png", "requirements.txt"]:
+        check(f"image'da qoladi: {_need}", _need in _kept, sorted(_kept))
+    # Sirlar va foydalanuvchi ma'lumotlari image'ga TUSHMASLIGI kerak
+    for _bad in [".env", "user_data.json", "tariff_log.jsonl"]:
+        check(f"image'ga tushmaydi: {_bad}", _ignored(_bad))
+    check(".env.example istisno (namuna kerak)", not _ignored(".env.example"))
+
+print("[26] .gitattributes — .bat CRLF qulflangan")
+_ga = open(os.path.join(ROOT, ".gitattributes"), encoding="utf-8").read()
+check("*.bat eol=crlf", "*.bat text eol=crlf" in _ga, _ga[:80])
+_bat = open(os.path.join(ROOT, "ishga_tushirish.bat"), "rb").read()
+check("bat faylida yolg'iz LF yo'q",
+      _bat.count(bytes([10])) == _bat.count(bytes([13, 10])),
+      f"LF={_bat.count(bytes([10])) - _bat.count(bytes([13, 10]))}")
+
 print(f"\nNatija: {ok} pass, {fail} fail")
 sys.exit(1 if fail else 0)

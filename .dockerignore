@@ -1,0 +1,49 @@
+# Build kontekstidan chiqariladi — Dockerfile'dagi `COPY . .` hamma narsani
+# image ichiga tashiydi. Bu ro'yxatsiz image ~13 MB ortiqcha yuk oladi
+# (git tarixi, rasmlar, loglar) va, eng muhimi, .env ham tushib qolardi.
+
+# ── SIRLAR (eng muhimi) ───────────────────────────────────────────────
+# Lokalda .env to'ldirilgan bo'lsa, u image ichiga PISHIB qolardi va
+# image ulashilsa token oshkor bo'lardi. Bulutda env o'zgaruvchisi
+# ishlatiladi, shuning uchun .env image'da umuman kerak emas.
+.env
+.env.*
+!.env.example
+*cookies*.txt
+
+# ── Foydalanuvchi ma'lumotlari (volume'da bo'lishi kerak, image'da emas) ──
+user_data.json
+user_data.json.*
+tariff_log.jsonl
+
+# ── Git va IDE ────────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+.vscode
+.idea
+
+# ── Python keshlari ───────────────────────────────────────────────────
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+
+# ── Loglar va vaqtinchalik fayllar ────────────────────────────────────
+*.log
+
+# ── Serverda kerak bo'lmagan katta fayllar ────────────────────────────
+# logo.png saqlanadi — WebApp uni ko'rsatadi (/logo.png)
+png.png
+rasm.png
+unnamed.png
+
+# ── Ishga tushirish uchun kerak bo'lmaganlar ──────────────────────────
+# Testlar va tashxis vositalari image'da kerak emas (repoda qoladi)
+tests
+tools
+memory
+*.bat
+DEPLOY.md
+fly.toml
