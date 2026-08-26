@@ -226,5 +226,52 @@ check("bat faylida yolg'iz LF yo'q",
       _bat.count(bytes([10])) == _bat.count(bytes([13, 10])),
       f"LF={_bat.count(bytes([10])) - _bat.count(bytes([13, 10]))}")
 
+
+print("[27] Buzuq ma'lumot JIMGINA tashlanmasin")
+_bd = _tf.mkdtemp()
+_bf = os.path.join(_bd, "bad.json")
+json.dump({
+    "usage": {"1": 100, "BUZUQ": "xxx", "3": None, "4": 50},
+    "tariffs": {"1": "basic", "yomon": "basic"},
+    "user_bonus_minutes": {"5": "raqam-emas"},
+}, open(_bf, "w", encoding="utf-8"))
+_old_df = bot.DATA_FILE
+bot.DATA_FILE = _bf
+bot.STARTUP_WARNINGS.clear()
+for _c in (bot.user_uzbek_usage, bot.user_tariffs, bot.user_info, bot.user_bonus_minutes):
+    _c.clear()
+bot._load_user_data()
+check("sog'lom yozuvlar yuklandi", bot.user_uzbek_usage.get(1) == 100
+      and bot.user_uzbek_usage.get(4) == 50, dict(bot.user_uzbek_usage))
+check("buzuq yozuvlar tashlandi", "BUZUQ" not in str(bot.user_uzbek_usage))
+check("ma'lumot yo'qolishi E'LON qilindi",
+      any(lv == "critical" and "buzuq" in m.lower() for lv, m in bot.STARTUP_WARNINGS),
+      bot.STARTUP_WARNINGS)
+check("xabarda tiklash yo'li ko'rsatilgan",
+      any("/restore" in m for _, m in bot.STARTUP_WARNINGS), bot.STARTUP_WARNINGS)
+
+# Toza fayl -> ogohlantirish YO'Q (soxta signal bo'lmasin)
+_gf = os.path.join(_bd, "yaxshi.json")
+json.dump({"usage": {"1": 10}, "tariffs": {"1": "basic"}}, open(_gf, "w", encoding="utf-8"))
+bot.DATA_FILE = _gf
+bot.STARTUP_WARNINGS.clear()
+bot.user_uzbek_usage.clear(); bot.user_tariffs.clear()
+bot._load_user_data()
+check("toza fayl -> ogohlantirish yo'q",
+      not any("buzuq" in m.lower() for _, m in bot.STARTUP_WARNINGS), bot.STARTUP_WARNINGS)
+bot.DATA_FILE = _old_df
+bot.STARTUP_WARNINGS.clear()
+
+# Buzuq tariff jurnali ham sanaladi
+_lf = os.path.join(_bd, "bad.jsonl")
+with open(_lf, "w", encoding="utf-8") as _fh:
+    _fh.write(json.dumps({"uid": 1, "tariff": "pro_max", "ts": 1, "src": "t"}) + chr(10))
+    _fh.write("{buzuq" + chr(10))
+    _fh.write(json.dumps({"uid": 2, "tariff": "basic", "ts": 2, "src": "t"}) + chr(10))
+bot.TARIFF_LOG_FILE = _lf
+bot._tariff_log_cache.update({"mtime": None, "size": None, "map": {}})
+_m = bot._get_tariff_log_map()
+check("jurnaldagi sog'lom yozuvlar o'qildi", _m == {1: "pro_max", 2: "basic"}, _m)
+
 print(f"\nNatija: {ok} pass, {fail} fail")
 sys.exit(1 if fail else 0)

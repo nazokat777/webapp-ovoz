@@ -725,20 +725,30 @@ def _load_user_data():
         logging.warning("⚠️ Hech qaysi fayldan yukla bo'lmadi (yangi boshlash)")
         return
 
+    # Buzuq yozuvlar JIMGINA tashlanmasin. Bu bot ma'lumot yo'qotishdan
+    # ko'p azob chekkan (shuncha tiklash mexanizmi borligi shundan); fayl
+    # qisman buzilsa, foydalanuvchilar yo'qolib, hech kim sezmasdi.
+    _skipped = {"n": 0}
+
+    def _skip(kind, key, err):
+        _skipped["n"] += 1
+        if _skipped["n"] <= 5:
+            logging.warning("⚠️ Buzuq yozuv tashlandi [%s] key=%r: %s", kind, key, err)
+
     try:
         for k, v in (data.get("usage") or {}).items():
             try:
                 user_uzbek_usage[int(k)] = int(v)
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _e:
+                _skip("usage", k, _e)
         # Lifetime usage — agar fayl'da yo'q bo'lsa, joriy usage'ni boshlanish nuqtasi qilamiz
         loaded_lifetime = data.get("total_usage") or {}
         if loaded_lifetime:
             for k, v in loaded_lifetime.items():
                 try:
                     user_total_usage[int(k)] = int(v)
-                except (ValueError, TypeError):
-                    pass
+                except (ValueError, TypeError) as _e:
+                    _skip("yozuv", k, _e)
         else:
             # Migration: birinchi marta — joriy usage'ni lifetime'ga ko'chiramiz
             for uid, sec in user_uzbek_usage.items():
@@ -748,22 +758,22 @@ def _load_user_data():
             try:
                 if v in TARIFFS:
                     user_tariffs[int(k)] = v
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _e:
+                _skip("yozuv", k, _e)
         # Admin chat_id — bir marta admin /start yuborgach saqlanib qoladi
         saved_admin = data.get("admin_chat_id")
         if saved_admin:
             try:
                 ADMIN_CHAT_ID["id"] = int(saved_admin)
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _e:
+                _skip("yozuv", k, _e)
         # Pending payments — deploy'da yo'qolmasligi uchun
         for k, v in (data.get("pending_payments") or {}).items():
             try:
                 if v in TARIFFS:
                     pending_payments[int(k)] = v
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _e:
+                _skip("yozuv", k, _e)
         # === [TARJIMA] pending translations — til tanlash holatini saqlash ===
         # Format: {user_id: {"source": "ru", "target": "uz"}} yoki eski format: "ru"
         for k, v in (data.get("pending_translations") or {}).items():
@@ -773,15 +783,15 @@ def _load_user_data():
                 elif isinstance(v, str) and v in TRANSLATION_LANGS:
                     # Eski format — backward compat
                     pending_translations[int(k)] = {"source": v, "target": "uz"}
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _e:
+                _skip("yozuv", k, _e)
         # === [USERS] user info (username, first_name, last_seen) ===
         for k, v in (data.get("user_info") or {}).items():
             try:
                 if isinstance(v, dict):
                     user_info[int(k)] = v
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _e:
+                _skip("yozuv", k, _e)
         # last_transcripts endi diskda SAQLANMAYDI (faqat RAM) — pastdagi
         # remember_transcript izohiga qarang. Eski fayllarda bu maydon bo'lishi
         # mumkin, ataylab e'tiborsiz qoldiramiz.
@@ -789,30 +799,39 @@ def _load_user_data():
         for k, v in (data.get("user_bonus_minutes") or {}).items():
             try:
                 user_bonus_minutes[int(k)] = int(v)
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _e:
+                _skip("yozuv", k, _e)
         for k, v in (data.get("user_referral_minutes") or {}).items():
             try:
                 user_referral_minutes[int(k)] = int(v)
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _e:
+                _skip("yozuv", k, _e)
         for k, v in (data.get("user_referrals") or {}).items():
             try:
                 user_referrals[int(k)] = int(v)
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _e:
+                _skip("yozuv", k, _e)
         for k, v in (data.get("user_referral_claimed") or {}).items():
             try:
                 if v:
                     user_referral_claimed[int(k)] = True
-            except (ValueError, TypeError):
-                pass
+            except (ValueError, TypeError) as _e:
+                _skip("yozuv", k, _e)
         # Runtime settings (karta raqami va boshqalar) — admin /setcard orqali yangilaydi
         rs = data.get("runtime_settings") or {}
         if isinstance(rs, dict):
             for k in ("payment_card", "payment_card_holder"):
                 if k in rs and isinstance(rs[k], str):
                     runtime_settings[k] = rs[k]
+        if _skipped["n"]:
+            logging.error(
+                "⛔ user_data.json'dan %d ta BUZUQ yozuv tashlandi — "
+                "ma'lumot qisman yo'qolgan bo'lishi mumkin. Zaxiradan tiklash: /restore",
+                _skipped["n"])
+            STARTUP_WARNINGS.append((
+                "critical",
+                f"user_data.json'dan {_skipped['n']} ta buzuq yozuv tashlandi — "
+                f"tariflar/hisob qisman yo'qolgan bo'lishi mumkin. /backup faylidan /restore qiling."))
         logging.info(f"📂 user_data.json yuklandi: {len(user_uzbek_usage)} usage, {len(user_tariffs)} tarif, {len(pending_payments)} pending, admin_chat_id={ADMIN_CHAT_ID['id']}, card_set={bool(runtime_settings['payment_card'])}")
     except Exception as e:
         logging.warning(f"user_data.json o'qishda xato: {e}")
@@ -1211,6 +1230,7 @@ def _get_tariff_log_map():
                 and _tariff_log_cache["size"] == st.st_size):
             return dict(_tariff_log_cache["map"])
         latest = {}
+        _bad_lines = 0
         try:
             with open(TARIFF_LOG_FILE, "r", encoding="utf-8") as f:
                 for line in f:
@@ -1222,6 +1242,10 @@ def _get_tariff_log_map():
                         if entry["tariff"] in TARIFFS:
                             latest[int(entry["uid"])] = entry["tariff"]
                     except Exception:
+                        # Buzuq qator = YO'QOLGAN PULLIK TARIF bo'lishi mumkin.
+                        # Bu jurnal aynan shu himoya uchun bor, shuning uchun
+                        # jimgina o'tib ketmaymiz.
+                        _bad_lines += 1
                         continue
         except Exception as e:
             logging.error(f"Tariff log o'qishda xato: {e}")
@@ -1229,6 +1253,10 @@ def _get_tariff_log_map():
         _tariff_log_cache["mtime"] = st.st_mtime_ns
         _tariff_log_cache["size"] = st.st_size
         _tariff_log_cache["map"] = latest
+        if _bad_lines:
+            logging.error(
+                "⛔ tariff_log.jsonl'da %d ta BUZUQ qator — pullik tarif "
+                "yo'qolgan bo'lishi mumkin. /stats bilan tekshiring.", _bad_lines)
         logging.info(f"🗂 Tariff log keshi yangilandi: {len(latest)} user")
         # NUSXA qaytaramiz: _append_tariff_log keshni joyida yangilaydi,
         # chaqiruvchi (masalan, reconcile) iteratsiya qilayotgan dict o'rtada
