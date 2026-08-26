@@ -52,6 +52,23 @@ o'zgarganda yt-dlp'ni o'zi yangilashga urinadi (6 soatda ko'pi bilan 1 marta).
 
 Joriy holat: `/debug` → navbat, faol thread, sozlamalar.
 
+## 4.5 Holat va DEGRADED rejim
+
+`GET /health` — bir so'rovda deploy holati (navbat, admin/OpenAI sozlanganmi,
+DATA_FILE yo'li). Sirlarni oshkor qilmaydi.
+
+- `200 {"status":"ok"}` — bot to'liq ishlayapti
+- `503 {"status":"degraded","reason":...}` — bot sozlanmagan (masalan
+  `BOT_TOKEN` yo'q). Bunday holatda jarayon **o'lmaydi**: HTTP server tirik
+  qoladi, HAMMA endpoint 503 + sabab qaytaradi va log har daqiqada
+  ogohlantiradi.
+
+Nega shunday: ilgari `BOT_TOKEN` bo'lmasa jarayon `sys.exit(1)` qilardi —
+Railway'da deployment yaratilmasdi va domen "Application not found" degan
+sirli javob berardi, sabab esa faqat deploy logida qolardi. Endi nosozlik
+KO'RINADI. Bu xatoni yashirish emas: hech qanday ish qabul qilinmaydi
+(tokensiz imzoni tekshirib bo'lmaydi, shuning uchun barcha so'rov rad etiladi).
+
 ## 5. Sinovlar
 
 ```bash

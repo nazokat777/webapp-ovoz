@@ -66,8 +66,8 @@ def sign(user_id, auth_date=None, token=TOKEN):
     return urllib.parse.urlencode(fields)
 
 
-def req(method, path, body=None):
-    url = f"http://127.0.0.1:{PORT}{path}"
+def req(method, path, body=None, base=None):
+    url = (base or f"http://127.0.0.1:{PORT}") + path
     data = json.dumps(body).encode() if body is not None else None
     r = urllib.request.Request(url, data=data, method=method,
                                headers={"Content-Type": "application/json"})
@@ -76,6 +76,8 @@ def req(method, path, body=None):
             return resp.status, resp.read().decode("utf-8", "replace")
     except urllib.error.HTTPError as e:
         return e.code, e.read().decode("utf-8", "replace")
+    except Exception:
+        return None, ""
 
 
 # Ishlarni HAQIQATAN bajarmaymiz — faqat qabul qilinganini yozib olamiz
@@ -173,6 +175,53 @@ st, b = req("POST", "/url", {"url": "https://youtu.be/abc", "init_data": sign(42
 check("submit rad etsa -> 429", st == 429, f"status={st}")
 check("sabab xabari bor", "message" in json.loads(b), b[:100])
 
+print("[E2E-8] /health — normal rejim")
+st, b = req("GET", "/health")
+check("/health -> 200", st == 200, f"status={st}")
+h = json.loads(b) if st == 200 else {}
+check("status=ok", h.get("status") == "ok", h)
+check("reason bo'sh", h.get("reason") is None, h)
+check("navbat ma'lumoti bor",
+      h.get("jobs", {}).get("max_concurrent") == bot.MAX_CONCURRENT_JOBS, h)
+check("sirlar oshkor emas", "BOT_TOKEN" not in b and "FAKE" not in b, b[:120])
+print("")
+print("[E2E-9] DEGRADED rejim (BOT_TOKEN'siz alohida jarayon)")
+import subprocess
+dport = _free_port()
+env = {k: v for k, v in os.environ.items() if k != "BOT_TOKEN"}
+env["HTTP_PORT"] = str(dport)
+env["PYTHONIOENCODING"] = "utf-8"
+proc = subprocess.Popen(
+    [sys.executable, os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "bot.py")],
+    env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+try:
+    dbase = f"http://127.0.0.1:{dport}"
+    up = False
+    for _ in range(60):
+        _st, _b = req("GET", "/health", base=dbase)
+        if _st is not None:
+            up = True
+            break
+        time.sleep(0.25)
+    check("tokensiz ham jarayon TIRIK (domen javob beradi)", up,
+          "jarayon o'lgan -> Railway 'Application not found' berardi")
+    st, b = req("GET", "/health", base=dbase)
+    check("/health -> 503", st == 503, f"status={st}")
+    hj = json.loads(b) if b and b.startswith("{") else {}
+    check("status=degraded", hj.get("status") == "degraded", hj)
+    check("sabab aytilgan", "BOT_TOKEN" in (hj.get("reason") or ""), hj)
+    st, _ = req("POST", "/url", {"url": "https://youtu.be/x"}, base=dbase)
+    check("degraded'da /url rad -> 503", st == 503, f"status={st}")
+    st, _ = req("POST", "/audio", {"audio": "AAAA", "init_data": "x"}, base=dbase)
+    check("degraded'da /audio rad -> 503", st == 503, f"status={st}")
+finally:
+    proc.terminate()
+    try:
+        proc.wait(timeout=10)
+    except Exception:
+        proc.kill()
+print("")
 print("\n[E2E-7] CORS/OPTIONS")
 st, _ = req("OPTIONS", "/url")
 check("OPTIONS -> 204", st == 204, f"status={st}")

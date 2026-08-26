@@ -59,14 +59,28 @@ TRANSLATION_TARGET_NAMES = {"uz": "O'zbek", "ru": "rus", "en": "ingliz", "ar": "
 # MUHIM: token HECH QACHON kodga yozilmaydi — faqat env orqali.
 # Railway/Fly/Docker: BOT_TOKEN=... env qo'shing. Lokal sinov: .env yoki eksport.
 BOT_TOKEN   = os.getenv("BOT_TOKEN", "").strip()
+
+# DEGRADED REJIM: token yo'q bo'lsa jarayon O'LMAYDI, balki HTTP serverni
+# ko'tarib, har so'rovga 503 va SABABNI qaytaradi.
+#
+# NEGA: ilgari bu yerda sys.exit(1) turardi. Natijada Railway'da deployment
+# umuman yaratilmasdi va domen "Application not found" degan SIRLI javob
+# berardi — sabab faqat deploy logida qolib, egasi uzoq vaqt izlab yurardi.
+# Endi domen tirik qoladi va muammoni O'ZI aytadi. Bu "xatoni yashirish"
+# emas: bot ishlamaydi, HAMMA endpoint 503 qaytaradi va log har daqiqada
+# ogohlantiradi — shunchaki nosozlik KO'RINADIGAN bo'ladi.
+DEGRADED_REASON = ""
 if not BOT_TOKEN:
+    DEGRADED_REASON = (
+        "BOT_TOKEN env o'rnatilmagan. Railway -> Variables -> BOT_TOKEN "
+        "qo'shing va Redeploy qiling."
+    )
     print(
-        "❌ BOT_TOKEN env o'rnatilmagan.\n"
-        "   Railway → Variables → BOT_TOKEN qo'shing.\n"
-        "   Lokal: set BOT_TOKEN=... (Windows) yoki export BOT_TOKEN=... (Linux/mac)",
+        "❌ BOT_TOKEN env o'rnatilmagan — DEGRADED rejim.\n"
+        "   Bot ishlamaydi; HTTP server faqat tashxis uchun ko'tariladi.\n"
+        "   Railway → Variables → BOT_TOKEN qo'shing → Redeploy.",
         file=sys.stderr,
     )
-    sys.exit(1)
 # Muhlisa AI — Pro Uzbek tarifi uchun (premium sifat, Uzbek native STT)
 # Bu kalitni Railway env vars'ga MUXLISA_KEY nomi bilan qo'shish kerak.
 MUXLISA_KEY = os.getenv("MUXLISA_KEY", "")
@@ -98,7 +112,10 @@ ADMIN_CONTACT_MD = md_escape(ADMIN_CONTACT)
 
 # WebApp initData imzosi uchun kalit — BOT_TOKEN startupdan keyin o'zgarmaydi,
 # shuning uchun har so'rovda qayta hisoblash shart emas.
-_WEBAPP_SECRET = hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+_WEBAPP_SECRET = (
+    hmac.new(b"WebAppData", BOT_TOKEN.encode(), hashlib.sha256).digest()
+    if BOT_TOKEN else None   # tokensiz imzo tekshirib bo'lmaydi -> hamma so'rov rad
+)
 
 # Foydalanuvchilarga ko'rsatiladigan neutral nom (admin username yashiriladi)
 SUPPORT_NAME = os.getenv("SUPPORT_NAME", "Audio Bot Yordam markazi")
@@ -8459,6 +8476,8 @@ def _verify_init_data(init_data):
         pairs = urllib.parse.parse_qsl(init_data, keep_blank_values=True, strict_parsing=False)
     except Exception:
         return None
+    if not _WEBAPP_SECRET:
+        return None   # DEGRADED: token yo'q, imzoni tekshirib bo'lmaydi
     fields = dict(pairs)
     received_hash = fields.pop("hash", "")
     # `signature` (Telegram'ning yangi Ed25519 imzosi) data_check_string'ga kirmaydi
@@ -8751,9 +8770,41 @@ async def serve_static(request):
     return web.FileResponse(full, headers={"Cache-Control": "public, max-age=3600"})
 
 
+async def handle_health(request):
+    """Holat endpointi — deploy tirikligini va sozlanganini bir so'rovda
+    aniqlash uchun (tools/live_check.py shundan foydalanadi)."""
+    running, queued = _job_slots_info()
+    payload = {
+        "status": "degraded" if DEGRADED_REASON else "ok",
+        "reason": DEGRADED_REASON or None,
+        "jobs": {"running": running, "queued": queued,
+                 "max_concurrent": MAX_CONCURRENT_JOBS, "max_queued": MAX_QUEUED_JOBS},
+        "admin_configured": bool(ADMIN_USER_IDS),
+        "openai_configured": bool(OPENAI_API_KEY),
+        "data_file": DATA_FILE,
+    }
+    return web.json_response(payload, status=503 if DEGRADED_REASON else 200,
+                             headers=cors_headers())
+
+
+@web.middleware
+async def degraded_middleware(request, handler):
+    """DEGRADED rejimda /health va statik'dan boshqa hamma narsa 503 +
+    SABAB. Bot sozlanmagan bo'lsa hech qanday ish qabul qilinmaydi."""
+    if DEGRADED_REASON and request.path not in ("/health",):
+        if request.method == "OPTIONS":
+            return await handler(request)
+        return web.json_response(
+            {"error": "degraded", "message": DEGRADED_REASON},
+            status=503, headers=cors_headers())
+    return await handler(request)
+
+
 async def run_http_server():
     # client_max_size — MAX_UPLOAD_BYTES + multipart sarlavhalari uchun kichik zaxira
     web_app = web.Application(client_max_size=MAX_UPLOAD_BYTES + 8 * 1024 * 1024)
+    web_app.middlewares.append(degraded_middleware)
+    web_app.router.add_get('/health', handle_health)
     web_app.router.add_get('/', serve_index)
     web_app.router.add_get('/index.html', serve_index)
     web_app.router.add_get('/static/{name}', serve_static)
@@ -8785,6 +8836,18 @@ def run_http_server_thread():
 
 def main():
     global bot_app
+
+    if DEGRADED_REASON:
+        # Bot ishga tushirilmaydi, lekin jarayon TIRIK qoladi va HTTP server
+        # tashxis beradi. Aks holda platformada deployment yo'qoladi va
+        # egasi "Application not found" degan sirli javobni ko'rardi.
+        threading.Thread(target=run_http_server_thread, daemon=True).start()
+        logging.error("⛔ DEGRADED REJIM: %s", DEGRADED_REASON)
+        print(f"⛔ DEGRADED: {DEGRADED_REASON}", flush=True)
+        print(f"   Tashxis: http://0.0.0.0:{HTTP_PORT}/health", flush=True)
+        while True:
+            time.sleep(60)
+            logging.error("⛔ Hali ham DEGRADED: %s", DEGRADED_REASON)
 
     # Saqlangan usage va tariflarni yuklash
     _load_user_data()

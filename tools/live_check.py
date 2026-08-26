@@ -129,14 +129,34 @@ if os.getenv("SKIP_PREFLIGHT", "").strip().lower() not in ("1", "true", "yes"):
 print(f"Server: {BASE}")
 print()
 
-print("[1] WebApp sahifasi")
+print("[1] Holat (/health)")
+st_h, body_h = req("GET", "/health")
+if st_h == 200:
+    hj = json.loads(body_h)
+    check("/health -> 200 (bot sozlangan)", hj.get("status") == "ok", hj)
+    check("admin sozlangan", hj.get("admin_configured") is True,
+          "ADMIN_USER_ID env yo'q — username fallback xavfsiz emas")
+    check("OpenAI kaliti bor", hj.get("openai_configured") is True,
+          "OPENAI_API_KEY yo'q — STT/tarjima ishlamaydi")
+    print(f"        navbat: {hj.get('jobs')}")
+    print(f"        data_file: {hj.get('data_file')}")
+elif st_h == 503:
+    hj = json.loads(body_h) if body_h.startswith("{") else {}
+    check("/health javob berdi", True)
+    check("DEGRADED emas", False,
+          "SABAB: " + str(hj.get("reason") or hj.get("message") or body_h[:120]))
+else:
+    check("/health javob berdi", False, f"status={st_h}")
+
+print()
+print("[2] WebApp sahifasi")
 st_root, body_root = req("GET", "/")
 check("GET / -> 200", st_root == 200, f"status={st_root}")
 check("index.html yetkazildi", st_root == 200 and "initData" in (body_root or ""),
       "sahifada initData ishlovi topilmadi")
 
 print()
-print("[2] HMAC-auth himoyasi (rad etilishi KUTILADI)")
+print("[3] HMAC-auth himoyasi (rad etilishi KUTILADI)")
 st, body = req("POST", "/url", {"url": "https://youtu.be/x", "init_data": "soxta"})
 check("soxta initData bilan /url -> 401", st == 401, f"status={st} {body[:90]}")
 st, _ = req("POST", "/audio", {"audio": "AAAA", "init_data": ""})
@@ -146,7 +166,7 @@ check("eski uslub (user_id) ham rad -> 401", st == 401,
       f"status={st}  (agar server tirik bo'lsa-yu 401 kelmasa — DARHOL tekshiring)")
 
 print()
-print("[3] Statik xizmat")
+print("[4] Statik xizmat")
 st, _ = req("GET", "/../bot.py")
 check("path traversal yopiq", st in (400, 403, 404, 405), f"status={st}")
 st, b = req("GET", "/bot.py")
@@ -157,7 +177,7 @@ check("ruxsatli statik fayl ochiq", st == 200, f"status={st}")
 token = os.getenv("BOT_TOKEN", "").strip()
 print()
 if token:
-    print("[4] Telegram API (BOT_TOKEN env orqali)")
+    print("[5] Telegram API (BOT_TOKEN env orqali)")
     api = f"https://api.telegram.org/bot{token}"
     st, body = req("GET", "/getMe", base=api)
     good = st == 200 and json.loads(body).get("ok")
@@ -170,22 +190,26 @@ if token:
         check("webhook YO'Q (polling rejimi)", wh == "",
               f"webhook o'rnatilgan: {wh} — polling bilan to'qnashadi!")
 else:
-    print("[4] BOT_TOKEN env yo'q — Telegram API tekshiruvi o'tkazib yuborildi")
+    print("[5] BOT_TOKEN env yo'q — Telegram API tekshiruvi o'tkazib yuborildi")
 
 if st_root == 404 and "Application not found" in (body_root or ""):
     print()
     print("!" * 62)
     print("TASHXIS: Railway domeni faol deployment'ga bog'lanmagan.")
-    print("Bu BOT xatosi EMAS — Railway edge javobi (kod hatto ishga tushmagan).")
-    print("Sabablari, ehtimollik bo'yicha:")
-    print("  1) BOT_TOKEN env yo'q -> bot startup'da ATAYLAB to'xtaydi")
-    print("     Railway -> Variables -> BOT_TOKEN qo'shing -> Redeploy")
-    print("  2) Servis o'chirilgan, nomi yoki domeni o'zgargan")
-    print("  3) Railway hisobi / billing to'xtatilgan")
-    print("Qadam: Railway -> Deployments -> oxirgi deploy LOGI'ni o'qing.")
-    if not fail or True:
-        print("Yuqoridagi [0] build konfiguratsiyasi toza bo'lsa — muammo koddan")
-        print("tashqarida (env yoki hisob darajasida).")
+    print("Bu BOT xatosi EMAS — Railway edge javobi: kod ishga tushmagan")
+    print("YOKI servis/domen mavjud emas.")
+    print()
+    print("MUHIM: BOT_TOKEN yo'qligi endi bu holatni KELTIRIB CHIQARMAYDI —")
+    print("bot DEGRADED rejimda tirik qolib, /health orqali sabab aytadi.")
+    print("Demak sabab boshqa joyda:")
+    print("  1) Servis o'chirilgan, nomi yoki domeni o'zgargan")
+    print("  2) Railway hisobi / billing to'xtatilgan")
+    print("  3) Build yiqilgan — yuqoridagi [0] bo'limga qarang")
+    print("     ([0] toza bo'lsa, build konfiguratsiyasi aybdor emas)")
+    print("  4) Deploy hali tugamagan (1-2 daqiqa kuting va qayta ishga tushiring)")
+    print()
+    print("Qadam: Railway → Deployments → oxirgi deploy LOGI.")
+    print("       Servis va domen mavjudligini Settings'da tekshiring.")
     print("!" * 62)
 
 print()
