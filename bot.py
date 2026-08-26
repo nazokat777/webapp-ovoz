@@ -295,13 +295,6 @@ def _is_user_processing(user_id):
         return False
 
 
-def _mark_processing(user_id):
-    """User ishlash boshlandi deb belgilash (tokensiz — legacy chaqiruvlar uchun)."""
-    with processing_lock:
-        _processing_seq["n"] += 1
-        processing_users[user_id] = (time.time(), _processing_seq["n"])
-
-
 def _try_mark_processing(user_id):
     """ATOMIK check-and-mark. Returns: token (truthy) — belgi qo'yildi,
     None — user band (ish boshlash MUMKIN EMAS).
@@ -367,8 +360,14 @@ def _notify_async(user_id, text):
     ).start()
 
 
-class JobQueueFullError(Exception):
-    """Umumiy og'ir-ish navbati to'la — foydalanuvchiga ochiq rad javobi."""
+class JobQueueFullError(BaseException):
+    """Umumiy og'ir-ish navbati to'la — foydalanuvchiga ochiq rad javobi.
+
+    ATAYLAB BaseException (Exception EMAS): oqimlarning ichki
+    `except Exception` bloklari (masalan, process_local_audio'dagi umumiy
+    "❌ Xato" handleri) bu signalni yutmasin — u busy_guard'gacha ko'tarilib,
+    foydalanuvchi aniq QUEUE_FULL_MESSAGE javobini olishi kerak. Kelajakda
+    yoziladigan oqimlar ham maxsus re-raise qo'shishni unutolmaydi."""
 
 
 async def _run_heavy(fn, *args):
@@ -387,9 +386,11 @@ async def _run_heavy(fn, *args):
     """
     loop = asyncio.get_running_loop()
     with _job_counter_lock:
-        if _job_stats["queued"] >= MAX_QUEUED_JOBS:
+        # Cap faqat hali "qabul qilinmagan" oqim uchun (yuqoridagi izohga qarang)
+        if not _queue_admitted.get() and _job_stats["queued"] >= MAX_QUEUED_JOBS:
             raise JobQueueFullError()
         _job_stats["queued"] += 1
+    _queue_admitted.set(True)
 
     def _tracked():
         with _job_counter_lock:
@@ -401,7 +402,13 @@ async def _run_heavy(fn, *args):
             with _job_counter_lock:
                 _job_stats["running"] -= 1
 
-    cfut = _job_executor.submit(_tracked)
+    try:
+        cfut = _job_executor.submit(_tracked)
+    except BaseException:
+        # submit'ning o'zi yiqilsa (masalan, shutdown) increment qaytariladi
+        with _job_counter_lock:
+            _job_stats["queued"] -= 1
+        raise
     try:
         return await asyncio.wrap_future(cfut, loop=loop)
     except BaseException:
@@ -418,6 +425,14 @@ async def _run_heavy(fn, *args):
 # Bitta task ichida busy_guard qayta kirsa (masalan, process_translation
 # process_translation_from_file_id orqali chaqirilsa) o'zini bloklamasin.
 _busy_owner = contextvars.ContextVar("busy_owner", default=None)
+
+# Navbat capi faqat oqimning BIRINCHI og'ir bosqichida tekshiriladi.
+# Ko'p bosqichli oqim (STT -> tarjima -> TTS) birinchi bosqichdan o'tgach,
+# keyingi bosqichlari rad etilmaydi — aks holda 60 daqiqalik STT'ga pul
+# to'langach, tarjima bosqichi tasodifiy navbat-spike tufayli yiqilib,
+# butun natija (va xarajat) bekor ketardi. Har update = yangi task = yangi
+# kontekst, shuning uchun qiymat oqimlar orasida sizib o'tmaydi.
+_queue_admitted = contextvars.ContextVar("queue_admitted", default=False)
 
 
 def busy_guard(func):
@@ -521,7 +536,13 @@ def submit_job(user_id, target, args=(), label="ish", cleanup_path=None):
             # MUHIM: belgini (faqat O'ZIMIZNIKINI) olib tashlash
             _unmark_processing(user_id, mark_token)
 
-    _job_executor.submit(_runner)
+    try:
+        _job_executor.submit(_runner)
+    except BaseException:
+        with _job_counter_lock:
+            _job_stats["queued"] -= 1
+        _unmark_processing(user_id, mark_token)
+        raise
     return True
 # === [/JOB QUEUE] ==============================================================
 
@@ -1074,8 +1095,27 @@ _tariff_log_cache = {"mtime": None, "size": None, "map": {}}
 _tariff_log_lock = threading.Lock()
 
 
+def _get_tariff_log_map_refresh():
+    """Kesh eskirgan bo'lsa fayldan qayta o'qiydi (nusxa qaytarmaydi)."""
+    try:
+        st = os.stat(TARIFF_LOG_FILE)
+    except OSError:
+        with _tariff_log_lock:
+            _tariff_log_cache["map"] = {}
+            _tariff_log_cache["mtime"] = None
+            _tariff_log_cache["size"] = None
+        return
+    with _tariff_log_lock:
+        if (_tariff_log_cache["mtime"] == st.st_mtime_ns
+                and _tariff_log_cache["size"] == st.st_size):
+            return
+    _get_tariff_log_map()  # to'liq o'qish yo'li keshni yangilaydi
+
+
 def _get_tariff_log_map():
-    """{user_id: oxirgi_tarif} — log fayldan, keshlab. Fayl o'zgarsa yangilanadi."""
+    """{user_id: oxirgi_tarif} — log fayldan, keshlab. Fayl o'zgarsa yangilanadi.
+    NUSXA qaytaradi (iteratsiya xavfsizligi); issiq yakka-kalit yo'l uchun
+    _get_tariff_log_entry'ni ishlating."""
     try:
         st = os.stat(TARIFF_LOG_FILE)
     except OSError:
@@ -1110,6 +1150,15 @@ def _get_tariff_log_map():
         return dict(latest)
 
 
+def _get_tariff_log_entry(uid):
+    """Bitta user uchun jurnal qiymati — NUSXASIZ issiq yo'l.
+    get_user_tariff har free-user tekshiruvida chaqiriladi; butun xaritani
+    har safar nusxalash (_get_tariff_log_map) u yerda isrof edi."""
+    _get_tariff_log_map_refresh()
+    with _tariff_log_lock:
+        return _tariff_log_cache["map"].get(int(uid))
+
+
 def get_user_tariff(user_id):
     """Tariff o'qish — memory'dan, agar 'free' yoki yo'q bo'lsa log'dan tekshirish.
     Bu Railway deploy/restart chog'ida tarif yo'qolishini OLDINI OLADI.
@@ -1119,8 +1168,8 @@ def get_user_tariff(user_id):
     # Agar memory'da paid tariff bo'lsa, darrov qaytaramiz
     if mem_tariff != "free":
         return mem_tariff
-    # Memory'da 'free' yoki yo'q — log'dan (keshdan) tekshirish
-    latest_tariff = _get_tariff_log_map().get(uid)
+    # Memory'da 'free' yoki yo'q — log'dan (keshdan, nusxasiz) tekshirish
+    latest_tariff = _get_tariff_log_entry(uid)
     if latest_tariff and latest_tariff != "free":
         logging.warning(
             f"🔁 Tariff log'dan tiklandi: user_id={uid} → {latest_tariff} "
@@ -1860,7 +1909,7 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
                         failed_ranges_out.append((start_sec, end_sec, err))
 
         # MULTI FINAL PASS — 3 marta, har biri ko'proq kutib
-        pass_waits = [30, 60, 180]  # whisper_pass_waits bilan bir xil — slot 8 daq band bo'lmasin  # 1min, 2min, 5min
+        pass_waits = [30, 60, 180]  # 30s/1min/3min — whisper_pass_waits bilan bir xil
         for pass_num, wait_sec in enumerate(pass_waits, 1):
             if not failed_chunks_muhlisa or len(failed_chunks_muhlisa) >= total:
                 break  # Hech narsa qoldimagan yoki hammasi yiqilgan — to'xtatamiz
@@ -4463,6 +4512,17 @@ async def handle_web_app_data(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("❌ Web App dan ma'lumot xato keldi.")
 
 
+def _pop_translation_state_if(user_id, source, target):
+    """Rejimni FAQAT hozirgi qiymati (source, target)ga mos bo'lsa iste'mol
+    qiladi. Uzun await'lar (yuklab olish, navbat) davomida user /tarjima
+    orqali YANGI rejim tanlagan bo'lishi mumkin — uni o'chirib yubormaymiz."""
+    cur = _peek_translation_state(user_id)
+    if cur and cur.get("source") == source and (cur.get("target") or "uz") == (target or "uz"):
+        _pop_translation_state(user_id)
+        return True
+    return False
+
+
 def _peek_translation_state(user_id):
     """Tarjima rejimini O'CHIRMASDAN qaytaradi. Handlerlar yo'nalishni shu
     bilan tanlaydi; holat esa busy_guard MUVAFFAQIYATLI o'tgach, guarded
@@ -4478,13 +4538,20 @@ def _peek_translation_state(user_id):
     return None
 
 
+def _save_user_data_async():
+    """To'liq JSON saqlashni event loop'ni BLOKLAMASDAN bajarish.
+    (_save_user_data disk o'qish + .bak nusxa + yozish — loop'da chaqirilsa
+    barcha handlerlar shu vaqtga muzlaydi.)"""
+    threading.Thread(target=_save_user_data, daemon=True).start()
+
+
 def _pop_translation_state(user_id):
     """=== [TARJIMA] User tarjima rejimida bo'lsa {source, target} qaytaradi. ===
     Backward compat: agar eski format (string) bo'lsa, target='uz' deb qaytariladi.
     """
     if user_id and user_id in pending_translations:
         val = pending_translations.pop(user_id, None)
-        _save_user_data()
+        _save_user_data_async()
         if isinstance(val, dict):
             return val
         if isinstance(val, str):
@@ -6373,15 +6440,18 @@ async def process_pdf_via_translation(update, context, file_id, source_lang, tar
         await file.download_to_drive(tmp_path)
         # Umumiy navbat orqali — cap, duplicate himoyasi va navbat cheklovi bilan.
         # (Ilgari bu yo'l xom threading.Thread ochib, hamma cheklovni chetlab o'tardi.)
+        _chat = getattr(update, "effective_chat", None)
         accepted = submit_job(
             user_id, process_pdf_translation_for_user,
-            (user_id, tmp_path, source_lang, target_lang),
+            (user_id, tmp_path, source_lang, target_lang, "latin",
+             _chat.id if _chat else user_id),
             label="pdf-tarjima-tg", cleanup_path=tmp_path,
         )
         if not accepted:
             return  # submit_job sababini yozdi; tarjima rejimi saqlanib qoldi
-        # Ish qabul qilindi — endi rejimni iste'mol qilamiz
-        _pop_translation_state(user_id)
+        # Ish qabul qilindi — endi rejimni iste'mol qilamiz (shartli: oradagi
+        # await'larda user boshqa rejim tanlagan bo'lsa, unikini o'chirmaymiz)
+        _pop_translation_state_if(user_id, source_lang, target_lang)
     except Exception as e:
         logging.error(f"PDF tarjima yuklash xato: {e}")
         await update.message.reply_text(
@@ -6551,9 +6621,6 @@ async def process_translation_from_file_id(update, context, file_id, suffix, dur
     yuborilgan video ikki marta to'liq yuklab olinmasin). Ichkaridagi
     process_translation ham guard'langan, lekin _busy_owner contextvar
     tufayli o'zimizni bloklamaydi (re-entrant)."""
-    # Guard o'tdi — endi tarjima rejimini iste'mol qilamiz. Busy rad etilsa
-    # bu nuqtaga kelinmaydi va user tanlagan rejim saqlanib qoladi.
-    _pop_translation_state(update.effective_user.id)
     tmp_path = None
     try:
         file = await context.bot.get_file(file_id)
@@ -6561,6 +6628,11 @@ async def process_translation_from_file_id(update, context, file_id, suffix, dur
             tmp_path = tmp.name
         await file.download_to_drive(tmp_path)
         await process_translation(update, context, tmp_path, duration_sec, source_lang, target_lang)
+        # Rejim FAQAT oqim yakunlangach iste'mol qilinadi (shartli — oradagi
+        # await'larda user yangi rejim tanlagan bo'lsa, unga tegilmaydi).
+        # JobQueueFullError (BaseException) bu qatorga yetmasdan o'tib ketadi —
+        # navbat to'la bo'lsa rejim saqlanadi va user bemalol qayta yuboradi.
+        _pop_translation_state_if(update.effective_user.id, source_lang, target_lang)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try: os.remove(tmp_path)
@@ -8075,14 +8147,17 @@ def process_pdf_audio_only(user_id, pdf_path, target_lang="uz"):
             except Exception: pass
 
 
-def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", target_lang="uz", output_alphabet="latin"):
+def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", target_lang="uz", output_alphabet="latin", chat_id=None):
     """PDF'ni xorijiy tildan tanlangan tilga tarjima qilib audio + PDF chiqarish.
     XAVFSIZ TO'LOV: faqat audio MUVAFFAQIYATLI yuborilgandan keyin daqiqa yechiladi.
     PROGRESS: Telegram'da 'bot yozmoqda...' indikatori ishlaydi.
-    output_alphabet: 'latin' yoki 'cyrillic' — O'zbek matn alifbosi (target=uz uchun)."""
+    output_alphabet: 'latin' yoki 'cyrillic' — O'zbek matn alifbosi (target=uz uchun).
+    chat_id — natija yuboriladigan chat (guruh bo'lishi mumkin); limit/billing
+    baribir user_id bo'yicha."""
+    chat_id = chat_id or user_id
     success = False
     estimated_audio_sec = 0
-    progress = ProgressIndicator(user_id, action="typing")
+    progress = ProgressIndicator(chat_id, action="typing")
     progress.start()
     try:
         # 1) PDF dan matn ajratish
@@ -8090,13 +8165,13 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
             original_text = extract_pdf_text(pdf_path)
         except Exception as e:
             telegram_send_message(
-                user_id,
+                chat_id,
                 f"❌ PDF o'qib bo'lmadi: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
             )
             return
         if not original_text or not original_text.strip():
             telegram_send_message(
-                user_id,
+                chat_id,
                 "❌ PDF dan matn topilmadi (skanlangan rasm bo'lishi mumkin).\n\n💚 Daqiqa hisobingizdan yechilmadi."
             )
             return
@@ -8106,7 +8181,7 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
         if not _is_admin_id(user_id):
             if not check_limit_by_user_id(user_id, estimated_audio_sec):
                 return
-        telegram_send_message(user_id, "⏳ Biroz kuting, PDF tarjima qilinmoqda...")
+        telegram_send_message(chat_id, "⏳ Biroz kuting, PDF tarjima qilinmoqda...")
         # 3) GPT tarjima (agar source != target bo'lsa)
         lost_chunks = []
         try:
@@ -8115,17 +8190,17 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
                 original_text, src, None, target_lang, lost_chunks
             )
             if lost_chunks:
-                telegram_send_message(user_id, _format_lost_chunks_text(lost_chunks))
+                telegram_send_message(chat_id, _format_lost_chunks_text(lost_chunks))
         except Exception as e:
             logging.error(f"PDF GPT tarjima xato: {e}")
             telegram_send_message(
-                user_id,
+                chat_id,
                 f"❌ Tarjima xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
             )
             return
         if not translated or not translated.strip():
             telegram_send_message(
-                user_id,
+                chat_id,
                 "❌ Tarjima bo'sh qaytdi.\n\n💚 Daqiqa hisobingizdan yechilmadi."
             )
             return
@@ -8134,7 +8209,7 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
         # Ikkala alifbo PDF'i baribir yuboriladi — oldindan konversiya YO'Q
         header = f"🌐 <b>PDF tarjima ({html.escape(tgt_label)}):</b>"
         # success FAQAT natija haqiqatan yetkazilgan bo'lsa True
-        success = _send_text_card(user_id, translated, header=header)
+        success = _send_text_card(chat_id, translated, header=header, remember_uid=user_id)
 
         # 5) Audio — endi avtomat YO'Q (klient talabi). Alohida xizmat sifatida bo'ladi keyin.
 
@@ -8144,7 +8219,7 @@ def process_pdf_translation_for_user(user_id, pdf_path, source_lang="auto", targ
     except Exception as e:
         logging.error(f"process_pdf_translation_for_user xato: {e}")
         telegram_send_message(
-            user_id,
+            chat_id,
             f"❌ PDF tarjima xato: {str(e)[:200]}\n\n💚 Daqiqa hisobingizdan yechilmadi."
         )
     finally:

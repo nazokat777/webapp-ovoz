@@ -254,11 +254,11 @@ async def _scenario():
     r1 = await _flow(u, None)
     # Guard tugagach belgi olib tashlangan bo'lishi kerak
     free_after = not bot._is_user_processing(6000)
-    # Band paytda ikkinchi chaqiruv rad etiladi
-    bot._mark_processing(6000)
+    # Band paytda ikkinchi chaqiruv rad etiladi (token sxemasi)
+    _tok = bot._try_mark_processing(6000)
     u2 = _Upd(6000)
     r2 = await _flow(u2, None)
-    bot._unmark_processing(6000)
+    bot._unmark_processing(6000, _tok)
     return r1, free_after, r2, u2.message.texts
 r1, free_after, r2, busy_texts = _aio.run(_scenario())
 check("busy_guard ichida nested chaqiruv ishlaydi", r1 == "ok" and calls == [1, 2], (r1, calls))
@@ -320,7 +320,8 @@ check("INIT_DATA_MAX_AGE default 24h", bot.INIT_DATA_MAX_AGE == 24 * 3600,
 
 # Muxlisa retry ham qisqartirilgan
 src2 = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot.py"), encoding="utf-8").read()
-check("muxlisa pass_waits ham [30,60,180]", "pass_waits = [30, 60, 180]" in src2)
+check("muxlisa pass_waits ham [30,60,180]",
+      "pass_waits = [30, 60, 180]  # 30s/1min/3min" in src2)  # muxlisa qatoriga xos izoh
 check("eski [60,120,300] TAYINLASH qolmagan",
       "pass_waits = [60, 120, 300]" not in src2)  # izohda eslatma qolishi mumkin
 
@@ -332,6 +333,54 @@ m = bot._get_tariff_log_map()
 bot._append_tariff_log(9002, "basic", source="t")   # kesh ichida yangilanadi
 check("olingan nusxa o'zgarmadi", 9002 not in m, sorted(m))
 check("yangi so'rov yangisini ko'radi", 9002 in bot._get_tariff_log_map())
+
+
+
+print("\n[R4] 4-tur: BaseException signal, admission, shartli pop")
+# JobQueueFullError endi BaseException — ichki `except Exception` uni yutmaydi
+check("JobQueueFullError BaseException'dan", issubclass(bot.JobQueueFullError, BaseException))
+check("...lekin Exception'dan EMAS", not issubclass(bot.JobQueueFullError, Exception))
+# Haqiqiy oqim shakli: ichki except Exception BOR — signal baribir guard'ga yetadi
+@bot.busy_guard
+async def _realistic(update, context):
+    try:
+        await bot._run_heavy(lambda: 1)
+    except Exception:
+        return "ichki-yutdi"   # bunga TUSHMASLIGI kerak
+    return "ok"
+bot._job_stats.update({"running": 0, "queued": bot.MAX_QUEUED_JOBS})
+async def _sc():
+    u = _Upd(9100)
+    r = await _realistic(u, None)
+    return r, u.message.texts
+r, texts = _aio.run(_sc())
+bot._job_stats.update({"running": 0, "queued": 0})
+check("ichki except YUTMADI, guard javob berdi",
+      r is None and len(texts) == 1 and "band" in texts[0], (r, texts))
+
+# Admission: birinchi hop o'tgan oqimning KEYINGI hoplari cap'dan qaytarilmaydi
+async def _two_hop():
+    a = await bot._run_heavy(lambda: "hop1")
+    bot._job_stats["queued"] = bot.MAX_QUEUED_JOBS   # oradagi spike
+    try:
+        b = await bot._run_heavy(lambda: "hop2")
+    finally:
+        bot._job_stats["queued"] = 0
+    return a, b
+check("2-hop spike'da ham o'tdi", _aio.run(_two_hop()) == ("hop1", "hop2"))
+bot._job_stats.update({"running": 0, "queued": 0})
+
+# Shartli pop: boshqa rejim o'chirilmaydi
+bot.pending_translations.clear()
+bot.pending_translations[9200] = {"source": "ru", "target": "uz"}
+check("mos kelmasa pop YO'Q", bot._pop_translation_state_if(9200, "en", "uz") is False)
+check("rejim joyida", 9200 in bot.pending_translations)
+check("mos kelsa pop", bot._pop_translation_state_if(9200, "ru", "uz") is True)
+check("rejim iste'mol qilindi", 9200 not in bot.pending_translations)
+bot.pending_translations.clear()
+
+# _mark_processing o'lik kod sifatida o'chirildi
+check("_mark_processing yo'q", not hasattr(bot, "_mark_processing"))
 
 print(f"\nNatija: {ok} pass, {fail} fail")
 sys.exit(1 if fail else 0)
