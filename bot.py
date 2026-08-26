@@ -209,6 +209,172 @@ def _ensure_openai_key():
         logging.info("🔑 OPENAI_API_KEY runtime'da yangilandi")
     return OPENAI_API_KEY
 
+# ── AI PROVAYDERLARI ────────────────────────────────────────────────────────
+# TARTIB SIFAT BO'YICHA, NARX BO'YICHA EMAS.
+#
+# Uchala provayder ham OpenAI API shaklini gapiradi (/chat/completions va
+# /audio/transcriptions), shuning uchun mavjud quvur o'zgarishsiz ishlaydi —
+# faqat manzil, sarlavha va model nomi almashadi.
+#
+# Kalit yo'q provayder ro'yxatga UMUMAN qo'shilmaydi, ya'ni bitta kalit bilan
+# ham bot to'liq ishlaydi. Zanjir yuqoridan pastga sinaladi: sifatlisi
+# yiqilsa yoki limitga urilsa (429), keyingisiga o'tadi.
+GROQ_API_KEY   = os.getenv("GROQ_API_KEY", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+
+OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
+OPENAI_STT_URL  = "https://api.openai.com/v1/audio/transcriptions"
+GROQ_CHAT_URL   = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_STT_URL    = "https://api.groq.com/openai/v1/audio/transcriptions"
+GEMINI_CHAT_URL = ("https://generativelanguage.googleapis.com"
+                   "/v1beta/openai/chat/completions")
+
+
+def _ensure_key(name, current):
+    """Env'ni runtime'da qayta o'qish (deploy chog'ida eski qiymat qolmasin)."""
+    runtime = os.getenv(name, "").strip()
+    if runtime and runtime != current:
+        logging.info("🔑 %s runtime'da yangilandi", name)
+        return runtime
+    return current
+
+
+def _ensure_groq_key():
+    global GROQ_API_KEY
+    GROQ_API_KEY = _ensure_key("GROQ_API_KEY", GROQ_API_KEY)
+    return GROQ_API_KEY
+
+
+def _ensure_gemini_key():
+    global GEMINI_API_KEY
+    GEMINI_API_KEY = _ensure_key("GEMINI_API_KEY", GEMINI_API_KEY)
+    return GEMINI_API_KEY
+
+
+def _bearer(key):
+    return {"Authorization": "Bearer " + key}
+
+
+def _stt_attempts():
+    """Bo'lakni transkripsiya qilish urinishlari — SIFAT tartibida.
+
+    Har element: (nom, kind, model, url, headers, timestamps)
+      kind="chat_audio" — audio base64 bilan /chat/completions (faqat OpenAI)
+      kind="form"       — multipart /audio/transcriptions (OpenAI va Groq)
+      timestamps        — verbose_json + segment vaqt belgilari so'ralsinmi
+
+    Tartib nega shunday:
+      1) gpt-audio       — kodda o'lchangan: o'zbek uchun eng aniq
+      2) groq large-v3   — Whisper'ning eng yangi versiyasi (whisper-1 = v2)
+      3) whisper-1       — vaqt belgilari beradi
+      4) gpt-4o-transcribe
+      5) groq turbo      — eng tez, sifati bir oz pastroq (oxirgi chora)
+    """
+    oa = _ensure_openai_key()
+    gq = _ensure_groq_key()
+    out = []
+    if oa:
+        out.append(("gpt-audio", "chat_audio", "gpt-audio",
+                    OPENAI_CHAT_URL, _bearer(oa), False))
+    if gq:
+        out.append(("groq/whisper-large-v3", "form", "whisper-large-v3",
+                    GROQ_STT_URL, _bearer(gq), True))
+    if oa:
+        out.append(("whisper-1", "form", "whisper-1",
+                    OPENAI_STT_URL, _bearer(oa), True))
+        out.append(("gpt-4o-transcribe", "form", "gpt-4o-transcribe",
+                    OPENAI_STT_URL, _bearer(oa), False))
+    if gq:
+        out.append(("groq/whisper-large-v3-turbo", "form", "whisper-large-v3-turbo",
+                    GROQ_STT_URL, _bearer(gq), False))
+    return out
+
+
+def _chat_attempts():
+    """Matn modeli urinishlari — SIFAT tartibida.
+
+    Har element: (nom, model, url, headers)
+
+    Gemini 2.5 Pro birinchi: o'zbek kabi kam resursli tillarda kuchli.
+    Bepul tarifda kuniga atigi ~50 so'rov, shuning uchun limitga urilganda
+    (429) Flash'ga tushadi — u ham kuchli, lekin kuniga ~1500 so'rov.
+    """
+    oa = _ensure_openai_key()
+    gm = _ensure_gemini_key()
+    gq = _ensure_groq_key()
+    out = []
+    if gm:
+        out.append(("gemini-2.5-pro", "gemini-2.5-pro", GEMINI_CHAT_URL, _bearer(gm)))
+    if oa:
+        out.append(("gpt-4o", "gpt-4o", OPENAI_CHAT_URL, _bearer(oa)))
+    if gm:
+        out.append(("gemini-2.5-flash", "gemini-2.5-flash", GEMINI_CHAT_URL, _bearer(gm)))
+    if gq:
+        out.append(("groq/llama-3.3-70b", "llama-3.3-70b-versatile",
+                    GROQ_CHAT_URL, _bearer(gq)))
+    return out
+
+
+def _chat_request(payload, timeout=300, label=""):
+    """Matn modelini SIFAT tartibida sinaydi. Returns (text, error).
+
+    Har provayderda 3 marta urinish (vaqtinchalik 5xx uchun), lekin 429
+    (limit tugadi) da DARHOL keyingi provayderga o'tadi — kutish befoyda,
+    kunlik kvota qayta tiklanmaydi. Aynan shu Gemini Pro (bepul tarifda
+    kuniga ~50 so'rov) dan Flash (~1500) ga silliq o'tishni ta'minlaydi.
+    """
+    attempts = _chat_attempts()
+    if not attempts:
+        return None, ("matn modeli kaliti yo'q — GEMINI_API_KEY, "
+                      "OPENAI_API_KEY yoki GROQ_API_KEY sozlang")
+    errors = []
+    backoffs = [2, 5, 12]
+    for nom, model, url, headers in attempts:
+        body = dict(payload)
+        body["model"] = model
+        h = dict(headers)
+        h["Content-Type"] = "application/json"
+        for attempt in range(3):
+            try:
+                resp = requests.post(url, headers=h, json=body, timeout=timeout)
+                if resp.status_code == 200:
+                    try:
+                        txt = (resp.json()["choices"][0]["message"].get("content")
+                               or "").strip()
+                    except Exception as e:
+                        errors.append(nom + ": javob shakli buzuq (" + str(e)[:60] + ")")
+                        break
+                    if txt:
+                        if errors:
+                            logging.info("%s: %s bilan bajarildi (%d urinishdan keyin)",
+                                         label, nom, len(errors))
+                        return txt, None
+                    errors.append(nom + ": bo'sh javob")
+                    break
+                if resp.status_code == 429:
+                    errors.append(nom + ": limit (429)")
+                    logging.warning("%s: %s limitga urildi — keyingi provayder",
+                                    label, nom)
+                    break
+                if resp.status_code in (500, 502, 503, 504, 520) and attempt < 2:
+                    time.sleep(backoffs[attempt])
+                    continue
+                errors.append(nom + ": HTTP " + str(resp.status_code) + " "
+                              + (resp.text or "")[:100])
+                break
+            except Exception as e:
+                if attempt < 2:
+                    time.sleep(backoffs[attempt])
+                    continue
+                errors.append(nom + ": " + str(e)[:100])
+    return None, " | ".join(errors)
+
+
+def _has_any_ai_key():
+    """Biror matn modeli mavjudmi — cleanup/tarjima shunga bog'liq."""
+    return bool(_chat_attempts())
+
+
 # Tarjima narxi koeffitsienti — boshqa xizmatlar bilan teng (1 daq media = 1 daq tarif)
 TRANSLATION_MULTIPLIER = 1
 
@@ -2769,6 +2935,11 @@ def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges
 WHISPER_CHUNK_SECONDS = 180    # 3 daqiqa per chunk (kichik = hallucination kam, aniqlik yuqori)
 WHISPER_CHUNK_OVERLAP = 30     # Har bo'lak oxirgi 30 sek keyingisi bilan birlashadi (qirralar yo'qolmaydi)
 
+# Sifat nazorati: butun provayder zanjiri necha marta takrorlansin.
+# Sifatsiz natija yetkazilmaydi — o'rniga qayta urinib ko'riladi.
+STT_QUALITY_ROUNDS = max(1, int(os.getenv("STT_QUALITY_ROUNDS", "3")))
+STT_ROUND_WAITS = [5, 20, 45]   # turlar orasidagi kutish (soniya)
+
 # OpenAI Whisper API qo'llab-quvvatlovchi tillar (ISO 639-1).
 # Uzbek (uz), Kyrgyz (ky), Tajik (tg), Mongolian (mn) — qo'llab-quvvatlanmaydi.
 # Bu tillarda audio yuborilsa, language parametri o'tkazib yuboriladi va Whisper
@@ -3357,7 +3528,7 @@ def _cleanup_uzbek_transcript(text):
     5) Diniy atamalar va ismlarni rasmiy shaklda
     6) Tinish belgilarini qo'shish
     """
-    if not text or not OPENAI_API_KEY:
+    if not text or not _has_any_ai_key():
         return text
     # Uzun matn — chunklash kerak.
     # MUHIM: bitta gpt-4o chaqiruvi max 16k token chiqaradi. Uzun matnni butunlay
@@ -3385,15 +3556,10 @@ def _cleanup_uzbek_transcript(text):
 
 def _cleanup_uzbek_transcript_chunk(text):
     """Bitta chunk uchun cleanup."""
-    if not text or not OPENAI_API_KEY:
+    if not text or not _has_any_ai_key():
         return text
 
     logging.info(f"🧹 Uzbek transkripsiyani GPT bilan tozalash ({len(text)} belgi)...")
-    url_api = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json",
-    }
     # MUHIM (xavfsizlik): bu prompt ATAYLAB konservativ.
     # Ilgari u modelga "if a word makes no sense, REPLACE with sensible Uzbek word",
     # "use context to reconstruct meaning" deb ochiq ruxsat berardi va ayni paytda
@@ -3457,32 +3623,34 @@ def _cleanup_uzbek_transcript_chunk(text):
         "OUTPUT ONLY the corrected text. No commentary, no preamble, no notes."
     )
     payload = {
-        "model": "gpt-4o",
         "max_tokens": 16000,
         "temperature": 0.0,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Clean up this Uzbek transcription:\n\n{text}"},
+            {"role": "user",
+             "content": "Clean up this Uzbek transcription:" + chr(10) * 2 + text},
         ],
     }
-    try:
-        resp = requests.post(url_api, headers=headers, json=payload, timeout=300)
-        if resp.status_code == 200:
-            cleaned = resp.json()["choices"][0]["message"]["content"].strip()
-            # Tekshiruv: tozalangan matn juda qisqarib YOKI juda shishib ketmaganmi?
-            # (GPT ba'zan takror/hallucination bilan matnni bir necha barobar shishiradi —
-            #  8002 → 44788 belgi kabi. Bunday natija buzuq, asl matnni qaytaramiz.)
-            if not cleaned:
-                logging.warning("Tozalangan matn bo'sh, asl matnni qaytaramiz")
-            elif len(cleaned) < len(text) * 0.5:
-                logging.warning(f"Tozalangan matn juda qisqa ({len(text)}→{len(cleaned)}), asl matnni qaytaramiz")
-            elif len(cleaned) > len(text) * 1.5:
-                logging.warning(f"Tozalangan matn juda shishgan ({len(text)}→{len(cleaned)}) — hallucination, asl matnni qaytaramiz")
-            else:
-                logging.info(f"✅ Uzbek matn tozalandi ({len(text)} → {len(cleaned)} belgi)")
-                return cleaned
-    except Exception as e:
-        logging.warning(f"Uzbek cleanup xato: {e}")
+    # Model nomi ATAYLAB berilmaydi — uni _chat_request provayderga qarab
+    # qo'yadi (Gemini Pro -> Flash -> GPT-4o -> Llama, SIFAT tartibida).
+    cleaned, err = _chat_request(payload, timeout=300, label="tozalash")
+    if err:
+        logging.warning("Uzbek cleanup bajarilmadi: %s", err)
+        return text
+    # Tekshiruv: tozalangan matn juda qisqarib YOKI juda shishib ketmaganmi?
+    # (Model ba'zan takror/hallucination bilan matnni bir necha barobar
+    #  shishiradi — 8002 -> 44788 belgi kabi. Bunday natija buzuq.)
+    if not cleaned:
+        logging.warning("Tozalangan matn bo'sh, asl matnni qaytaramiz")
+    elif len(cleaned) < len(text) * 0.5:
+        logging.warning("Tozalangan matn juda qisqa (%d->%d), asl matnni qaytaramiz",
+                        len(text), len(cleaned))
+    elif len(cleaned) > len(text) * 1.5:
+        logging.warning("Tozalangan matn juda shishgan (%d->%d) — hallucination, "
+                        "asl matnni qaytaramiz", len(text), len(cleaned))
+    else:
+        logging.info("✅ Uzbek matn tozalandi (%d -> %d belgi)", len(text), len(cleaned))
+        return cleaned
     return text
 
 
@@ -3630,15 +3798,22 @@ def _try_transcribe_audio_chat(chunk_path, source_lang, headers):
     return None, last_error or "Noma'lum xato"
 
 
-def _try_transcribe(chunk_path, model, source_lang, url, headers, chunk_offset_sec=0):
+def _try_transcribe(chunk_path, model, source_lang, url, headers, chunk_offset_sec=0,
+                    want_timestamps=None):
     """Bitta bo'lakni belgilangan model bilan transkripsiya qilish.
     7 marta retry (HTTP 429/500/502/503/504/timeout/connection errors).
     Backoff: 1s, 2s, 4s, 8s, 15s, 30s, 60s — total ~120s max.
     whisper-1 uchun verbose_json + segments (timestamps) ishlatamiz.
     gpt-4o-transcribe uchun oddiy json (segments yo'q).
     Returnlar: (chunk_text yoki None, error_str yoki None)."""
-    is_whisper1 = (model == "whisper-1")
-    response_format = "verbose_json" if is_whisper1 else "json"
+    # Ilgari bu model NOMIGA qarab hal qilinardi ("whisper-1" bo'lsa vaqt
+    # belgilari). Endi provayder ro'yxati aniq aytadi: Groq'ning large-v3 ham
+    # segment beradi, lekin nomi boshqa — nomga bog'lanish uni o'tkazib
+    # yuborardi. want_timestamps=None bo'lsa eski xatti-harakat saqlanadi.
+    if want_timestamps is None:
+        want_timestamps = (model == "whisper-1")
+    is_whisper1 = want_timestamps
+    response_format = "verbose_json" if want_timestamps else "json"
     last_error = None
     # Kuchliroq retry: 7 marta, longer backoff
     backoffs = [1, 2, 4, 8, 15, 30, 60]
@@ -3929,42 +4104,75 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
 
         chunk_offset_sec = (idx - 1) * WHISPER_CHUNK_SECONDS
 
-        # Strict hallucination check helper
+        # ── SIFAT NAZORATI ──────────────────────────────────────────────
+        # Talab: sifatsiz matn HECH QANDAY HOLATDA berilmasin.
+        #
+        # Ikki xil "yomon" bor va ular BIR XIL EMAS:
+        #  1) HALLUTSINATSIYA — model o'ylab topgan takroriy axlat. Buni
+        #     yetkazish bermaslikdan YOMONROQ: ma'ruza konspektiga yolg'on
+        #     jumla tushadi va foydalanuvchi uni asl matndan ajrata olmaydi.
+        #  2) QISQA matn — jim yoki qisqa bo'lakda TABIIY holat. Buni
+        #     tashlash esa haqiqiy matnni yo'qotadi.
+        # Shuning uchun: axlat hech qachon yetkazilmaydi, qisqa-lekin-toza
+        # matn yetkaziladi.
+        def _is_junk(text):
+            return bool(text) and _is_chunk_hallucinated(text, WHISPER_CHUNK_SECONDS)
+
         def _is_good(text):
-            return bool(text) and len(text) >= 20 and not _is_chunk_hallucinated(text, WHISPER_CHUNK_SECONDS)
+            return bool(text) and len(text) >= 20 and not _is_junk(text)
 
-        # 1) gpt-audio (eng yaxshi sifat, o'zbek uchun aniq)
-        chunk_text, err1 = _try_transcribe_audio_chat(chunk_path, source_lang, headers)
-        if _is_good(chunk_text):
-            return idx, chunk_text, None
-        if chunk_text:
-            logging.warning(f"Bo'lak {idx}/{total} gpt-audio natija sifat past, fallback...")
+        attempts = _stt_attempts()
+        if not attempts:
+            return idx, None, ("birorta AI kaliti sozlanmagan "
+                               "(OPENAI_API_KEY yoki GROQ_API_KEY kerak)")
 
-        # 2) whisper-1 fallback (so'zma-so'z, arzon)
-        logging.warning(f"Bo'lak {idx}/{total} gpt-audio yiqildi/sifat past: {err1}. whisper-1 fallback...")
-        chunk_text_w, err2 = _try_transcribe(
-            chunk_path, "whisper-1", source_lang, url, headers, chunk_offset_sec=chunk_offset_sec
-        )
-        if _is_good(chunk_text_w):
-            return idx, chunk_text_w, None
+        clean_candidates, errors = [], []
+        # Butun provayder zanjiri BIR NECHA MARTA takrorlanadi: vaqtinchalik
+        # nosozlik yoki limit tufayli sifat pasaygan bo'lsa, kutib qayta
+        # urinamiz. Bir marta urinib taslim bo'lish sifatni pasaytirardi.
+        for rnd in range(1, STT_QUALITY_ROUNDS + 1):
+            for nom, kind, model, a_url, a_headers, want_ts in attempts:
+                if kind == "chat_audio":
+                    text, err = _try_transcribe_audio_chat(chunk_path, source_lang,
+                                                           a_headers)
+                else:
+                    text, err = _try_transcribe(
+                        chunk_path, model, source_lang, a_url, a_headers,
+                        chunk_offset_sec=chunk_offset_sec, want_timestamps=want_ts)
+                if _is_good(text):
+                    if clean_candidates or errors:
+                        logging.info("Bo'lak %s/%s %s bilan olindi (%s-tur)",
+                                     idx, total, nom, rnd)
+                    return idx, text, None
+                if text and not _is_junk(text):
+                    clean_candidates.append(text)
+                    logging.warning("Bo'lak %s/%s %s: qisqa natija, davom etamiz",
+                                    idx, total, nom)
+                elif text:
+                    logging.warning("Bo'lak %s/%s %s: HALLUTSINATSIYA — tashlandi",
+                                    idx, total, nom)
+                if err:
+                    errors.append(str(rnd) + "-tur " + nom + ": " + str(err))
+            if rnd < STT_QUALITY_ROUNDS:
+                wait = STT_ROUND_WAITS[min(rnd - 1, len(STT_ROUND_WAITS) - 1)]
+                logging.warning("🔁 Bo'lak %s/%s: %s-turda sifatli natija yo'q, "
+                                "%ss kutib qayta urinamiz...", idx, total, rnd, wait)
+                time.sleep(wait)
 
-        # 3) gpt-4o-transcribe fallback (oxirgi chora)
-        logging.warning(f"Bo'lak {idx}/{total} whisper-1 yiqildi/sifat past: {err2}. gpt-4o-transcribe fallback...")
-        chunk_text_g, err3 = _try_transcribe(
-            chunk_path, "gpt-4o-transcribe", source_lang, url, headers
-        )
-        if _is_good(chunk_text_g):
-            return idx, chunk_text_g, None
-
-        # Hech qaysi sifatli emas — eng uzun natijani qaytaramiz (bo'lmagandan bor yaxshi)
-        candidates = [c for c in (chunk_text, chunk_text_w, chunk_text_g) if c]
-        if candidates:
-            best = max(candidates, key=len)
-            logging.warning(f"Bo'lak {idx}/{total} barcha modellar sifat past — eng uzunini qaytaramiz")
+        # Turlar tugadi. Toza (lekin qisqa) natija bo'lsa — u yetkaziladi.
+        if clean_candidates:
+            best = max(clean_candidates, key=len)
+            logging.warning("Bo'lak %s/%s: qisqa, lekin TOZA natija yetkazildi",
+                            idx, total)
             return idx, best, None
 
-        logging.error(f"Bo'lak {idx}/{total} 3 MODEL HAM yiqildi: {err1} | {err2} | {err3}")
-        return idx, None, f"audio-preview: {err1} | whisper-1: {err2} | gpt-4o: {err3}"
+        # Faqat axlat chiqdi yoki umuman javob yo'q — JIM YETKAZMAYMIZ.
+        # Bo'lak "yiqilgan" deb belgilanadi va foydalanuvchiga QAYSI daqiqalar
+        # tushmagani aytiladi. Yolg'on matndan ochiq bo'shliq yaxshi.
+        sabab = " | ".join(errors) if errors else (
+            str(STT_QUALITY_ROUNDS) + " turda ham sifat talabiga javob bermadi")
+        logging.error("Bo'lak %s/%s SIFAT NAZORATIDAN O'TMADI: %s", idx, total, sabab)
+        return idx, None, sabab
 
     # Bo'laklarga ajratish tugadi — userga xabar (0/N) ko'rsataylik
     if progress_cb:
@@ -4067,11 +4275,6 @@ def _gpt_translate_one(text, source_lang, target_lang="uz"):
     target_lang: hosil til ('uz', 'ru', 'en', 'ar')"""
     src_name = TRANSLATION_LANG_NAMES.get(source_lang, source_lang)
     tgt_name = TRANSLATION_TARGET_NAMES.get(target_lang, "O'zbek")
-    url = "https://api.openai.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json",
-    }
 
     # Diniy darslar uchun maxsus yo'riqnoma (target=uz holatida kuchliroq)
     religious_rules_uz = (
@@ -4176,7 +4379,6 @@ def _gpt_translate_one(text, source_lang, target_lang="uz"):
             f"Return ONLY the translation:\n\n{text}"
         )
     payload = {
-        "model": "gpt-4o",
         "max_tokens": 16000,
         "temperature": 0.1,  # past temperatura = aniqroq, kam ijodiy
         "top_p": 0.9,
@@ -4185,14 +4387,13 @@ def _gpt_translate_one(text, source_lang, target_lang="uz"):
             {"role": "user", "content": user_prompt},
         ],
     }
-    resp = requests.post(url, headers=headers, json=payload, timeout=300)
-    if resp.status_code != 200:
-        raise Exception(f"Tarjima xatosi: HTTP {resp.status_code}")
-    data = resp.json()
-    choices = data.get("choices", [])
-    if not choices:
-        raise Exception("GPT bo'sh javob qaytardi.")
-    return choices[0].get("message", {}).get("content", "").strip()
+    # Model nomini _chat_request qo'yadi: Gemini Pro -> GPT-4o -> Gemini Flash
+    # -> Llama. Bittasi limitga urilsa (429) keyingisiga DARHOL o'tadi, ya'ni
+    # bitta provayderning kunlik kvotasi tugashi tarjimani to'xtatmaydi.
+    out, err = _chat_request(payload, timeout=300, label="tarjima")
+    if err:
+        raise Exception("Tarjima xatosi: " + err)
+    return out
 
 
 def _gpt_translate_with_retry(chunk, source_lang, target_lang, max_retries=3):
@@ -9032,6 +9233,22 @@ def _startup_config_audit():
                             f"{data_dir} MOUNT QILINGAN VOLUME EMAS — tariflar va "
                             f"hisob HAR DEPLOY'DA YO'QOLADI. Railway: Settings -> "
                             f"Volumes -> Mount path = {data_dir}"))
+
+    # Matn modeli umuman bormi (tozalash va tarjima shunga bog'liq)
+    if not _chat_attempts():
+        out.append(("critical",
+                    "Matn modeli kaliti YO'Q — tozalash va tarjima ISHLAMAYDI. "
+                    "GEMINI_API_KEY (bepul: aistudio.google.com/apikey) yoki "
+                    "GROQ_API_KEY (bepul: console.groq.com) qo'shing."))
+    if not _stt_attempts():
+        out.append(("critical",
+                    "STT kaliti YO'Q — audio/video matnga AYLANMAYDI. "
+                    "GROQ_API_KEY (bepul) yoki OPENAI_API_KEY qo'shing."))
+    elif not GROQ_API_KEY and not GEMINI_API_KEY:
+        out.append(("warning",
+                    "Bepul zaxira provayder yo'q — asosiy provayder limitga "
+                    "urilsa yoki yiqilsa xizmat to'xtaydi. GROQ_API_KEY va "
+                    "GEMINI_API_KEY kartasiz bepul, zaxira bo'lib turadi."))
 
     if not MUXLISA_KEY:
         out.append(("warning",

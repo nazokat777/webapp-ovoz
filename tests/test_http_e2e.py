@@ -188,7 +188,13 @@ print("")
 print("[E2E-9] DEGRADED rejim (BOT_TOKEN'siz alohida jarayon)")
 import subprocess
 dport = _free_port()
-env = {k: v for k, v in os.environ.items() if k != "BOT_TOKEN"}
+# BOT_TOKEN'ni O'CHIRMAYMIZ, BO'SH qo'yamiz. O'chirilsa loyihadagi .env
+# faylidagi haqiqiy token o'rnini bosar va bu test ishlab chiquvchining
+# .env fayliga bog'lanib qolardi (aynan shunday yiqildi). _load_dotenv
+# faqat YETISHMAYOTGAN kalitlarni to'ldiradi, shuning uchun bo'sh qiymat
+# .env dagisini bloklaydi.
+env = dict(os.environ)
+env["BOT_TOKEN"] = ""
 env["HTTP_PORT"] = str(dport)
 env["PYTHONIOENCODING"] = "utf-8"
 proc = subprocess.Popen(
