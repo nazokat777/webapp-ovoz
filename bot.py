@@ -2930,6 +2930,66 @@ def _is_chunk_hallucinated(text, chunk_duration_sec=600):
     return False
 
 
+# Whisper jim/shovqinli audioda o'zi o'ylab topadigan MASHHUR shablon
+# iboralar. Ular BIR MARTA chiqadi (odatda oxirida), shuning uchun takror
+# tozalash ularni ushlamaydi va PDF oxirida "Subtitles by the Amara.org
+# community" bo'lib qolib ketadi. Ro'yxat ATAYLAB tor: faqat butun gap
+# sifatida turgan, hujjatlashtirilgan artefaktlar — qonuniy matn o'chmasin.
+_WHISPER_BOILERPLATE = [
+    "subtitles by the amara.org community",
+    "subtitles by the amara org community",
+    "amara.org community",
+    "thanks for watching",
+    "thank you for watching",
+    "thanks for watching!",
+    "please subscribe",
+    "subscribe to my channel",
+    "like and subscribe",
+    "see you next time",
+    "transcription by eso",
+    "translated by",
+    "продолжение следует",
+    "субтитры создавал",
+    "редактор субтитров",
+    "спасибо за просмотр",
+]
+
+
+def _strip_whisper_boilerplate(text):
+    """Whisper o'ylab topgan shablon iboralarni olib tashlaydi.
+
+    Faqat BUTUN GAP (yoki qator) shablonga to'g'ri kelsa o'chiriladi —
+    ibora haqiqiy jumla ichida uchrasa TEGILMAYDI. Bu qonuniy matnni
+    yo'qotmaslik uchun ataylab konservativ."""
+    if not text:
+        return text
+    removed = []
+    out_lines = []
+    for line in text.split("\n"):
+        parts = re.split(r"(?<=[.!?])\s+", line)
+        keep = []
+        for part in parts:
+            probe = re.sub(r"[^\w\s.]", "", part.lower()).strip().strip(".").strip()
+            # Faqat butun bo'lak shablon bo'lsa o'chiramiz. startswith
+            # ATAYLAB qisqa bo'laklar bilan cheklangan (<=90 belgi):
+            # uzun paragraf tasodifan shablon bilan boshlansa,
+            # qonuniy matn yo'qolib ketmasin.
+            is_boiler = probe and any(
+                probe == b or (len(probe) <= 90 and probe.startswith(b))
+                for b in _WHISPER_BOILERPLATE
+            )
+            if is_boiler:
+                removed.append(part.strip())
+                continue
+            keep.append(part)
+        out_lines.append(" ".join(x for x in keep if x.strip()))
+    result = "\n".join(out_lines)
+    if removed:
+        logging.info("🧹 Whisper shablon iboralari olib tashlandi: %s",
+                     "; ".join(removed[:3])[:160])
+    return result.strip()
+
+
 def _clean_whisper_hallucination(text):
     """Whisper hallucinatsiyani aniqlash va tozalash.
     Whisper jim/shovqinli audio'da bir xil iborani 10-500 marta qaytaradi.
@@ -2948,6 +3008,9 @@ def _clean_whisper_hallucination(text):
     if _is_chunk_hallucinated(text):
         logging.warning("⚠️ Bo'lak hallucination borligi — agressive dedupe qilamiz")
         # Bo'sh qaytarmaymiz! Faqat takrorlarni tozalaymiz
+
+    # === 0.5-daraja: shablon artefaktlar (bir marta chiqadi, takror emas) ===
+    text = _strip_whisper_boilerplate(text)
 
     # === 1-daraja: so'z/ibora darajasida tozalash ===
     text = _dedupe_repeated_words(text)

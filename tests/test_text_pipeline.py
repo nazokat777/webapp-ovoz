@@ -145,5 +145,47 @@ try:
 except Exception as e:
     check("make_pdf ishladi", False, str(e)[:150])
 
+
+print("[T12] Whisper shablon artefaktlari (bir marta chiqadi, takror emas)")
+_real = ("Assalomu alaykum. Bugungi darsimizda Imom Buxoriy hazratlarining "
+         "hayotlari haqida gaplashamiz. U kishi 810-yilda tug'ilganlar.")
+for junk in ["Subtitles by the Amara.org community", "Thanks for watching!",
+             "Thank you for watching.",
+             "Продолжение следует...",
+             "Спасибо за просмотр!"]:
+    out = bot._clean_whisper_hallucination(_real + " " + junk)
+    check("olib tashlandi: " + junk[:34],
+          junk.rstrip(".!").lower() not in out.lower(), out[-70:])
+    check("asl matn saqlandi: " + junk[:22], "Imom Buxoriy" in out)
+print("")
+print("[T13] Shablon filtri QONUNIY matnni o'chirmasin")
+for t in [
+    "Videoni ko'rganingiz uchun rahmat aytamiz va darsni davom ettiramiz bugun.",
+    "Kanalga obuna bo'ling degan gapni ustoz aytdilar va dars davom etdi shunda.",
+    "Bugun biz translated by iborasining ma'nosini o'rganamiz va misol ko'ramiz.",
+]:
+    full = t + " " + _real
+    out = bot._clean_whisper_hallucination(full)
+    check("saqlandi: " + t[:40], len(out) >= len(full) * 0.95, str(len(out)) + "/" + str(len(full)))
+print("")
+print("[T14] _dedupe_repeated_words — qonuniy takror saqlanadi")
+for name, t in [("diniy zikr", "Allohu akbar Allohu akbar Allohu akbar"),
+                ("ta'kid", "juda juda muhim"),
+                ("sanoq", "bir ikki uch bir ikki uch")]:
+    out = bot._dedupe_repeated_words(t)
+    check(name + " tegilmadi", len(out.split()) == len(t.split()),
+          str(len(t.split())) + " -> " + str(len(out.split())))
+check("haqiqiy hallucination kesiladi",
+      len(bot._dedupe_repeated_words("salom " * 40).split()) <= 5)
+print("")
+print("[T15] _is_chunk_hallucinated — haqiqiy matn tashlanmasin")
+check("ma'ruza matni saqlanadi", bot._is_chunk_hallucinated(_real, 600) is False)
+check("qisqa haqiqiy gap saqlanadi",
+      bot._is_chunk_hallucinated("Hozir tanaffus qilamiz.", 600) is False)
+check("uzun haqiqiy matn saqlanadi",
+      bot._is_chunk_hallucinated(" ".join("soz" + str(i) for i in range(300)), 600) is False)
+check("bir so'z 40 marta -> hallucination",
+      bot._is_chunk_hallucinated("salom " * 40, 600) is True)
+print("")
 print(f"\nNatija: {ok} pass, {fail} fail")
 sys.exit(1 if fail else 0)
