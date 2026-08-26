@@ -2098,6 +2098,19 @@ def _apply_cyr_case(latin_tok, cyr):
     return cyr
 
 
+# Kirillga o'tkazishda TEGILMAYDIGAN tokenlar: havola, email, @mention,
+# #hashtag va fayl nomlari. Transliteratsiya ularni ISHLATIB BO'LMAYDIGAN
+# holga keltiradi: "https://youtu.be/x" -> "ҳттпс://ёуту.бе/х".
+# Ma'ruzalarda havola va pochta manzili tez-tez uchraydi.
+_PROTECTED_TOKEN_RE = re.compile(
+    r"(https?://\S+|www\.\S+"
+    r"|[\w.+-]+@[\w-]+\.[\w.-]+"
+    r"|[@#][A-Za-z0-9_]{2,}"
+    r"|\b[\w-]+\.(?:com|net|org|uz|ru|io|me|pdf|mp3|mp4|txt|jpg|png)\b)",
+    re.IGNORECASE,
+)
+
+
 def convert_latin_to_cyrillic(text):
     """O'zbek Lotin alifbosidagi matnni Kirill alifbosiga DETERMINISTIK o'tkazadi.
 
@@ -2109,6 +2122,17 @@ def convert_latin_to_cyrillic(text):
     """
     if not text or not text.strip():
         return text
+
+    # 0) Havola/email/@mention'larni HIMOYA qilamiz (yuqoridagi izoh).
+    #    Almashtiruvchi ⟦N⟧ - lotin harfi emas, shuning uchun
+    #    transliteratsiyadan o'zgarmasdan omon qoladi.
+    _protected = []
+
+    def _stash(m):
+        _protected.append(m.group(0))
+        return "⟦" + str(len(_protected) - 1) + "⟧"
+
+    text = _PROTECTED_TOKEN_RE.sub(_stash, text)
 
     # 1) Apostroflarni standartlashtirish (tipografik variantlar → ASCII ')
     text = _normalize_uzbek_apostrophes(text)
@@ -2143,7 +2167,15 @@ def convert_latin_to_cyrillic(text):
         # noma'lum belgi (raqam, tinish, kirill, arab, h.k.) — o'zgarmaydi
         out.append(ch)
         i += 1
-    return "".join(out)
+    result = "".join(out)
+    # Himoyalangan tokenlarni joyiga qaytaramiz
+    if _protected:
+        result = re.sub(
+            r"⟦(\d+)⟧",
+            lambda mm: _protected[int(mm.group(1))],
+            result,
+        )
+    return result
 
 
 def make_pdf(text, title="Audio & Konspekt — Matn"):
