@@ -5079,10 +5079,23 @@ async def _refresh_stale_keyboard(update, context):
         if user_webapp_seen.get(cid) == WEBAPP_URL:
             return
 
-        # YANGI foydalanuvchi: /start baribir klaviatura yuboradi, shuning
-        # uchun "yangilandi" xabari ortiqcha va chalg'ituvchi bo'lardi.
-        tanish = (cid in user_info or cid in user_tariffs
-                  or cid in user_uzbek_usage or cid in user_total_usage)
+        # Kimga xabar YUBORMASLIK kerak: /start yuborayotgan foydalanuvchi.
+        # Unga start handleri baribir yangi klaviatura beradi, shuning uchun
+        # qo'shimcha "yangilandi" xabari ortiqcha va chalg'ituvchi bo'lardi.
+        #
+        # Ilgari bu yerda "foydalanuvchi bizga TANISHmi" deb tekshirilardi
+        # (user_info/tariffs/usage bo'yicha). Bu ISHONCHSIZ: ma'lumot fayli
+        # yo'qolsa yoki bot boshqa serverga ko'chsa HAMMA "yangi" bo'lib
+        # ko'rinadi va eskirgan keshli foydalanuvchilar tuzatishni OLMAY
+        # qoladi — aynan shu holat yuz berdi.
+        #
+        # Yangi mezon ishonchli: haqiqiy yangi foydalanuvchining birinchi
+        # amali DOIM /start bo'ladi (Telegram "Start" tugmasi shuni
+        # yuboradi). Boshqa xabar yozgan odam bot bilan allaqachon
+        # tanish — demak uning klaviaturasi ham eskirgan bo'lishi mumkin.
+        _msg = getattr(update, "message", None)
+        _matn = (getattr(_msg, "text", "") or "") if _msg else ""
+        tanish = not _matn.startswith("/start")
         user_webapp_seen[cid] = WEBAPP_URL
         try:
             _save_user_data()

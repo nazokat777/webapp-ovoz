@@ -325,9 +325,15 @@ class _SoxtaUser:
         self.username = username
 
 
+class _SoxtaMsg:
+    def __init__(self, matn):
+        self.text = matn
+
+
 class _SoxtaUpdate:
-    def __init__(self, uid):
+    def __init__(self, uid, matn=None):
         self.effective_user = _SoxtaUser(uid)
+        self.message = _SoxtaMsg(matn) if matn is not None else None
 
 
 class _SoxtaCtx:
@@ -343,11 +349,14 @@ try:
     bot.WEBAPP_URL = "https://yangi.example"
     bot.user_webapp_seen.clear()
 
-    # TANISH foydalanuvchi (allaqachon botdan foydalangan)
-    bot.user_info[555001] = {"username": "sinov"}
+    # MA'LUMOT YO'QOLGAN holatni ataylab modellaymiz: user_info bo'sh.
+    # Ilgari mezon "foydalanuvchi bizga tanishmi" edi va bunday holatda
+    # HAMMA "yangi" bo'lib ko'rinardi — tuzatish hech kimga yetmasdi.
+    bot.user_info.pop(555001, None)
     b = _SoxtaBot()
-    _aio.run(bot._refresh_stale_keyboard(_SoxtaUpdate(555001), _SoxtaCtx(b)))
-    check("tanish foydalanuvchiga yangi menyu YUBORILDI",
+    _aio.run(bot._refresh_stale_keyboard(
+        _SoxtaUpdate(555001, "📊 Balansim"), _SoxtaCtx(b)))
+    check("ma'lumot yo'qolgan bo'lsa ham yangi menyu YUBORILDI",
           len(b.xabarlar) == 1, b.xabarlar)
     check("yangi klaviatura ilova tugmasini o'z ichiga oladi",
           any(getattr(btn, "web_app", None)
@@ -358,33 +367,43 @@ try:
 
     # IKKINCHI marta yubormasligi kerak (spam bo'lmasin)
     b2 = _SoxtaBot()
-    _aio.run(bot._refresh_stale_keyboard(_SoxtaUpdate(555001), _SoxtaCtx(b2)))
+    _aio.run(bot._refresh_stale_keyboard(
+        _SoxtaUpdate(555001, "yana xabar"), _SoxtaCtx(b2)))
     check("ikkinchi marta YUBORILMAYDI", b2.xabarlar == [], b2.xabarlar)
 
-    # YANGI foydalanuvchi: /start baribir klaviatura beradi, xabar ortiqcha
+    # /start yuborgan: start handleri baribir klaviatura beradi — ortiqcha
     b3 = _SoxtaBot()
-    _aio.run(bot._refresh_stale_keyboard(_SoxtaUpdate(555002), _SoxtaCtx(b3)))
-    check("yangi foydalanuvchi chalg'itilmaydi", b3.xabarlar == [], b3.xabarlar)
+    _aio.run(bot._refresh_stale_keyboard(
+        _SoxtaUpdate(555002, "/start"), _SoxtaCtx(b3)))
+    check("/start yuborganga qo'shimcha xabar YO'Q", b3.xabarlar == [],
+          b3.xabarlar)
     check("lekin manzili baribir eslab qolinadi",
           bot.user_webapp_seen.get(555002) == "https://yangi.example")
+
+    # Tugma bosilgan (matnsiz update) — bu ham mavjud foydalanuvchi
+    b3b = _SoxtaBot()
+    _aio.run(bot._refresh_stale_keyboard(_SoxtaUpdate(555004), _SoxtaCtx(b3b)))
+    check("matnsiz update ham yangilanadi", b3b.xabarlar != [], b3b.xabarlar)
 
     # MANZIL YANA o'zgarsa — qaytadan yuboriladi
     bot.WEBAPP_URL = "https://boshqa.example"
     b4 = _SoxtaBot()
-    _aio.run(bot._refresh_stale_keyboard(_SoxtaUpdate(555001), _SoxtaCtx(b4)))
+    _aio.run(bot._refresh_stale_keyboard(
+        _SoxtaUpdate(555001, "xabar"), _SoxtaCtx(b4)))
     check("manzil qayta o'zgarsa yana yuboriladi", len(b4.xabarlar) == 1)
 
     # WEBAPP_URL yo'q bo'lsa hech narsa yuborilmaydi
     bot.WEBAPP_URL = ""
     b5 = _SoxtaBot()
-    _aio.run(bot._refresh_stale_keyboard(_SoxtaUpdate(555003), _SoxtaCtx(b5)))
+    _aio.run(bot._refresh_stale_keyboard(
+        _SoxtaUpdate(555003, "xabar"), _SoxtaCtx(b5)))
     check("WEBAPP_URL yo'q bo'lsa jim turadi", b5.xabarlar == [])
 finally:
     bot.WEBAPP_URL = _eski_url
     bot.user_webapp_seen.clear()
     bot.user_webapp_seen.update(_eski_seen)
     bot._save_user_data = _eski_save
-    for _u in (555001, 555002, 555003):
+    for _u in (555001, 555002, 555003, 555004):
         bot.user_info.pop(_u, None)
 
 print("[12] Sozlamalar")
