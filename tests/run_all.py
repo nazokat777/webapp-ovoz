@@ -16,7 +16,8 @@ except Exception:
     pass
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SUITES = ["test_auth.py", "test_core.py", "test_billing_queue.py"]
+SUITES = ["test_auth.py", "test_core.py", "test_billing_queue.py",
+          "test_http_e2e.py"]  # oxirgisi haqiqiy HTTP server ko'taradi
 
 total_fail = 0
 for name in SUITES:
