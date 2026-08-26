@@ -224,6 +224,13 @@ bot_app = None
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
 
+# Shovqinli kutubxona loglarini bo'g'amiz. fpdf2 har PDF yasashda
+# fontTools'ning ~40 qator INFO logini to'kadi ('maxp pruned', 'glyf
+# subsetted' ...) — bu haqiqiy xatolarni deploy logida ko'rinmas qiladi.
+for _noisy in ('fontTools', 'fontTools.subset', 'fontTools.ttLib',
+               'PIL', 'httpx', 'httpcore', 'urllib3'):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+
 # ── ADMIN & TARIFLAR KONFIGURATSIYASI ──────────────────────────────────────
 # Admin Telegram username (kichik harf, @ siz)
 ADMIN_USERNAMES = {"nazokat_571"}
