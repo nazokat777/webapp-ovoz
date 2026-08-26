@@ -447,15 +447,32 @@ def busy_guard(func):
     to'g'ridan-to'g'ri event loop'da chaqirardi."""
     import functools
 
+    async def _call_with_queue_reply(update, *args, **kwargs):
+        """Passthrough yo'llari uchun ham JobQueueFullError himoyasi.
+        Busiz admin (yoki nested bo'lmagan chetlab o'tish) to'la navbatda
+        BaseException'ni PTB'gacha ko'tarib, update jimgina yo'qolardi."""
+        try:
+            return await func(update, *args, **kwargs)
+        except JobQueueFullError:
+            try:
+                if getattr(update, "message", None):
+                    await update.message.reply_text(QUEUE_FULL_MESSAGE)
+            except Exception:
+                pass
+            return None
+
     @functools.wraps(func)
     async def wrapper(update, *args, **kwargs):
         user = getattr(update, "effective_user", None)
         uid = user.id if user else None
-        if uid is None or _busy_owner.get() == uid:
+        if uid is None:
+            return await _call_with_queue_reply(update, *args, **kwargs)
+        if _busy_owner.get() == uid:
+            # Nested chaqiruv — tashqi wrapper baribir ushlaydi, o'rab o'tirmaymiz
             return await func(update, *args, **kwargs)
         if _is_admin_user(user):
-            # Admin uchun guard yo'q (test/tezkor ishlar)
-            return await func(update, *args, **kwargs)
+            # Admin uchun busy-guard yo'q, lekin navbat signali himoyasi BOR
+            return await _call_with_queue_reply(update, *args, **kwargs)
         mark_token = _try_mark_processing(uid)
         if not mark_token:
             try:

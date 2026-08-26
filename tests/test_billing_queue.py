@@ -382,5 +382,41 @@ bot.pending_translations.clear()
 # _mark_processing o'lik kod sifatida o'chirildi
 check("_mark_processing yo'q", not hasattr(bot, "_mark_processing"))
 
+
+
+print("\n[R5] Admin/passthrough yo'llarida ham navbat signali ushlanadi")
+# Admin busy_guard'ni chetlab o'tadi — lekin JobQueueFullError PTB'gacha
+# ko'tarilib update JIMGINA yo'qolmasligi kerak
+@bot.busy_guard
+async def _admin_flow(update, context):
+    await bot._run_heavy(lambda: 1)
+    return "ok"
+bot.ADMIN_USER_IDS.add(9500)
+bot._job_stats.update({"running": 0, "queued": bot.MAX_QUEUED_JOBS})
+async def _sc_admin():
+    u = _Upd(9500)
+    r = await _admin_flow(u, None)
+    return r, u.message.texts
+r, texts = _aio.run(_sc_admin())
+bot._job_stats.update({"running": 0, "queued": 0})
+bot.ADMIN_USER_IDS.discard(9500)
+check("admin ham navbat javobini oladi (jim yo'qolmaydi)",
+      r is None and len(texts) == 1 and "band" in texts[0], (r, texts))
+
+# Barcha _run_heavy chaqiruvlari busy_guard ostida ekanini kod bo'yicha tasdiqlash
+_src = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bot.py"),
+            encoding="utf-8").read().split(chr(10))
+_unguarded = []
+for _i, _l in enumerate(_src):
+    if "await _run_heavy(" in _l:
+        for _j in range(_i, max(0, _i - 80), -1):
+            if _src[_j].startswith("async def "):
+                _fn = _src[_j][10:_src[_j].index("(")]
+                # _transcribe_flow — guard'langan chaqiruvchilar uchun helper
+                if "@busy_guard" not in _src[_j - 1] and _fn != "_transcribe_flow":
+                    _unguarded.append(_fn)
+                break
+check("har _run_heavy busy_guard ostida", not _unguarded, _unguarded)
+
 print(f"\nNatija: {ok} pass, {fail} fail")
 sys.exit(1 if fail else 0)
