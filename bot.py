@@ -1952,6 +1952,14 @@ def transcribe_muhlisa(file_path, progress_cb=None, failed_ranges_out=None):
     progress_cb(current, total) — har bo'lak tugagach.
     failed_ranges_out: list — yiqilgan vaqt oraliqlari to'ldiriladi.
     """
+    # WEBAPP_URL aniq sozlanganmi — zaxira qiymat ESKIRGAN bo'lishi mumkin
+    if not (os.getenv("WEBAPP_URL", "").strip()
+            or os.getenv("RAILWAY_PUBLIC_DOMAIN", "").strip()):
+        out.append(("warning",
+                    f"WEBAPP_URL sozlanmagan — zaxira qiymat ishlatilyapti "
+                    f"({WEBAPP_URL}). Agar bu manzil eskirgan bo'lsa, "
+                    f"'Web ilovani ochish' tugmasi O'LIK sahifaga olib boradi."))
+
     if not MUXLISA_KEY:
         raise Exception("MUXLISA_KEY sozlanmagan. Pro Uzbek tarifi uchun Railway env qo'shing.")
     if not have_cmd("ffmpeg"):
@@ -3808,6 +3816,37 @@ def _send_failed_ranges_notice(user_id, failed_ranges):
         logging.warning(f"Failed ranges xabar yuborish xato: {e}")
 
 
+def _join_chunks_dedup_overlap(chunk_results, sorted_keys):
+    """Bo'laklarni TARTIBDA yig'adi va qo'shni bo'laklar orasidagi
+    OVERLAP takrorini kesadi.
+
+    ffmpeg bo'laklarni 30 sek ustma-ust kesadi (chegaradagi so'z
+    yo'qolmasligi uchun), shuning uchun N-bo'lak oxiri N+1 boshida
+    qaytariladi. Bu funksiya shu takrorni olib tashlaydi.
+
+    Ilgari bu mantiq transcribe_whisper ichida IKKI MARTA nusxalangan edi
+    (FINAL PASS'dan oldin va keyin) — biriga qilingan tuzatish ikkinchisidan
+    o'tib ketardi. Alohida funksiya sifatida deterministik sinaladi ham."""
+    results = []
+    for k in sorted_keys:
+        text = chunk_results.get(k)
+        if not text:
+            continue
+        if results and len(text) > 100:
+            prev_tail = results[-1][-150:].lower()
+            new_head = text[:200].lower()
+            best_overlap = 0
+            # Eng UZUN mos keluvchi prefiksni izlaymiz (uzundan qisqaga)
+            for size in range(min(150, len(new_head)), 20, -5):
+                if new_head[:size] in prev_tail:
+                    best_overlap = size
+                    break
+            if best_overlap > 0:
+                text = text[best_overlap:].lstrip()
+        results.append(text)
+    return results
+
+
 def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_out=None):
     """OpenAI Whisper API orqali audio'ni matnga aylantirish.
     HAR DOIM avval optimallashtirish (64kbps mono MP3) qilinadi — bu Whisper
@@ -3950,26 +3989,7 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
     # Natijalarni TARTIBDA yig'amiz (idx bo'yicha)
     # Bo'laklarni tartibda yig'amiz va overlap'larni dedupe qilamiz
     sorted_keys = sorted(chunk_results.keys())
-    results = []
-    for k in sorted_keys:
-        text = chunk_results[k]
-        if not text:
-            continue
-        # Avvalgi bo'lak oxiri bilan o'rtacha (overlap) qismni kesib tashlash
-        if results and len(text) > 100:
-            prev_tail = results[-1][-150:].lower()  # avvalgi 150 ta belgi
-            new_head = text[:200].lower()
-            # Agar yangi bo'lak boshida avvalgisining oxiri takrorlansa, kesamiz
-            # Eng uzun mos keluvchi prefix'ni topamiz
-            best_overlap = 0
-            for size in range(min(150, len(new_head)), 20, -5):
-                snippet = new_head[:size]
-                if snippet in prev_tail:
-                    best_overlap = size
-                    break
-            if best_overlap > 0:
-                text = text[best_overlap:].lstrip()
-        results.append(text)
+    results = _join_chunks_dedup_overlap(chunk_results, sorted_keys)
 
     # MULTI FINAL PASS — yiqilgan bo'laklarni qayta urinish.
     # Kutish vaqtlari qisqartirildi: ilgari [60, 120, 300] edi — bitta bo'lak
@@ -4007,23 +4027,7 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
 
     # MULTI PASS'dan keyin natijalarni qayta yig'ish (yangi tiklangan chunklar bilan)
     sorted_keys = sorted(chunk_results.keys())
-    results = []
-    for k in sorted_keys:
-        text = chunk_results[k]
-        if not text:
-            continue
-        if results and len(text) > 100:
-            prev_tail = results[-1][-150:].lower()
-            new_head = text[:200].lower()
-            best_overlap = 0
-            for size in range(min(150, len(new_head)), 20, -5):
-                snippet = new_head[:size]
-                if snippet in prev_tail:
-                    best_overlap = size
-                    break
-            if best_overlap > 0:
-                text = text[best_overlap:].lstrip()
-        results.append(text)
+    results = _join_chunks_dedup_overlap(chunk_results, sorted_keys)
 
     # Agar BARCHA bo'laklar yiqilgan bo'lsa — xato qaytaramiz
     if not results and failed_chunks:
