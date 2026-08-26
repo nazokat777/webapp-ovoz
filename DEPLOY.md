@@ -88,6 +88,24 @@ Volume tekshiruvi `os.path.ismount()` orqali: yo'l NOMI hech narsani
 isbotlamaydi, chunki kod Railway'da uni majburan `/data` qiladi. Mount
 qilinmagan `/data` — konteyner ichidagi vaqtinchalik disk.
 
+## 4.7 Shu kompyuterda ishga tushirish (Railway'siz)
+
+Deploy ishlamayotgan bo'lsa ham bot lokalda to'liq ishlaydi:
+
+1. `.env.example` dan `.env` nusxa oling, `BOT_TOKEN` va `OPENAI_API_KEY` yozing
+2. **`ishga_tushirish.bat`** faylini ikki marta bosing
+
+Skript kutubxonalarni tekshiradi, ffmpeg bor-yo'qligini aytadi va botni
+ishga tushiradi. Holat: `http://localhost:8000/health`
+
+Eslatma: `.env` faylini bot endi O'ZI o'qiydi (tashqi kutubxonasiz).
+Haqiqiy env o'zgaruvchilari HAR DOIM ustun turadi — ya'ni Railway'dagi
+sozlamalar repodagi fayl bilan hech qachon almashib ketmaydi.
+
+WebApp Telegram'dan ochilishi uchun HTTPS domen kerak (Railway yoki ngrok).
+Telegram tomonidagi barcha xizmatlar (audio, video, PDF, matn) lokalda
+domensiz ham ishlayveradi.
+
 ## 5. Sinovlar
 
 ```bash

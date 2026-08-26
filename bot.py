@@ -56,6 +56,45 @@ TRANSLATION_TARGETS = {
 }
 TRANSLATION_TARGET_NAMES = {"uz": "O'zbek", "ru": "rus", "en": "ingliz", "ar": "arab", "auto": "asl"}
 
+# ── .env fayl yuklovchi (ixtiyoriy, LOKAL ishlash uchun) ──────────────────
+# NEGA: .env.example bor edi, lekin uni HECH KIM O'QIMASDI — foydalanuvchi
+# faylni to'ldirsa ham hech narsa o'zgarmasdi. Tashqi kutubxona (python-dotenv)
+# qo'shmasdan, kichik parser bilan hal qilamiz.
+#
+# QOIDA: haqiqiy env HAR DOIM ustun. .env faqat MAVJUD BO'LMAGAN qiymatlarni
+# to'ldiradi — shuning uchun Railway/Fly'dagi sozlamalar hech qachon
+# repodagi fayl bilan almashib ketmaydi.
+def _load_dotenv(path=None):
+    """.env dan faqat YETISHMAYOTGAN o'zgaruvchilarni yuklaydi. Returns: soni."""
+    path = path or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(path):
+        return 0
+    loaded = 0
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                key = key.strip()
+                if key.startswith("export "):
+                    key = key[7:].strip()
+                val = val.strip().strip('"').strip("'")
+                if key and key not in os.environ:
+                    os.environ[key] = val
+                    loaded += 1
+    except Exception as e:
+        print(f"⚠️ .env o'qishda xato: {e}", file=sys.stderr)
+    return loaded
+
+
+_dotenv_count = _load_dotenv()
+if _dotenv_count:
+    print(f"📄 .env dan {_dotenv_count} ta sozlama yuklandi "
+          f"(mavjud env qiymatlari ustun turadi)")
+
+
 # MUHIM: token HECH QACHON kodga yozilmaydi — faqat env orqali.
 # Railway/Fly/Docker: BOT_TOKEN=... env qo'shing. Lokal sinov: .env yoki eksport.
 BOT_TOKEN   = os.getenv("BOT_TOKEN", "").strip()

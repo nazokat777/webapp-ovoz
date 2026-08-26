@@ -164,5 +164,30 @@ os.environ.pop("RAILWAY_PROJECT_ID", None)
  bot.PAYMENT_CARD, bot.DATA_FILE) = _saved[:5]
 bot.runtime_settings.update(_saved[5])
 
+
+print("[24] .env yuklovchi (haqiqiy env HAR DOIM ustun)")
+import tempfile as _tf2
+_ed = _tf2.mkdtemp()
+_ef = os.path.join(_ed, "t.env")
+with open(_ef, "w", encoding="utf-8") as _f:
+    _f.write("BOT_TOKEN=DOTENV_QIYMAT\n")
+    _f.write("# izoh qatori\n")
+    _f.write('YANGI_KALIT="tirnoqli"\n')
+    _f.write("export EXPORTLI=42\n")
+    _f.write("BOSH_QATOR=\n")
+    _f.write("notekis qator bez tengligi\n")
+os.environ["BOT_TOKEN"] = "HAQIQIY_ENV"
+for _k in ("YANGI_KALIT", "EXPORTLI", "BOSH_QATOR"):
+    os.environ.pop(_k, None)
+_n = bot._load_dotenv(_ef)
+check("faqat yetishmayotganlar yuklandi", _n == 3, _n)
+check("haqiqiy env USTUN (almashmadi)", os.environ["BOT_TOKEN"] == "HAQIQIY_ENV")
+check("tirnoqlar olib tashlandi", os.environ.get("YANGI_KALIT") == "tirnoqli")
+check("export prefiksi tushunildi", os.environ.get("EXPORTLI") == "42")
+check("bo'sh qiymat yuklandi", os.environ.get("BOSH_QATOR") == "")
+check("mavjud bo'lmagan fayl xavfsiz", bot._load_dotenv(os.path.join(_ed, "yoq")) == 0)
+for _k in ("YANGI_KALIT", "EXPORTLI", "BOSH_QATOR"):
+    os.environ.pop(_k, None)
+
 print(f"\nNatija: {ok} pass, {fail} fail")
 sys.exit(1 if fail else 0)
