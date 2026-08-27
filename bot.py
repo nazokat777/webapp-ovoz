@@ -4311,6 +4311,61 @@ def _is_wrong_script(text, expect_lang="uz"):
     return arab > max(10, len(text) * 0.10)
 
 
+def detect_text_lang(text):
+    """Transkript matnining tilini aniqlaydi: "uz" | "ru" | "en" | "other".
+
+    NEGA MATNDAN, AUDIODAN EMAS: Whisper'ga language=uz berilganda u
+    javobda ham "Uzbek" deb qaytaradi — audio aslida ruscha bo'lsa ham.
+    Ya'ni provayderning aniqlashiga ishonib bo'lmaydi (amalda o'lchandi).
+    Chiqqan MATN esa yolg'on gapirmaydi.
+
+    Deterministik: qo'shimcha API chaqiruvi yo'q, xarajat qo'shmaydi.
+    """
+    if not text or not text.strip():
+        return "other"
+    t = text.strip()
+
+    harflar = [c for c in t if c.isalpha()]
+    if len(harflar) < 10:
+        return "other"
+
+    kiril = sum(1 for c in harflar if "Ѐ" <= c <= "ӿ")
+    kiril_ulush = kiril / len(harflar)
+
+    # Bu bosqichda transkript LOTIN yozuvida bo'ladi (kirillga o'girish
+    # keyinroq, PDF yasashda bajariladi). Shuning uchun ko'p kirill =
+    # rus tili.
+    if kiril_ulush > 0.30:
+        return "ru"
+
+    past = " " + t.lower() + " "
+
+    # O'zbek lotinига xos belgilar va qo'shimchalar
+    uz_belgi = 0
+    for m in ("o'", "g'", "o‘", "g‘", "sh", "ch"):
+        if m in past:
+            uz_belgi += 1
+    for m in (" va ", " bilan ", " uchun ", " ham ", " bo'l", " qil",
+              "ning ", "lar ", "ga ", "da ", "ni ", "dan "):
+        if m in past:
+            uz_belgi += 1
+
+    # Ingliz tiliga xos keng tarqalgan so'zlar
+    en_belgi = 0
+    for m in (" the ", " and ", " you ", " to ", " of ", " is ", " in ",
+              " that ", " for ", " with ", " this ", " we ", " it "):
+        if m in past:
+            en_belgi += 1
+
+    if en_belgi >= 3 and en_belgi > uz_belgi:
+        return "en"
+    if uz_belgi >= 2:
+        return "uz"
+    if en_belgi >= 2:
+        return "en"
+    return "other"
+
+
 def _rescue_split(chunk_path, parts=3):
     """Yiqilgan bo'lakni MAYDA qismlarga kesadi (qutqaruv uchun).
 
@@ -8577,6 +8632,61 @@ def _send_pdf_variant(user_id, text, filename, caption, title=None):
             except Exception: pass
 
 
+_LANG_NOMLARI = {"ru": "rus", "en": "ingliz", "other": "boshqa"}
+
+
+def ensure_uzbek_text(user_id, text, notify=True):
+    """Transkript o'zbekcha bo'lmasa — o'zbekchaga tarjima qiladi.
+
+    NEGA KERAK: bot "har qanday tildagi audio/video -> O'ZBEK matn" deb
+    va'da beradi, lekin havola va audio oqimlarida TARJIMA BOSQICHI
+    umuman yo'q edi. Manba tili o'zbek deb taxmin qilinar va rus tilidagi
+    video rus tilida yetkazilardi — foydalanuvchi aynan shundan shikoyat
+    qildi ("nega bu ruscha, manga qaysi tilni tanlay demadi").
+
+    Til AUDIO'dan emas, chiqqan MATNdan aniqlanadi: Whisper'ga
+    language=uz berilganda u javobda ham "Uzbek" deb qaytaradi — audio
+    ruscha bo'lsa ham (amalda o'lchandi). Matn esa yolg'on gapirmaydi.
+
+    Tarjima yiqilsa ASL MATN yetkaziladi: yarim ish bermaganidan
+    manba tilidagi to'liq matn yaxshi.
+    """
+    if not text or not text.strip():
+        return text
+    til = detect_text_lang(text)
+    if til == "uz":
+        return text
+    nom = _LANG_NOMLARI.get(til, til)
+    logging.info("🌐 Transkript o'zbekcha emas (%s) — tarjima qilinadi", til)
+    if notify:
+        try:
+            telegram_send_message(
+                user_id,
+                "🌐 Audio *" + nom + "* tilida ekan — o'zbekchaga "
+                "tarjima qilinmoqda...",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+    try:
+        tarjima = translate_with_claude(
+            text, source_lang=(til if til in ("ru", "en") else "auto"),
+            target_lang="uz")
+        if tarjima and tarjima.strip():
+            return tarjima
+        logging.warning("Tarjima bo'sh qaytdi — asl matn yetkaziladi")
+    except Exception as e:
+        logging.error("Tarjima yiqildi: %s — asl matn yetkaziladi", e)
+        if notify:
+            try:
+                telegram_send_message(
+                    user_id,
+                    "⚠️ Tarjima bajarilmadi — matn asl tilida yuborilmoqda.")
+            except Exception:
+                pass
+    return text
+
+
 def _send_text_and_pdf(user_id, text, remember_uid=None):
     """2 ta PDF yuboradi (Lotin + Kirill).
 
@@ -8821,6 +8931,9 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
                 # Oldindan Kirillga o'girish MUMKIN EMAS: ikkinchi konversiya
                 # matnni buzadi va "Lotin" nomli PDF aslida Kirill chiqadi.
                 # success FAQAT natija haqiqatan yetkazilgan bo'lsa True bo'ladi
+                # Bot "har qanday tildan -> O'ZBEK matn" deb va'da beradi.
+                # Manba o'zbekcha bo'lmasa tarjima shu yerda bajariladi.
+                text = ensure_uzbek_text(user_id, text)
                 success = _send_text_and_pdf(user_id, text)
         else:
             telegram_send_message(
@@ -9332,6 +9445,9 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
         success = False
         if text and text.strip() != "Matn aniqlanmadi.":
             # Oldindan konversiya YO'Q — _send_text_and_pdf ikkala alifboni yuboradi
+            # Bot "har qanday tildan -> O'ZBEK matn" deb va'da beradi.
+            # Manba o'zbekcha bo'lmasa tarjima shu yerda bajariladi.
+            text = ensure_uzbek_text(user_id, text)
             success = _send_text_and_pdf(user_id, text)
         else:
             telegram_send_message(
