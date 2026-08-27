@@ -113,11 +113,54 @@ finally:
     bot.translate_with_claude = _asl_tr
     bot.telegram_send_message = _asl_send
 
-print("[6] Yetkazish oqimlari tarjimadan O'TADI")
-src = open(os.path.join(ROOT, "bot.py"), encoding="utf-8").read()
-check("ensure_uzbek_text kamida ikki oqimda chaqiriladi",
-      src.count("text = ensure_uzbek_text(user_id, text)") >= 2,
-      src.count("text = ensure_uzbek_text(user_id, text)"))
+print("[7] HAMMA transkripsiya oqimi tarjimadan o'tadi (struktura auditi)")
+# Aynan shu xato takrorlanmasin: ensure_uzbek_text ikkita oqimga
+# qo'shilgan edi, uchinchisi (_transcribe_flow — Telegram orqali
+# yuborilgan havolalar) UNUTILGAN edi va foydalanuvchi yana rus
+# tilida matn oldi. Endi audit avtomatik.
+import re as _re
 
+_src = open(os.path.join(ROOT, "bot.py"), encoding="utf-8").read().split("\n")
+_bosh = [(i, l) for i, l in enumerate(_src) if _re.match(r"^(async )?def ", l)]
+_bloklar = []
+for _k, (_i, _l) in enumerate(_bosh):
+    _j = _bosh[_k + 1][0] if _k + 1 < len(_bosh) else len(_src)
+    _nom = _re.sub(r"^(async )?def ([A-Za-z_0-9]+).*", r"\2", _l)
+    _bloklar.append((_nom, "\n".join(_src[_i:_j])))
+
+# Quyi darajadagi STT funksiyalarining O'ZI — ular matn yetkazmaydi
+_QUYI = {"transcribe_unified", "transcribe_whisper", "transcribe_muhlisa",
+         "_transcribe_for_user", "_transcribe_chunk_muhlisa"}
+# /tarjima oqimlari: ular foydalanuvchi TANLAGAN tilga o'giradi, majburiy
+# o'zbek ularni buzardi (masalan ruschaga tarjima so'ralgan bo'lsa)
+_TARJIMA_OQIMI = {"process_translation_for_user", "process_url_translation_for_user"}
+_STT_BELGI = ("_run_heavy(transcribe_unified", "_transcribe_for_user(",
+              "transcribe_whisper(", "transcribe_unified(")
+
+_yetkazuvchi, _tarjimasiz = [], []
+for _nom, _kod in _bloklar:
+    if _nom in _QUYI or _nom.startswith("_try"):
+        continue
+    if not any(m in _kod for m in _STT_BELGI):
+        continue
+    _yetkazuvchi.append(_nom)
+    if _nom in _TARJIMA_OQIMI:
+        # O'z tarjimasi bo'lishi SHART
+        if "translate_with_claude" not in _kod:
+            _tarjimasiz.append(_nom + " (/tarjima oqimi, lekin tarjimasi yo'q)")
+        continue
+    if "ensure_uzbek_text" not in _kod:
+        _tarjimasiz.append(_nom)
+
+check("transkripsiya oqimlari topildi", len(_yetkazuvchi) >= 3, _yetkazuvchi)
+check("HAR BIR oqim tarjimadan o'tadi", not _tarjimasiz, _tarjimasiz)
+check("Telegram oqimi (_transcribe_flow) qamrab olingan",
+      "_transcribe_flow" in _yetkazuvchi, _yetkazuvchi)
+
+# Tarjima event loop'ni MUZLATMASLIGI kerak
+_tf = [k for n, k in _bloklar if n == "_transcribe_flow"]
+check("async oqimda tarjima alohida oqimda bajariladi",
+      bool(_tf) and "run_in_executor" in _tf[0],
+      "bloklovchi HTTP so'rov event loop'da bajarilmasin")
 print("\nNatija: " + str(ok) + " pass, " + str(fail) + " fail")
 sys.exit(1 if fail else 0)

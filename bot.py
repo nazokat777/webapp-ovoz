@@ -4995,6 +4995,20 @@ async def _transcribe_flow(update, msg, path, language, actual_duration):
     text = await _run_heavy(transcribe_unified, path, cb, language, failed_ranges)
     if failed_ranges:
         await update.message.reply_text(_format_failed_ranges_text(failed_ranges), parse_mode="HTML")
+    # Bot "har qanday tildan -> O'ZBEK matn" deb va'da beradi.
+    # Bu UCHALA Telegram oqimining (lokal audio, file_id, URL) yagona
+    # yetkazish nuqtasi — tarjima aynan shu yerda bo'lishi kerak.
+    #
+    # run_in_executor(None, ...) ATAYLAB: tarjima bloklovchi HTTP so'rov,
+    # uni event loop'da bajarish butun botni muzlatardi. _run_heavy emas,
+    # chunki bu allaqachon qabul qilingan ishning DAVOMI — navbat
+    # slotlari uchun boshqa foydalanuvchilar bilan raqobatlashmasligi kerak.
+    if text and text.strip():
+        try:
+            text = await loop.run_in_executor(
+                None, ensure_uzbek_text, update.effective_user.id, text)
+        except Exception as e:
+            logging.error("Tarjima bosqichi yiqildi: %s — asl matn yuboriladi", e)
     # Daqiqa FAQAT natija haqiqatan yetkazilgan bo'lsa yechiladi
     delivered = await send_result(update, msg, text)
     if delivered and not is_admin(update) and actual_duration > 0:
