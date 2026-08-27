@@ -24,6 +24,15 @@ where py >nul 2>nul && set "PYEXE=py -3"
 if not defined PYEXE where python >nul 2>nul && set "PYEXE=python"
 if not defined PYEXE goto :python_yoq
 
+echo [1/6] Bot allaqachon ishlayaptimi...
+REM Telegram bitta tokenga BITTA poller ruxsat beradi. Ikkinchi nusxa
+REM ko'tarilsa IKKALASI ham 409 Conflict oladi va bot hech kimga javob
+REM bermay qoladi - ya'ni 'yana bir marta ishga tushiray' degan zararsiz
+REM harakat butun xizmatni to'xtatadi.
+%PYEXE% "tools\already_running.py"
+if errorlevel 1 goto :allaqachon
+echo       OK
+
 REM --- .env BOR-YO'QLIGI emas, ICHI ham tekshiriladi -------------
 REM Ilgari faqat fayl bor-yo'qligi ko'rilardi. Bo'sh .env bilan bot
 REM JIMGINA 'DEGRADED' rejimga tushib, hech kimga javob bermay turardi -
@@ -31,14 +40,14 @@ REM sabab esa faqat loglarda qolardi.
 REM Tekshiruvni Python bajaradi: batch'ning findstr regexi ishonchsiz
 REM (/R va /C: birga berilganda naqsh LITERAL deb olinadi).
 :env_tekshir
-echo [1/5] Sozlamalar tekshirilmoqda...
+echo [2/6] Sozlamalar tekshirilmoqda...
 %PYEXE% "tools\env_check.py"
 if errorlevel 4 goto :env_yarat
 if errorlevel 3 goto :kalit_yoq
 if errorlevel 2 goto :token_yoq
 
 :env_bor
-echo [2/5] Kutubxonalar tekshirilmoqda...
+echo [3/6] Kutubxonalar tekshirilmoqda...
 %PYEXE% -c "import telegram, aiohttp, fpdf, pypdf, edge_tts, yt_dlp" 2>nul
 if not errorlevel 1 goto :kutubxona_ok
 echo       Yetishmayotganlari o'rnatilmoqda (bir marta, biroz vaqt oladi)...
@@ -47,7 +56,7 @@ if errorlevel 1 goto :pip_xato
 :kutubxona_ok
 echo       OK
 
-echo [3/5] ffmpeg tekshirilmoqda...
+echo [4/6] ffmpeg tekshirilmoqda...
 where ffmpeg >nul 2>nul
 if errorlevel 1 goto :ffmpeg_yoq
 echo       OK
@@ -58,7 +67,7 @@ echo           O'rnatish: winget install Gyan.FFmpeg
 echo           (PDF va matn xizmatlari busiz ham ishlayveradi)
 :ffmpeg_tekshirildi
 
-echo [4/5] Web ilova tunneli tekshirilmoqda...
+echo [5/6] Web ilova tunneli tekshirilmoqda...
 REM Bot lokal ishlaganda Web ilova FAQAT tunnel orqali ochiladi.
 REM Tunnel tushib qolsa bot ishlayveradi, lekin "Web ilovani ochish"
 REM tugmasi o'lik sahifaga olib boradi va foydalanuvchi butun bot
@@ -66,7 +75,7 @@ REM buzuq deb o'ylaydi (amalda shunday bo'ldi). Shu sababli birga.
 %PYEXE% "tools\tunnel_start.py"
 if errorlevel 1 echo       (Web ilova ochilmaydi - bot Telegram ichida to'liq ishlayveradi)
 
-echo [5/5] Bot ishga tushirilmoqda...
+echo [6/6] Bot ishga tushirilmoqda...
 echo(
 echo ------------------------------------------------------------
 echo  To'xtatish uchun: Ctrl+C
@@ -78,6 +87,11 @@ echo(
 
 echo(
 echo Bot to'xtadi. Sabab yuqorida yozilgan.
+:allaqachon
+echo(
+echo Ishga tushirish TO'XTATILDI - ikkinchi nusxa zarar keltirardi.
+goto :tugadi
+
 goto :tugadi
 
 :env_yarat

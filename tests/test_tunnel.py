@@ -115,5 +115,72 @@ finally:
     ts._allaqachon_ishlayaptimi = _asl["_ish"]
     ts.subprocess.Popen = _asl["popen"]
 
+print("[7] Takroriy nusxa qo'riqchisi")
+# Telegram bitta tokenga BITTA poller ruxsat beradi. Ikkinchi nusxa
+# ko'tarilsa IKKALASI ham 409 Conflict oladi va bot hech kimga javob
+# bermay qoladi — "yana bir marta ishga tushiray" degan zararsiz harakat
+# butun xizmatni o'ldiradi.
+import already_running as ar  # noqa: E402
+
+_asl_open = ar.urllib.request.urlopen
+
+
+class _Javob:
+    def __init__(self, body):
+        self._b = body.encode("utf-8")
+
+    def read(self, n=None):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+try:
+    def _yopiq(*a, **k):
+        raise OSError("connection refused")
+
+    ar.urllib.request.urlopen = _yopiq
+    _ishlayapti, _ = ar.tekshir("8000")
+    check("javob yo'q -> ishga tushirish mumkin", _ishlayapti is False)
+    check("main() 0 qaytaradi", ar.main() == 0)
+
+    ar.urllib.request.urlopen = lambda *a, **k: _Javob(
+        chr(123) + '"status": "ok", "warnings": [1, 2]' + chr(125))
+    _ishlayapti, _taf = ar.tekshir("8000")
+    check("javob bor -> ishlayapti deb aniqlanadi", _ishlayapti is True, _taf)
+    check("tafsilotda holat ko'rsatiladi", "ok" in _taf, _taf)
+    check("main() 1 qaytaradi (skript to'xtaydi)", ar.main() == 1)
+
+    # DEGRADED (503): jarayon TIRIK, sozlamasi chala — baribir ikkinchi
+    # nusxa ko'tarmaslik kerak
+    def _503(*a, **k):
+        raise ar.urllib.error.HTTPError("u", 503, "degraded", None, None)
+
+    ar.urllib.request.urlopen = _503
+    _ishlayapti, _taf = ar.tekshir("8000")
+    check("DEGRADED (503) ham 'ishlayapti' hisoblanadi", _ishlayapti is True, _taf)
+
+    ar.urllib.request.urlopen = lambda *a, **k: _Javob("bu json emas")
+    _ishlayapti, _ = ar.tekshir("8000")
+    check("buzuq javob ham tiriklik belgisi", _ishlayapti is True)
+finally:
+    ar.urllib.request.urlopen = _asl_open
+
+print("[8] Skript qo'riqchini TO'G'RI ishlatadi")
+_bat = open(os.path.join(ROOT, "ishga_tushirish.bat"), encoding="utf-8").read()
+check("skript qo'riqchini chaqiradi", "already_running.py" in _bat)
+# Farq ATAYLAB: tunnelsiz bot ishlayveradi (faqat ogohlantirish),
+# ikkinchi nusxa esa zarar keltiradi (to'liq to'xtatish).
+_keyin = _bat.split("already_running.py")[1][:200]
+check("takroriy nusxa topilsa ishga tushirish TO'XTAYDI",
+      "goto :allaqachon" in _keyin, _keyin[:80])
+check("to'xtash sababi tushuntiriladi",
+      ":allaqachon" in _bat and "TO'XTATILDI" in _bat)
+
+
 print("\nNatija: " + str(ok) + " pass, " + str(fail) + " fail")
 sys.exit(1 if fail else 0)
