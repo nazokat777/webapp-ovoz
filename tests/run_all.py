@@ -18,7 +18,7 @@ except Exception:
 HERE = os.path.dirname(os.path.abspath(__file__))
 SUITES = ["test_auth.py", "test_core.py", "test_env_check.py",
           "test_providers.py", "test_tunnel.py",
-          "test_billing_queue.py",
+          "test_tariffs.py", "test_billing_queue.py",
           "test_text_pipeline.py", "test_media_pipeline.py", "test_stt_integration.py",
           "test_http_e2e.py"]  # oxirgisi haqiqiy HTTP server ko'taradi
 

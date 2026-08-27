@@ -571,11 +571,25 @@ ADMIN_USERNAMES = {"nazokat_571"}
 
 # Tariflar (O'zbek STT uchun)
 TARIFFS = {
-    "free":           {"name": "🌸 Bepul",                "minutes": 5,    "price": 0},
-    # === STANDART tarif (arzon, har qanday uzunlikda) ===
-    "basic":          {"name": "💚 Standart Boshlang'ich", "minutes": 180,  "price": 60000},   # 3 soat
-    "standart":       {"name": "💙 Standart O'rta",        "minutes": 600,  "price": 150000},  # 10 soat
-    "premium":        {"name": "💜 Standart Maxsimum",     "minutes": 1500, "price": 300000},  # 25 soat
+    # Bepul tarif KUNLIK: har kuni 60 daqiqa qaytadan beriladi.
+    # Nega bepul: STT (Groq) va matn modeli (Gemini) bepul provayderlar
+    # orqali ishlaydi — bu tarifning tannarxi yo'q. Cheklov faqat umumiy
+    # kvotani hammaga yetkazish uchun.
+    "free":           {"name": "🌸 Bepul (kunlik)",        "minutes": 60,   "price": 0,
+                       "daily": True},
+    # === STANDART tarif — SOTUVDAN OLIB TASHLANDI ===
+    # Bu tariflar pullik OpenAI ustiga qurilgan edi. Endi xuddi shu sifat
+    # bepul provayderlar orqali beriladi, shuning uchun ularni sotish
+    # ma'nosiz. Kalitlar QOLDIRILDI: kod TARIFFS[...] ni 32 joyda
+    # to'g'ridan-to'g'ri indekslaydi va kalit o'chirilsa eski xaridorlarda
+    # KeyError bo'lib bot yiqilardi. "hidden" — faqat menyudan berkitadi,
+    # sotib olganlar daqiqalarini to'liq ishlatadi.
+    "basic":          {"name": "💚 Standart Boshlang'ich", "minutes": 180,  "price": 60000,
+                       "hidden": True},   # 3 soat
+    "standart":       {"name": "💙 Standart O'rta",        "minutes": 600,  "price": 150000,
+                       "hidden": True},   # 10 soat
+    "premium":        {"name": "💜 Standart Maxsimum",     "minutes": 1500, "price": 300000,
+                       "hidden": True},   # 25 soat
     # === PREMIUM tarif (eng yuqori sifat, har qanday uzunlikda) ===
     "pro_standart":   {"name": "⭐ Premium Boshlang'ich",  "minutes": 180,  "price": 170000},  # 3 soat
     "pro_premium":    {"name": "👑 Premium O'rta",         "minutes": 360,  "price": 300000},  # 6 soat
@@ -584,6 +598,10 @@ TARIFFS = {
 
 # Foydalanuvchi xarajatlarini saqlash {user_id: jami_soniya} — TARIF LIMITI uchun (grant'da 0'ga tushadi)
 user_uzbek_usage = {}
+# KUNLIK hisob: {user_id: [kun_matni, soniya]}. Bepul tarif uchun limit
+# har kuni qaytadan beriladi, shuning uchun umrbod jamlanadigan
+# user_uzbek_usage bu yerda yaramaydi.
+user_daily_usage = {}
 # Lifetime ishlatilgan daqiqalar {user_id: jami_soniya} — HECH QACHON 0'ga tushmaydi (statistika uchun)
 user_total_usage = {}
 # Foydalanuvchi tarifi {user_id: tariff_kalit}, default = "free"
@@ -1106,6 +1124,11 @@ def _load_user_data():
                 user_referrals[int(k)] = int(v)
             except (ValueError, TypeError) as _e:
                 _skip("yozuv", k, _e)
+        for k, v in (data.get("user_daily_usage") or {}).items():
+            try:
+                user_daily_usage[int(k)] = [str(v[0]), int(v[1])]
+            except (ValueError, TypeError, IndexError) as _e:
+                _skip("yozuv", k, _e)
         for k, v in (data.get("user_webapp_seen") or {}).items():
             try:
                 user_webapp_seen[int(k)] = str(v)
@@ -1157,6 +1180,8 @@ def _save_user_data():
                 "user_referrals": {str(k): int(v) for k, v in user_referrals.items()},
                 "user_referral_claimed": {str(k): True for k in user_referral_claimed},
                 "user_webapp_seen": {str(k): v for k, v in user_webapp_seen.items()},
+                "user_daily_usage": {str(k): [v[0], int(v[1])]
+                                     for k, v in user_daily_usage.items()},
                 "runtime_settings": dict(runtime_settings),
             }
 
@@ -1614,7 +1639,29 @@ def get_user_limit_sec(user_id):
     return (base_min + bonus_min) * 60
 
 
+def bugungi_kun():
+    """Mahalliy vaqt bo'yicha bugungi kun (YYYY-MM-DD)."""
+    return time.strftime("%Y-%m-%d")
+
+
+def is_daily_tariff(user_id):
+    """Foydalanuvchi tarifi KUNLIK yangilanadimi (bepul tarif)."""
+    return bool(TARIFFS.get(get_user_tariff(user_id), {}).get("daily"))
+
+
 def get_user_usage_sec(user_id):
+    """Tarif limitiga hisoblanadigan ishlatilgan vaqt.
+
+    KUNLIK tarifda (bepul) faqat BUGUNGI sarf hisoblanadi — ertaga limit
+    o'z-o'zidan tiklanadi. Pullik tarifda esa daqiqalar bir marta beriladi
+    va tugaguncha amal qiladi, shuning uchun umrbod jamlanadi.
+    """
+    if is_daily_tariff(user_id):
+        yozuv = user_daily_usage.get(user_id)
+        if not yozuv:
+            return 0
+        kun, sek = yozuv[0], yozuv[1]
+        return int(sek) if kun == bugungi_kun() else 0
     return user_uzbek_usage.get(user_id, 0)
 
 
@@ -1623,6 +1670,15 @@ def add_user_usage(user_id, seconds):
     if seconds and seconds > 0:
         user_uzbek_usage[user_id] = user_uzbek_usage.get(user_id, 0) + seconds
         user_total_usage[user_id] = user_total_usage.get(user_id, 0) + seconds
+        # KUNLIK hisob — tarifdan qat'i nazar yuritiladi. Foydalanuvchi
+        # pullik tarifdan bepulga qaytsa, kechagi sarf bugungi limitni
+        # yeb qo'ymasligi kerak.
+        bugun = bugungi_kun()
+        eski = user_daily_usage.get(user_id)
+        if eski and eski[0] == bugun:
+            user_daily_usage[user_id] = [bugun, int(eski[1]) + seconds]
+        else:
+            user_daily_usage[user_id] = [bugun, seconds]
         logging.info(f"   ✅ Yangi total: {user_uzbek_usage[user_id]} sek (lifetime: {user_total_usage[user_id]} sek)")
         # Referral bonus — birinchi real foydalanishdan keyin beriladi (anti-fake)
         _try_claim_referral_bonus(user_id)
@@ -1766,32 +1822,38 @@ def format_tariffs_text():
         mins = t["minutes"]
         hrs_str = f" ({mins // 60} soat)" if mins >= 60 else ""
         if t["price"] == 0:
-            return f"{t['name']} — *{mins} daqiqa* — BEPUL"
+            qosh = " — HAR KUNI YANGILANADI" if t.get("daily") else " — BEPUL"
+            return f"{t['name']} — *{mins} daqiqa*{qosh}"
         return f"{t['name']} — *{mins} daqiqa{hrs_str}* — *{t['price']:,} so'm*"
 
-    # Bepul
+    # Bepul — endi ASOSIY tarif. STT (Groq) va matn modeli (Gemini) bepul
+    # provayderlar orqali ishlagani uchun bu tarifning tannarxi yo'q.
     free_line = _fmt("free")
     if free_line:
         lines.append(free_line)
+        lines.append("_Hech narsa to'lash shart emas._")
 
-    # Standart tariflar (arzon)
-    lines.append("\n💚 *Standart* (arzon):")
-    for k in ("basic", "standart", "premium"):
-        line = _fmt(k)
-        if line:
-            lines.append(line)
-
-    # Premium tariflar (eng yuqori sifat)
-    lines.append("\n👑 *Premium* (eng yuqori sifat):")
+    # Premium — Muxlisa AI: o'zbek tiliga MAXSUS qurilgan, pullik xizmat
+    lines.append("\n👑 *Premium* — o'zbek tili uchun eng yuqori aniqlik:")
     for k in ("pro_standart", "pro_premium", "pro_max"):
+        if (TARIFFS.get(k) or {}).get("hidden"):
+            continue
         line = _fmt(k)
         if line:
             lines.append(line)
+
+    # Sotuvdan olingan eski tariflar — kalitlari qolgan, lekin sotilmaydi
+    if any((TARIFFS.get(k) or {}).get("hidden")
+           for k in ("basic", "standart", "premium")):
+        lines.append(
+            "\n_Eski Standart tariflar sotuvdan olindi — o'sha sifat endi "
+            "bepul beriladi. Sotib olganlar daqiqalarini to'liq ishlatadi._"
+        )
 
     lines.append(
-        "\nℹ️ Daqiqalar bir marta beriladi va tugaguncha amal qiladi "
-        "(oylik yangilanish yo'q). Yangi tarif olsangiz, eski tarifdagi "
-        "ishlatilmagan daqiqalar yangisiga qo'shiladi."
+        "\nℹ️ Bepul daqiqalar HAR KUNI qaytadan beriladi. Premium daqiqalari "
+        "bir marta beriladi va tugaguncha amal qiladi. Yangi Premium "
+        "olsangiz, eski tarifdagi ishlatilmagan daqiqalar yangisiga qo'shiladi."
     )
     lines.append("\n💎 Tarif sotib olish uchun pastdagi tugmani bosing 👇")
     return "\n".join(lines)
@@ -6242,16 +6304,25 @@ async def _show_buy_menu(message_obj):
     premium_keys = ["pro_standart", "pro_premium", "pro_max"]
     buttons = []
     for key in standart_keys + premium_keys:
-        if key in TARIFFS and TARIFFS[key].get("price", 0) > 0:
+        # "hidden" — sotuvdan olingan eski tariflar. Kalit ATAYLAB
+        # qoldirilgan (kod TARIFFS[...] ni 32 joyda to'g'ridan-to'g'ri
+        # indekslaydi va o'chirilsa eski xaridorlarda KeyError bo'lardi),
+        # lekin yangi xarid uchun ko'rsatilmaydi.
+        if (key in TARIFFS and TARIFFS[key].get("price", 0) > 0
+                and not TARIFFS[key].get("hidden")):
             t = TARIFFS[key]
             hrs = t["minutes"] // 60
             label = f"{t['name']} • {hrs} soat • {t['price']:,} so'm"
             buttons.append([InlineKeyboardButton(label, callback_data=f"buy:{key}")])
     text = (
         carryover_note +
-        "💎 *Bizda 2 xil tarif bor:*\n\n"
-        "💚 *Standart* — arzon\n"
-        "👑 *Premium* — eng yuqori sifat\n\n"
+        "👑 *Premium tarif*\n\n"
+        "Oddiy xizmat — audio/video → matn, PDF va tarjima — *bepul* "
+        "va har kuni yangilanadi. Buning uchun hech narsa to'lash "
+        "shart emas.\n\n"
+        "Premium esa o'zbek tiliga *maxsus qurilgan* Muxlisa AI orqali "
+        "ishlaydi: ismlar, atamalar va shevalarni sezilarli aniqroq "
+        "oladi.\n\n"
         "Tanlagan tarifingiz uchun to'lov ma'lumotlari ko'rinadi.\n"
         "💳 Click / Payme / Paynet / Uzcard / Humo orqali to'lashingiz mumkin.\n\n"
         "📸 To'lov chekini botga yuborgach tarifingiz tasdiqlanadi."
