@@ -1,21 +1,78 @@
 # Deploy va sozlash
 
-## 1. Majburiy env o'zgaruvchilar
+## 1. Env o'zgaruvchilar
 
-Bot bularsiz **ishga tushmaydi**:
+### Majburiy
 
 | Nomi | Nima uchun |
 |---|---|
-| `BOT_TOKEN` | BotFather tokeni. Kodda default qiymat **yo'q** — ataylab. |
-| `OPENAI_API_KEY` | STT, matn tozalash, tarjima, TTS |
+| `BOT_TOKEN` | BotFather tokeni. Kodda default qiymat **yo'q** — ataylab. Busiz bot DEGRADED rejimga tushadi: HTTP server ko'tariladi va har so'rovga sababni aytadi. |
 
-Juda tavsiya etiladi:
+### AI provayderlari — kamida bittasi kerak
+
+Zanjir **sifat tartibida** tuziladi, narx tartibida emas. Kaliti yo'q
+provayder umuman chaqirilmaydi, ya'ni bitta kalit bilan ham bot ishlaydi.
+Biri limitga urilsa (`429`) keyingisi darhol o'rnini bosadi.
+
+| Nomi | Nima beradi | Bepulmi |
+|---|---|---|
+| `GROQ_API_KEY` | audio→matn (whisper-large-v3) **va** matn modeli | ✅ kartasiz, ~2000 so'rov/kun |
+| `GEMINI_API_KEY` | tarjima va matn tozalash (eng aniq) | ✅ kartasiz |
+| `OPENAI_API_KEY` | audio→matn, matn, premium TTS | ❌ pullik |
+| `MUXLISA_KEY` | o'zbek STT — eng yuqori sifat, faqat `pro_*` tariflar uchun | ❌ pullik |
+
+**O'zbek sifati bo'yicha o'lchov** (bir xil "iflos" transkript hamma modelga berildi):
+
+| Model | So'z aniqligi | Vaqt |
+|---|---|---|
+| `gemini-3.5-flash` | 100.0% | 13.6s |
+| `groq/qwen3.8-27b` | 96.6% | 1.0s |
+| `gemini-3.1-flash-lite` | 94.7% | 1.3s |
+
+Ishlatilmaydiganlar: `gemini-2.5-pro` (404 — yangi hisoblarga berilmaydi),
+`gemini-3.7-flash` (503 — doimiy band), `llama-3.3-70b` (Groq'dan olib tashlangan).
+
+> **MUHIM:** Groq'ga `language=uz` yuborilishi shart. Yuborilmasa u o'zbek
+> nutqini **arab yozuvida** qaytaradi (`اسلام علیکم` = `assalomu alaykum`) —
+> tovushlar to'g'ri, matn yaroqsiz. Buni `GROQ_STT_LANGS` hal qiladi.
+
+### Juda tavsiya etiladi
 
 | Nomi | Nima uchun |
 |---|---|
 | `ADMIN_USER_ID` | Admin tekshiruvi. Sozlanmasa username fallback ishlaydi — bu xavfsiz emas (username bo'shatilsa boshqa odam egallashi mumkin). Bir nechta admin: `123,456` |
+| `WEBAPP_URL` | Web ilova manzili. Sozlanmasa tugma **berkitiladi** (o'lik tugmadan yo'q tugma yaxshi). |
 
 To'liq ro'yxat: [.env.example](.env.example)
+
+### Tekshirish
+
+```
+python tools/env_check.py       # .env to'liqmi
+python tools/provider_check.py  # kalitlar HAQIQIY API'da ishlaydimi
+```
+
+Ikkinchisi muhim: noto'g'ri kalit aks holda faqat birinchi audio kelganda
+bilinadi — foydalanuvchi kutib turadi va xato oladi.
+
+## 1b. Lokal ishga tushirish (serversiz)
+
+Server ishlamayotgan bo'lsa ham bot shu kompyuterda to'liq ishlaydi:
+
+**`ishga_tushirish.bat`** ni ikki marta bosing. U ketma-ket:
+
+1. Python'ni topadi
+2. `.env` ICHINI tekshiradi (bo'sh token bilan jim DEGRADED rejimga tushmaslik uchun)
+3. Kutubxonalar va `ffmpeg` ni tekshiradi
+4. **Web ilova tunnelini ko'taradi** (`WEBAPP_URL` ngrok bo'lsa)
+5. Botni ishga tushiradi
+
+Tunnel ko'tarilmasa bot baribir ishlaydi — faqat Web ilova ochilmaydi,
+Telegram ichidagi hamma narsa (audio, video, PDF, tarjima) joyida qoladi.
+
+> Telegram cheklovi: bot chatga yuborilgan fayldan faqat **20 MB** gacha
+> yuklab ola oladi. Uzun ma'ruza (2-3 soat) uchun **Web ilova** orqali
+> yuboring — u botning o'z serveriga boradi, chegara `MAX_UPLOAD_MB` (300).
 
 ## 2. Doimiy saqlash (MUHIM)
 

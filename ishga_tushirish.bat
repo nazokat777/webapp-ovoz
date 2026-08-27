@@ -31,14 +31,14 @@ REM sabab esa faqat loglarda qolardi.
 REM Tekshiruvni Python bajaradi: batch'ning findstr regexi ishonchsiz
 REM (/R va /C: birga berilganda naqsh LITERAL deb olinadi).
 :env_tekshir
-echo [1/4] Sozlamalar tekshirilmoqda...
+echo [1/5] Sozlamalar tekshirilmoqda...
 %PYEXE% "tools\env_check.py"
 if errorlevel 4 goto :env_yarat
 if errorlevel 3 goto :kalit_yoq
 if errorlevel 2 goto :token_yoq
 
 :env_bor
-echo [2/4] Kutubxonalar tekshirilmoqda...
+echo [2/5] Kutubxonalar tekshirilmoqda...
 %PYEXE% -c "import telegram, aiohttp, fpdf, pypdf, edge_tts, yt_dlp" 2>nul
 if not errorlevel 1 goto :kutubxona_ok
 echo       Yetishmayotganlari o'rnatilmoqda (bir marta, biroz vaqt oladi)...
@@ -47,7 +47,7 @@ if errorlevel 1 goto :pip_xato
 :kutubxona_ok
 echo       OK
 
-echo [3/4] ffmpeg tekshirilmoqda...
+echo [3/5] ffmpeg tekshirilmoqda...
 where ffmpeg >nul 2>nul
 if errorlevel 1 goto :ffmpeg_yoq
 echo       OK
@@ -58,7 +58,15 @@ echo           O'rnatish: winget install Gyan.FFmpeg
 echo           (PDF va matn xizmatlari busiz ham ishlayveradi)
 :ffmpeg_tekshirildi
 
-echo [4/4] Bot ishga tushirilmoqda...
+echo [4/5] Web ilova tunneli tekshirilmoqda...
+REM Bot lokal ishlaganda Web ilova FAQAT tunnel orqali ochiladi.
+REM Tunnel tushib qolsa bot ishlayveradi, lekin "Web ilovani ochish"
+REM tugmasi o'lik sahifaga olib boradi va foydalanuvchi butun bot
+REM buzuq deb o'ylaydi (amalda shunday bo'ldi). Shu sababli birga.
+%PYEXE% "tools\tunnel_start.py"
+if errorlevel 1 echo       (Web ilova ochilmaydi - bot Telegram ichida to'liq ishlayveradi)
+
+echo [5/5] Bot ishga tushirilmoqda...
 echo(
 echo ------------------------------------------------------------
 echo  To'xtatish uchun: Ctrl+C
