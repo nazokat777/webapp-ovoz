@@ -255,6 +255,48 @@ def _bearer(key):
     return {"Authorization": "Bearer " + key}
 
 
+# ── PROVAYDER LIMIT KUZATUVI ────────────────────────────────────────────────
+# Bepul tariflarda soatlik/kunlik kvota bor (masalan Groq: soatiga 7200
+# soniya audio). 3 soatlik ma'ruza = 10800 soniya, ya'ni kvotadan OSHADI.
+#
+# Kvota tugaganda 429 keladi va u VAQTINCHALIK NOSOZLIK EMAS — soat
+# tugagunicha tiklanmaydi. Ilgari 429 xuddi 5xx kabi 7 marta, 120 soniya
+# kutib qayta urinilardi VA BU HAR BO'LAK UCHUN TAKRORLANARDI. 60 bo'lakli
+# ma'ruzada bu soatlab behuda kutish degani edi.
+#
+# Endi limitga urilgan provayder BIR MARTA "sovutishga" qo'yiladi va
+# qolgan bo'laklar uni umuman chaqirmaydi — boshqa provayderga o'tadi.
+_provider_cooldown = {}
+_cooldown_lock = threading.Lock()
+
+
+def _cooldown_qoldi(nom):
+    """Provayder limitda bo'lsa necha soniya qolgani (0 = tayyor)."""
+    with _cooldown_lock:
+        t = _provider_cooldown.get(nom, 0)
+    return max(0, int(t - time.time()))
+
+
+def _cooldown_belgila(nom, soniya):
+    """Provayderni belgilangan muddatga chetlab o'tish."""
+    try:
+        soniya = int(float(soniya))
+    except (TypeError, ValueError):
+        soniya = 60
+    soniya = max(5, min(soniya, 3600))
+    with _cooldown_lock:
+        _provider_cooldown[nom] = time.time() + soniya
+    logging.warning("⏳ %s limitda — %ss davomida o'tkazib yuboriladi", nom, soniya)
+    return soniya
+
+
+def _rate_limit_soniya(err):
+    """'RATE_LIMIT:<soniya>' xatosidan kutish vaqtini ajratadi."""
+    if isinstance(err, str) and err.startswith("RATE_LIMIT:"):
+        return err.split(":", 1)[1]
+    return None
+
+
 def _stt_attempts():
     """Bo'lakni transkripsiya qilish urinishlari — SIFAT tartibida.
 
@@ -383,6 +425,10 @@ def _chat_request(payload, timeout=300, label=""):
     errors = []
     backoffs = [2, 5, 12]
     for nom, model, url, headers, max_out in attempts:
+        _qoldi = _cooldown_qoldi(nom)
+        if _qoldi:
+            errors.append(nom + ": limitda (" + str(_qoldi) + "s qoldi)")
+            continue
         body = dict(payload)
         body["model"] = model
         # max_tokens ni provayder chegarasiga bo'ysundiramiz — oshsa
@@ -410,9 +456,12 @@ def _chat_request(payload, timeout=300, label=""):
                     errors.append(nom + ": bo'sh javob")
                     break
                 if resp.status_code == 429:
-                    errors.append(nom + ": limit (429)")
-                    logging.warning("%s: %s limitga urildi — keyingi provayder",
-                                    label, nom)
+                    # Sovutishga qo'yamiz: parallel tozalashda 20 ta bo'lak
+                    # bir xil tugagan kvotani QAYTA-QAYTA sinamasin.
+                    _ra = (resp.headers.get("Retry-After")
+                           or resp.headers.get("retry-after") or 60)
+                    _cooldown_belgila(nom, _ra)
+                    errors.append(nom + ": kvota tugadi (429)")
                     break
                 if resp.status_code in (500, 502, 503, 504, 520) and attempt < 2:
                     time.sleep(backoffs[attempt])
@@ -3983,7 +4032,18 @@ def _try_transcribe(chunk_path, model, source_lang, url, headers, chunk_offset_s
             elif resp.status_code == 400:
                 err_text = resp.text[:200] if resp.text else "Unknown"
                 return None, f"HTTP 400: {err_text}"
-            elif resp.status_code in (429, 500, 502, 503, 504):
+            elif resp.status_code == 429:
+                # Kvota tugadi — qayta urinish BEFOYDA. Retry-After ni
+                # o'qib chaqiruvchiga aytamiz: u provayderni sovutishga
+                # qo'yadi va boshqasiga o'tadi.
+                ra = (resp.headers.get("Retry-After")
+                      or resp.headers.get("retry-after") or "")
+                try:
+                    kut = int(float(ra))
+                except (TypeError, ValueError):
+                    kut = 60
+                return None, "RATE_LIMIT:" + str(kut)
+            elif resp.status_code in (500, 502, 503, 504):
                 last_error = f"HTTP {resp.status_code} (urinish {attempt+1}/{MAX_RETRIES})"
                 logging.warning(f"Whisper {last_error}, {backoffs[attempt]}s kutamiz")
                 if attempt < MAX_RETRIES - 1:
@@ -4330,6 +4390,13 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
         # urinamiz. Bir marta urinib taslim bo'lish sifatni pasaytirardi.
         for rnd in range(1, STT_QUALITY_ROUNDS + 1):
             for nom, kind, model, a_url, a_headers, want_ts, a_langs in attempts:
+                # Limitga urilgan provayderni umuman chaqirmaymiz — boshqa
+                # bo'laklar allaqachon aniqlagan. Ilgari har bo'lak buni
+                # QAYTADAN kashf etardi (120s behuda kutish x 60 bo'lak).
+                _qoldi = _cooldown_qoldi(nom)
+                if _qoldi:
+                    errors.append(nom + ": limitda (" + str(_qoldi) + "s qoldi)")
+                    continue
                 if kind == "chat_audio":
                     text, err = _try_transcribe_audio_chat(chunk_path, source_lang,
                                                            a_headers)
@@ -4351,11 +4418,27 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
                     logging.warning("Bo'lak %s/%s %s: HALLUTSINATSIYA — tashlandi",
                                     idx, total, nom)
                 if err:
-                    errors.append(str(rnd) + "-tur " + nom + ": " + str(err))
+                    _rl = _rate_limit_soniya(err)
+                    if _rl is not None:
+                        _cooldown_belgila(nom, _rl)
+                        errors.append(str(rnd) + "-tur " + nom + ": kvota tugadi")
+                    else:
+                        errors.append(str(rnd) + "-tur " + nom + ": " + str(err))
             if rnd < STT_QUALITY_ROUNDS:
-                wait = STT_ROUND_WAITS[min(rnd - 1, len(STT_ROUND_WAITS) - 1)]
-                logging.warning("🔁 Bo'lak %s/%s: %s-turda sifatli natija yo'q, "
-                                "%ss kutib qayta urinamiz...", idx, total, rnd, wait)
+                # Hamma provayder limitda bo'lsa qisqa kutishning ma'nosi yo'q —
+                # kvota tiklanishini kutamiz. Aks holda oddiy turlar orasidagi
+                # pauza. Bu "matnda bo'shliq qolmasin" talabining bir qismi:
+                # kvota tufayli bo'lak yo'qolib ketmasligi kerak.
+                _qoldiqlar = [_cooldown_qoldi(a[0]) for a in attempts]
+                if _qoldiqlar and all(q > 0 for q in _qoldiqlar):
+                    wait = min(min(_qoldiqlar) + 2, 300)
+                    logging.warning("⏳ Bo'lak %s/%s: HAMMA provayder limitda — "
+                                    "kvota tiklanishini %ss kutamiz...",
+                                    idx, total, wait)
+                else:
+                    wait = STT_ROUND_WAITS[min(rnd - 1, len(STT_ROUND_WAITS) - 1)]
+                    logging.warning("🔁 Bo'lak %s/%s: %s-turda sifatli natija yo'q, "
+                                    "%ss kutib qayta urinamiz...", idx, total, rnd, wait)
                 time.sleep(wait)
 
         # Turlar tugadi. Toza (lekin qisqa) natija bo'lsa — u yetkaziladi.

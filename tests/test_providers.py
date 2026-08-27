@@ -116,10 +116,15 @@ print("[3] _chat_request — zaxiraga o'tish")
 
 
 class _R:
-    def __init__(self, code, payload=None, text=""):
+    # headers ATAYLAB bor: haqiqiy requests.Response'da u DOIM mavjud.
+    # Busiz 429 ishlovi AttributeError bilan yiqilib, xato "vaqtinchalik
+    # nosozlik" deb qayta urinilardi — test shu tufayli noto'g'ri
+    # xulosa berdi (bir chaqiruv o'rniga uchta).
+    def __init__(self, code, payload=None, text="", headers=None):
         self.status_code = code
         self._p = payload or {}
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         return self._p
@@ -142,12 +147,13 @@ def _post_429_keyin_ok(url, **kw):
     # qaytarmasdi, ya'ni test zaxiraga o'tishni umuman sinamasdi.
     _log.append(kw["json"]["model"])
     if kw["json"]["model"] == "gemini-3.5-flash":
-        return _R(429, text="quota")
+        return _R(429, text="quota", headers={"Retry-After": "30"})
     return _R(200, _javob("NATIJA"))
 
 
 set_keys(gemini="gm-test", groq="gk-test")
 _log.clear()
+bot._provider_cooldown.clear()
 bot.requests.post = _post_429_keyin_ok
 txt, err = bot._chat_request({"messages": []}, label="sinov")
 check("429 dan keyin natija olindi", txt == "NATIJA" and err is None, (txt, err))
@@ -155,6 +161,7 @@ check("birinchi model bir marta sinaldi, KUTILMADI (kvota tiklanmaydi)",
       _log.count("gemini-3.5-flash") == 1, _log)
 check("keyingi provayderga o'tdi", len(_log) >= 2, _log)
 
+bot._provider_cooldown.clear()
 bot.requests.post = lambda url, **kw: _R(500, text="server xato")
 txt, err = bot._chat_request({"messages": []})
 check("hamma yiqilsa matn YO'Q", txt is None, txt)
@@ -163,8 +170,46 @@ check("max_tokens provayder chegarasiga tushiriladi",
 check("xato sababi aytiladi", err and "500" in err, err)
 
 set_keys()
+bot._provider_cooldown.clear()
 txt, err = bot._chat_request({"messages": []})
 check("kalitsiz aniq xabar", txt is None and err and "kalit" in err.lower(), err)
+
+print("[3b] Kvota tugaganda provayder SOVUTISHGA qo'yiladi")
+# Bepul tarifda soatlik kvota bor (Groq: 7200 soniya audio/soat).
+# 3 soatlik ma'ruza undan OSHADI. 429 vaqtinchalik nosozlik EMAS —
+# soat tugagunicha tiklanmaydi. Ilgari har bo'lak buni qaytadan
+# kashf etardi: 120s behuda kutish x 60 bo'lak.
+bot._provider_cooldown.clear()
+set_keys(gemini="gm-test", groq="gk-test")
+_log.clear()
+bot.requests.post = _post_429_keyin_ok
+bot._chat_request({"messages": []})
+check("limitga urilgan provayder sovutishga qo'yildi",
+      bot._cooldown_qoldi("gemini-3.5-flash") > 0,
+      bot._cooldown_qoldi("gemini-3.5-flash"))
+check("Retry-After sarlavhasi HURMAT qilindi (30s)",
+      25 <= bot._cooldown_qoldi("gemini-3.5-flash") <= 32,
+      bot._cooldown_qoldi("gemini-3.5-flash"))
+
+# Ikkinchi chaqiruv limitdagi provayderni UMUMAN chaqirmasligi kerak
+_log.clear()
+txt2, err2 = bot._chat_request({"messages": []})
+check("keyingi so'rov limitdagi provayderni CHAQIRMAYDI",
+      "gemini-3.5-flash" not in _log, _log)
+check("lekin natija baribir olinadi (boshqa provayder)",
+      txt2 == "NATIJA", (txt2, err2))
+
+check("sovutish muddati chegaralangan (5..3600s)",
+      5 <= bot._cooldown_belgila("sinov-a", 999999) <= 3600)
+check("juda kichik qiymat ham chegaralanadi",
+      bot._cooldown_belgila("sinov-b", 1) >= 5)
+check("noto'g'ri qiymat xavfsiz (default)",
+      bot._cooldown_belgila("sinov-c", "yo'q") > 0)
+check("RATE_LIMIT xatosidan soniya ajratiladi",
+      bot._rate_limit_soniya("RATE_LIMIT:45") == "45")
+check("oddiy xato RATE_LIMIT deb o'qilmaydi",
+      bot._rate_limit_soniya("HTTP 500 server xato") is None)
+bot._provider_cooldown.clear()
 
 print("[4] Hallutsinatsiya detektori — sifat nazoratining asosi")
 _junk = " ".join(["rahmat"] * 60)
