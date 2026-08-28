@@ -3747,14 +3747,22 @@ def _cleanup_uzbek_transcript(text):
     # MUHIM: bitta gpt-4o chaqiruvi max 16k token chiqaradi. Uzun matnni butunlay
     # yuborsak, chiqish kesilib darsning OXIRI yo'qoladi (audio ham kalta chiqadi).
     # Shu sabab 9000 belgidan oshsa — bo'laklab tozalaymiz (har bo'lak xavfsiz sig'adi).
-    if len(text) > 9000:
+    # BO'LAK HAJMI — O'LCHOV ASOSIDA, taxmin emas:
+    #   8000 belgi bir chaqiruvda -> model 1196 belgi qaytardi (15%)
+    #                                qo'riqchi ushlaydi va TOZALANMAGAN
+    #                                asl matn yetkaziladi
+    #   2500 belgi bir chaqiruvda -> 2684 belgi (107%), to'g'ri tozalandi
+    # Ya'ni uzun ma'ruzalarda imlo tozalash UMUMAN ishlamas edi:
+    # "iqtisadiyat", "mawzusi", "maruza" kabi xatolar qolib ketardi.
+    # Aynan shu tarjimadagi xato bilan bir turdagi nosozlik.
+    if len(text) > 3000:
         words = text.split()
         chunks = []
         cur, count = [], 0
         for w in words:
             cur.append(w)
             count += len(w) + 1
-            if count >= 8000:
+            if count >= 2500:
                 chunks.append(" ".join(cur))
                 cur, count = [], 0
         if cur:
@@ -3885,7 +3893,26 @@ def _cleanup_uzbek_transcript_chunk(text):
     }
     # Model nomi ATAYLAB berilmaydi — uni _chat_request provayderga qarab
     # qo'yadi (Gemini Pro -> Flash -> GPT-4o -> Llama, SIFAT tartibida).
-    cleaned, err = _chat_request(payload, timeout=300, label="tozalash")
+    def _bajar():
+        return _chat_request(payload, timeout=300, label="tozalash")
+
+    def _yaroqli(t):
+        """Natija asl matnga o'lchamda yaqinmi."""
+        return bool(t) and len(text) * 0.5 <= len(t) <= len(text) * 1.5
+
+    cleaned, err = _bajar()
+    # QAYTA URINISH: model matnni tozalash o'rniga QISQARTIRIB yuborishi
+    # mumkin (o'lchandi: 8000 belgi -> 1196). Bunday holatda qo'riqchi
+    # asl matnni qaytarardi, ya'ni imlo TUZATILMAY qolardi va uzun
+    # ma'ruzalarda tozalash amalda ishlamas edi. Bir marta qayta
+    # urinish ko'p holatni qutqaradi (zanjir boshqa provayderga o'tishi
+    # ham mumkin).
+    if not err and not _yaroqli(cleaned):
+        logging.warning("Tozalash natijasi o'lchamsiz (%d->%d), qayta urinamiz",
+                        len(text), len(cleaned or ""))
+        cleaned2, err2 = _bajar()
+        if not err2 and _yaroqli(cleaned2):
+            cleaned, err = cleaned2, None
     if err:
         logging.warning("Uzbek cleanup bajarilmadi: %s", err)
         return text

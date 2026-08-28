@@ -470,5 +470,32 @@ for k, v in _saqla.items():
 for k, v in _saqla_g.items():
     setattr(bot, k, v)
 
+print("[13] Tozalash bo'lagi hajmi — imlo TUZATILMAY qolmasin")
+# O'LCHOV (taxmin emas): model uzun matnni tozalash o'rniga
+# QISQARTIRIB yuboradi va qo'riqchi asl matnni qaytaradi:
+#     8000 belgi -> model 1196 belgi qaytardi (15%) -> TOZALANMADI
+#     2500 belgi -> 2684 belgi (107%) -> to'g'ri tozalandi
+# Ya'ni uzun ma'ruzalarda imlo tozalash amalda ISHLAMAS edi.
+_cl_src = open(os.path.join(ROOT, "bot.py"), encoding="utf-8").read()
+_i_cl = _cl_src.index("def _cleanup_uzbek_transcript(")
+_cl = _cl_src[_i_cl:_i_cl + 3000]
+import re as _re3
+_hajm = [int(x) for x in _re3.findall(r"count >= (\d+)", _cl)]
+check("tozalash bo'lagi xavfsiz hajmda", _hajm and _hajm[0] <= 3000, _hajm)
+_chegara = [int(x) for x in _re3.findall(r"len\(text\) > (\d+)", _cl)]
+check("bo'laklash chegarasi ham pasaytirilgan",
+      _chegara and _chegara[0] <= 4000, _chegara)
+
+print("[14] Tozalash natijasi o'lchamsiz bo'lsa QAYTA urinadi")
+# Funksiya UZUN (prompt katta) — oxirini keyingi top-level def bo'yicha
+# topamiz, aks holda qayta urinish kodi oynadan tashqarida qolardi
+_i_ch = _cl_src.index("def _cleanup_uzbek_transcript_chunk(")
+_keyingi = _cl_src.find(chr(10) + "def ", _i_ch + 10)
+_chb = _cl_src[_i_ch:_keyingi if _keyingi > 0 else _i_ch + 20000]
+check("o'lcham nazorati bor", "_yaroqli" in _chb)
+check("qayta urinish bor", "qayta urinamiz" in _chb)
+check("baribir yaroqsiz bo'lsa ASL matn qaytadi", "return text" in _chb)
+
+
 print("\nNatija: " + str(ok) + " pass, " + str(fail) + " fail")
 sys.exit(1 if fail else 0)
