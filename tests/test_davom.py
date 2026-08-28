@@ -214,5 +214,17 @@ finally:
     except Exception:
         pass
 
+    print("[9] Foydalanuvchi /davom haqida BILISHI kerak")
+    # Hech kim bilmaydigan funksiya yarim qurilgan funksiya
+    check("Telegram buyruqlar ro'yxatida bor",
+          'BotCommand("davom"' in src)
+    check("/help matnida eslatiladi", "/davom" in src.split("def help_cmd")[1][:1500])
+    check("uzun ma'ruza haqida izoh bor",
+          "Uzun ma'ruza" in src.split("def help_cmd")[1][:1500])
+    check("tariflar matnida ham eslatiladi",
+          "/davom bilan davom etadi" in src)
+    check("qisman xabar /davom ni ko'rsatadi",
+          "/davom* buyrug" in src)
+
 print("\nNatija: " + str(ok) + " pass, " + str(fail) + " fail, " + str(skip) + " skip")
 sys.exit(1 if fail else 0)

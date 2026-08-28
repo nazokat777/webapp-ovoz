@@ -1853,6 +1853,8 @@ def format_tariffs_text():
     if free_line:
         lines.append(free_line)
         lines.append("_Hech narsa to'lash shart emas._")
+        lines.append("_Uzun audio limitga sig'masa, qolgan qismi "
+                     "saqlanadi va ertaga /davom bilan davom etadi._")
 
     # Premium — Muxlisa AI: o'zbek tiliga MAXSUS qurilgan, pullik xizmat
     lines.append("\n👑 *Premium* — o'zbek tili uchun eng yuqori aniqlik:")
@@ -8201,12 +8203,17 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• 🎤 Audio / video → matn\n"
         "• 📄 PDF → ovoz (TTS)\n"
         "• 📝 Matn → ovoz (TTS)\n"
-        "• 🔗 YouTube / TikTok / Instagram havolasi → matn\n\n"
+        "• 🔗 YouTube / TikTok / Instagram havolasi → matn\n"
+        "\n⏳ *Uzun ma'ruza (2-3 soat)?*\n"
+        "Kunlik limitga sig'magan qismi saqlanadi — ertaga */davom* "
+        "yuborsangiz aynan to'xtagan joydan davom etadi. Faylni qayta "
+        "yuborish shart emas.\n\n"
         "📌 *Buyruqlar:*\n"
         "• 📊 Balansim — qoldiq daqiqalarim\n"
         "• 💎 Tariflar — narxlar ro'yxati\n"
         "• 💳 Sotib olish — tarif olish\n"
         "• 💬 Murojaat — savol/taklif yuborish\n"
+        "• /davom — uzun audioning qolgan qismi\n"
         "• /lang uz/ru/en — bot tilini tanlash\n\n"
         "💡 *Murojaat yuborish:*\n"
         "Pastdagi 💬 *Murojaat* tugmasini bosing va xabar yozing — javob shu chatga keladi."
@@ -10674,6 +10681,7 @@ def main():
                 BotCommand("buy",      "Tarif sotib olish"),
                 BotCommand("tavsiya",  "🎁 Do'st taklif — bonus daqiqalar"),
                 BotCommand("tarjima",  "🌐 Xorijiy tildan tarjima"),
+                BotCommand("davom",    "⏭ Uzun audioning davomi"),
                 BotCommand("lang",     "Til tanlash: uz / ru / en"),
                 BotCommand("feedback", "Murojaat / shikoyat"),
                 BotCommand("help",     "Yordam"),
