@@ -201,6 +201,72 @@ try:
           'CommandHandler("davom", davom_cmd)' in src)
     check("davom holati SAQLANADI (qayta ishga tushirishdan omon)",
           '"davom_holati"' in src)
+    print("[10] /davom BUYRUG'I — to'liq oqim (soxta Telegram bilan)")
+    import asyncio as _aio2
+
+    class _SoxtaMsg2:
+        def __init__(self, javoblar):
+            self._j = javoblar
+
+        async def edit_text(self, t, **k):
+            self._j.append(("edit", t))
+
+    class _SoxtaXabar:
+        def __init__(self, javoblar):
+            self._j = javoblar
+            self.text = "/davom"
+
+        async def reply_text(self, t, **k):
+            self._j.append(("reply", t))
+            return _SoxtaMsg2(self._j)
+
+    class _SoxtaUpd:
+        def __init__(self, uid, javoblar):
+            self.effective_user = type("u", (), {"id": uid, "username": None})()
+            self.effective_chat = type("c", (), {"id": uid})()
+            self.message = _SoxtaXabar(javoblar)
+
+    class _SoxtaCtx2:
+        def __init__(self):
+            self.bot = None
+
+    def _yugurt(uid):
+        j = []
+        _aio2.run(bot.davom_cmd(_SoxtaUpd(uid, j), _SoxtaCtx2()))
+        return " | ".join(t for _, t in j)
+
+    # 1) Davom ettiriladigan audio YO'Q
+    tozala()
+    javob = _yugurt(U)
+    check("holat yo'q -> tushunarli xabar",
+          "Davom ettiriladigan audio yo'q" in javob, javob[:90])
+    check("nima uchun ishlashi tushuntiriladi",
+          "limitga sig'magan" in javob, javob[:120])
+
+    # 2) Audio allaqachon to'liq ishlangan
+    tozala()
+    bot.davom_saqlash(U, "havola", "https://y.be/x", 1800, 1800, "t")
+    javob = _yugurt(U)
+    check("tugagan audio -> aytiladi", "to'liq qayta ishlangan" in javob, javob[:80])
+    check("holat tozalandi", U not in bot.davom_holati)
+
+    # 3) Bugungi limit tugagan
+    tozala()
+    bot.davom_saqlash(U, "havola", "https://y.be/x", 600, 1800, "t")
+    bot.add_user_usage(U, 60 * 60)
+    javob = _yugurt(U)
+    check("limit tugagan -> rad etiladi", "Limit tugadi" in javob, javob[:80])
+    check("holat SAQLANIB qoladi (ertaga kerak)", U in bot.davom_holati)
+
+    # 4) Saqlangan fayl yo'qolgan (TTL o'tgan)
+    tozala()
+    bot.davom_saqlash(U, "fayl", os.path.join(_tmp, "yoq_bunday.mp3"),
+                      600, 1800, "t")
+    javob = _yugurt(U)
+    check("yo'qolgan fayl -> aniq sabab",
+          "topilmadi" in javob and "qaytadan yuboring" in javob, javob[:120])
+    check("yaroqsiz holat tozalandi", U not in bot.davom_holati)
+    tozala()
 finally:
     bot._save_user_data = _eski_save
     tozala()
