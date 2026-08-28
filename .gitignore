@@ -15,3 +15,6 @@ memory/
 venv/
 .vscode/
 .idea/
+
+# Davom ettirish uchun saqlangan audio (vaqtinchalik, katta)
+davomi/
