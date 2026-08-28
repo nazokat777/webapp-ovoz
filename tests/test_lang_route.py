@@ -185,5 +185,86 @@ check("aniqlash yiqilsa transkripsiya TO'XTAMAYDI",
       "til aniqlanmasa ham matn olinishi kerak")
 
 
+print("[9] Tarjima bo'lagi hajmi — matn YO'QOLMASLIGI uchun")
+# O'LCHOV (taxmin emas): model uzun matnni tarjima qilish o'rniga
+# QISQARTIRIB yuboradi.
+#     2400 so'z bir chaqiruvda ->  115 so'z (5%)
+#      600 so'z bir chaqiruvda ->  638 so'z (106%)
+# Ilgari chegara 3000 edi va 12 daqiqalik videoning 70% i JIMGINA
+# yo'qolardi — foydalanuvchi to'liq konspekt olgan deb o'ylardi.
+check("bo'lak hajmi xavfsiz chegarada", bot.CLAUDE_CHUNK_WORDS <= 1000,
+      bot.CLAUDE_CHUNK_WORDS)
+check("bo'lak hajmi juda mayda ham emas (ortiqcha chaqiruv)",
+      bot.CLAUDE_CHUNK_WORDS >= 300, bot.CLAUDE_CHUNK_WORDS)
+
+print("[10] Uzun matn tarjimasi: TARTIB, TO'LIQLIK, PARALLELLIK")
+import threading as _th3
+
+_asl_gpt = bot._gpt_translate_with_retry
+_faol2 = {"hozir": 0, "cho_qqi": 0}
+_lk2 = _th3.Lock()
+
+
+def _soxta_gpt(chunk, src, tgt):
+    with _lk2:
+        _faol2["hozir"] += 1
+        _faol2["cho_qqi"] = max(_faol2["cho_qqi"], _faol2["hozir"])
+    _real_sleep2(0.05)
+    with _lk2:
+        _faol2["hozir"] -= 1
+    return "[T]" + chunk
+
+
+import time as _t3
+_real_sleep2 = _t3.sleep
+bot._gpt_translate_with_retry = _soxta_gpt
+try:
+    _soz = " ".join("w" + str(i) for i in range(2000))
+    _yoq2 = []
+    _natija2 = bot.translate_with_claude(_soz, "ru", None, "uz", _yoq2)
+    check("uzun matn bo'laklandi", _natija2.count("[T]") >= 3,
+          _natija2.count("[T]"))
+    check("PARALLEL bajarildi", _faol2["cho_qqi"] > 1, _faol2["cho_qqi"])
+    # Soxta tarjimon "[T]" ni birinchi so'zga YOPISHTIRIB qaytaradi,
+    # shuning uchun birinchi token "[T]w0" bo'ladi
+    check("birinchi so'z BOSHIDA", _natija2.split()[0] == "[T]w0",
+          _natija2.split()[:3])
+    check("oxirgi so'z OXIRIDA", _natija2.split()[-1] == "w1999",
+          _natija2.split()[-3:])
+    check("HECH BIR so'z yo'qolmadi",
+          all(("w" + str(i)) in _natija2 for i in (0, 700, 1400, 1999)))
+    check("yo'qolgan bo'lak yo'q", _yoq2 == [], _yoq2)
+
+    print("[11] QISQARIB qolgan bo'lak ushlanadi va qayta urinmiladi")
+    _urinish = {"n": 0}
+
+    def _qisqartiruvchi(chunk, src, tgt):
+        _urinish["n"] += 1
+        # Birinchi urinishda qisqartirib yuboradi, ikkinchisida to'g'ri
+        if _urinish["n"] % 2 == 1:
+            return " ".join(chunk.split()[:5])
+        return "[T]" + chunk
+
+    bot._gpt_translate_with_retry = _qisqartiruvchi
+    _yoq3 = []
+    _n3 = bot.translate_with_claude(_soz, "ru", None, "uz", _yoq3)
+    check("qisqargan bo'lak QAYTA urinildi",
+          _urinish["n"] > len(_soz.split()) // bot.CLAUDE_CHUNK_WORDS,
+          _urinish["n"])
+    check("qayta urinishdan keyin matn to'liq",
+          "w1999" in _n3 and "w0" in _n3, _n3[-40:])
+
+    print("[12] Doim qisqartirsa — yo'qolgan bo'lak E'LON QILINADI")
+    bot._gpt_translate_with_retry = lambda c, s, t: " ".join(c.split()[:3])
+    _yoq4 = []
+    try:
+        _n4 = bot.translate_with_claude(_soz, "ru", None, "uz", _yoq4)
+        _xato4 = None
+    except Exception as e:
+        _n4, _xato4 = None, str(e)
+    check("30% dan ko'p yiqilsa ANIQ istisno (jim qisqa matn emas)",
+          _xato4 is not None and "yiqildi" in _xato4.lower(), _xato4)
+finally:
+    bot._gpt_translate_with_retry = _asl_gpt
 print("\nNatija: " + str(ok) + " pass, " + str(fail) + " fail")
 sys.exit(1 if fail else 0)

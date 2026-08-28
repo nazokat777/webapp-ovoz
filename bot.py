@@ -3164,7 +3164,11 @@ GROQ_STT_LANGS = WHISPER_SUPPORTED_LANGS | {"uz"}
 
 WHISPER_MAX_FILE_MB = 22        # 22 MB dan oshganda bo'laklash (25 MB Whisper chegarasi - 3 MB margin)
 WHISPER_CHUNK_BITRATE = "64k"   # 64 kbps mono — 10 daqiqa ≈ 4.8 MB
-CLAUDE_CHUNK_WORDS = 3000       # GPT-4o uchun 3000 so'z (16k token output limitida xavfsiz)
+CLAUDE_CHUNK_WORDS = 600       # O'LCHOV ASOSIDA, taxmin emas:
+#   2400 so'z bir chaqiruvda ->  115 so'z qaytdi (5% — model TARJIMA
+#                                 o'rniga QISQARTIRIB yuboradi)
+#    600 so'z bir chaqiruvda ->  638 so'z (106% — to'liq)
+# Ilgari 3000 edi va uzun ma'ruzaning 70% i JIMGINA yo'qolardi.
 
 
 def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
@@ -4926,23 +4930,57 @@ def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz",
     chunks = []
     for i in range(0, len(words), CLAUDE_CHUNK_WORDS):
         chunks.append(" ".join(words[i:i + CLAUDE_CHUNK_WORDS]))
-    logging.info(f"🔪 GPT bo'laklash: {len(words)} so'z → {len(chunks)} bo'lak (target: {target_lang})")
+    logging.info("🔪 Tarjima bo'laklash: %d so'z → %d bo'lak (target: %s)",
+                 len(words), len(chunks), target_lang)
 
-    translations = []
+    translations = [""] * len(chunks)
     failed_chunks = []
-    for idx, chunk in enumerate(chunks, 1):
-        if progress_cb:
-            try: progress_cb(idx, len(chunks))
-            except Exception: pass
+    tugadi = {"n": 0}
+    tugadi_lock = threading.Lock()
+
+    def _bir_bolak(idx_chunk):
+        """Bitta bo'lakni tarjima qiladi. Returns (indeks, matn, xato)."""
+        i, chunk = idx_chunk
         try:
-            result = _gpt_translate_with_retry(chunk, source_lang, target_lang)
-            translations.append(result)
-            logging.info(f"   ✅ bo'lak {idx}/{len(chunks)} tarjima qilindi ({len(result)} belgi)")
+            natija = _gpt_translate_with_retry(chunk, source_lang, target_lang)
+            # TO'LIQLIK NAZORATI: model uzun matnni tarjima qilish o'rniga
+            # QISQARTIRIB yuborishi mumkin (o'lchandi: 2400 so'z -> 115).
+            # Bo'lak darajasida ushlash muhim — butun matn buzilmasin.
+            k, c = len(chunk.split()), len((natija or "").split())
+            if k >= 100 and c < k * 0.5:
+                logging.warning("Tarjima bo'lagi %d QISQARDI (%d->%d), "
+                                "qayta urinamiz", i + 1, k, c)
+                natija = _gpt_translate_with_retry(chunk, source_lang, target_lang)
+                c = len((natija or "").split())
+                if c < k * 0.5:
+                    raise Exception("bo'lak qisqarib qoldi: " + str(k)
+                                    + " -> " + str(c) + " so'z")
+            return i, natija, None
         except Exception as e:
-            logging.error(f"GPT bo'lak {idx}/{len(chunks)} 3 marta ham yiqildi: {e}")
-            failed_chunks.append((idx, str(e)[:100]))
-            # Bo'lakni saqlab qolamiz, lekin xato deb belgilaymiz
-            translations.append("")  # bo'sh joy
+            return i, None, str(e)[:100]
+
+    # PARALLEL: bo'laklar ketma-ket tarjima qilinardi. Bo'lak hajmi
+    # xavfsiz darajaga tushirilgach (model uzun matnni qisqartirmasligi
+    # uchun) bo'laklar soni oshdi — 3 soatlik ma'ruza ~40 bo'lak, ya'ni
+    # ketma-ket ~17 daqiqa kutish. 3 oqim ATAYLAB: bepul Gemini
+    # daqiqasiga ~15 so'rovga ruxsat beradi, oshgani 429 olib Groq'ga
+    # o'tadi (zanjir shuni hal qiladi).
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        for i, natija, xato in ex.map(_bir_bolak, list(enumerate(chunks))):
+            if xato:
+                logging.error("Tarjima bo'lagi %d/%d yiqildi: %s",
+                              i + 1, len(chunks), xato)
+                failed_chunks.append((i + 1, xato))
+            else:
+                translations[i] = natija or ""
+            with tugadi_lock:
+                tugadi["n"] += 1
+                if progress_cb:
+                    try:
+                        progress_cb(tugadi["n"], len(chunks))
+                    except Exception:
+                        pass
 
     # Agar 30% dan ko'p bo'lak yiqilgan bo'lsa — butun tarjima xato
     if len(failed_chunks) > len(chunks) * 0.3:
@@ -4952,10 +4990,12 @@ def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz",
             f"Misol: {err_msg}"
         )
 
-    # Bo'sh bo'laklarni o'chiramiz va birlashtiramiz
+    # Bo'sh bo'laklarni o'chiramiz va birlashtiramiz (TARTIB saqlanadi —
+    # natijalar indeks bo'yicha joylangan)
     result = "\n\n".join([t for t in translations if t])
     if failed_chunks:
-        logging.warning(f"⚠️ {len(failed_chunks)} bo'lak yo'qoldi, lekin asosiy tarjima yetkazildi")
+        logging.warning("⚠️ %d bo'lak yo'qoldi, lekin asosiy tarjima yetkazildi",
+                        len(failed_chunks))
         if lost_chunks_out is not None:
             lost_chunks_out.append((len(failed_chunks), len(chunks)))
     return result
