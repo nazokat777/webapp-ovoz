@@ -8745,10 +8745,39 @@ def ensure_uzbek_text(user_id, text, notify=True):
         except Exception:
             pass
     try:
+        # lost_chunks_out BERILISHI SHART: translate_with_claude bo'laklarning
+        # 30% gacha qismini JIMGINA tashlab ketishi mumkin. Ro'yxat
+        # berilmasa foydalanuvchi to'liq matn olgan deb o'ylab qoladi.
+        yoqolgan = []
         tarjima = translate_with_claude(
             text, source_lang=(til if til in ("ru", "en") else "auto"),
-            target_lang="uz")
+            target_lang="uz", lost_chunks_out=yoqolgan)
+        if yoqolgan and notify:
+            try:
+                telegram_send_message(user_id, _format_lost_chunks_text(yoqolgan))
+            except Exception:
+                pass
         if tarjima and tarjima.strip():
+            # TO'LIQLIK NAZORATI: tarjima aslidan keskin qisqarsa, demak
+            # matnning bir qismi yo'qolgan. Bunday natijani jim yetkazish
+            # eng yomon holat — foydalanuvchi to'liq konspekt olgan deb
+            # o'ylaydi va yo'qolganini bilmaydi.
+            asl_soz = len(text.split())
+            yangi_soz = len(tarjima.split())
+            if asl_soz >= 100 and yangi_soz < asl_soz * 0.5:
+                logging.error("Tarjima KESKIN QISQARDI: %d -> %d so'z",
+                              asl_soz, yangi_soz)
+                if notify:
+                    try:
+                        telegram_send_message(
+                            user_id,
+                            "⚠️ Tarjimada matnning bir qismi yo'qoldi "
+                            "(" + str(asl_soz) + " -> " + str(yangi_soz) +
+                            " so'z). Ishonchli bo'lishi uchun matn ASL "
+                            "tilida yuborilmoqda.")
+                    except Exception:
+                        pass
+                return text
             return tarjima
         logging.warning("Tarjima bo'sh qaytdi — asl matn yetkaziladi")
     except Exception as e:
