@@ -4951,7 +4951,17 @@ def translate_with_claude(text, source_lang, progress_cb=None, target_lang="uz",
         if progress_cb:
             try: progress_cb(1, 1)
             except Exception: pass
-        return _gpt_translate_with_retry(text, source_lang, target_lang)
+        natija = _gpt_translate_with_retry(text, source_lang, target_lang)
+        # TO'LIQLIK NAZORATI qisqa yo'lda ham kerak: model qisqa matnni
+        # ham qisqartirib yuborishi mumkin. Uzun yo'lda bu tekshiruv bor
+        # edi, qisqa yo'lda esa yo'q — natija jimgina chala qolardi.
+        k, c = len(words), len((natija or "").split())
+        if k >= 100 and c < k * 0.5:
+            logging.warning("Tarjima QISQARDI (%d->%d), qayta urinamiz", k, c)
+            natija2 = _gpt_translate_with_retry(text, source_lang, target_lang)
+            if len((natija2 or "").split()) > c:
+                natija = natija2
+        return natija
 
     # Uzun matn — bo'laklarga ajratamiz (so'zlar chegarasida)
     chunks = []
