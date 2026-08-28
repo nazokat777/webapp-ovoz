@@ -255,5 +255,29 @@ _yoq = [y for y in _yollar
 check("har bir yo'l mavjud faylga ishora qiladi", not _yoq, _yoq)
 _tab = [l for l in _bat2.split("\n") if "\t" in l]
 check("skriptda yashirin TAB yo'q (buzilgan yo'l belgisi)", not _tab, _tab[:2])
+print("[12] Server o'rnatish skripti (Linux uchun)")
+# .sh fayl CRLF bo'lsa Linux uni umuman ishga tushira olmaydi:
+#   "bad interpreter: /usr/bin/env bash^M"
+# Bu .bat dagi CRLF talabining aynan aksi — ikkalasi ham jimgina buzadi.
+_sh = os.path.join(ROOT, "tools", "server_setup.sh")
+check("server_setup.sh mavjud", os.path.exists(_sh))
+if os.path.exists(_sh):
+    _xom = open(_sh, "rb").read()
+    _crlf = (chr(13) + chr(10)).encode()
+    check("LF qator oxirlari (CRLF EMAS)", _crlf not in _xom,
+          "CRLF bo'lsa Linux ishga tushira olmaydi")
+    check("shebang joyida", _xom.startswith(b"#!"), _xom[:20])
+    _matn = _xom.decode("utf-8")
+    check("Docker restart siyosati bor", "--restart=always" in _matn,
+          "server qayta yuklansa bot o'zi ko'tarilishi kerak")
+    check("doimiy disk ulanadi", "-v /data:/data" in _matn,
+          "busiz tariflar har deploy'da yo'qoladi")
+    check("kalitlar kodga yozilmagan",
+          "gsk_" not in _matn and "AIza" not in _matn
+          and ":AAE" not in _matn, "sir kodga tushib qolgan!")
+_ga = open(os.path.join(ROOT, ".gitattributes"), encoding="utf-8").read()
+check(".gitattributes .sh ni LF da ushlab turadi", "*.sh text eol=lf" in _ga)
+
+
 print("\nNatija: " + str(ok) + " pass, " + str(fail) + " fail")
 sys.exit(1 if fail else 0)

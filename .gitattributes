@@ -8,3 +8,8 @@
 *.py text eol=lf
 *.md text eol=lf
 *.html text eol=lf
+
+# Linux skriptlari HAR DOIM LF bo'lishi shart. CRLF bo'lsa bash uni
+# umuman ishga tushira olmaydi ("bad interpreter: /usr/bin/env bash^M").
+# Bu .bat dagi teskari muammoning aynan aksi.
+*.sh text eol=lf
