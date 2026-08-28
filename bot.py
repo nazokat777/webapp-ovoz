@@ -1124,6 +1124,12 @@ def _load_user_data():
                 user_referrals[int(k)] = int(v)
             except (ValueError, TypeError) as _e:
                 _skip("yozuv", k, _e)
+        for k, v in (data.get("davom_holati") or {}).items():
+            try:
+                if isinstance(v, dict) and v.get("qiymat"):
+                    davom_holati[int(k)] = v
+            except (ValueError, TypeError) as _e:
+                _skip("yozuv", k, _e)
         for k, v in (data.get("user_daily_usage") or {}).items():
             try:
                 user_daily_usage[int(k)] = [str(v[0]), int(v[1])]
@@ -1182,6 +1188,7 @@ def _save_user_data():
                 "user_webapp_seen": {str(k): v for k, v in user_webapp_seen.items()},
                 "user_daily_usage": {str(k): [v[0], int(v[1])]
                                      for k, v in user_daily_usage.items()},
+                "davom_holati": {str(k): v for k, v in davom_holati.items()},
                 "runtime_settings": dict(runtime_settings),
             }
 
@@ -5370,28 +5377,37 @@ async def process_url(update, context, url, language="uz"):
         except Exception:
             actual_duration = 0
 
-        # Limit qaytadan tekshirish (real davomiyligi bilan)
+        # LIMITGA MOSLASH: ilgari sig'magan video BUTUNLAY rad etilardi —
+        # 3 soatlik ma'ruza yuborgan bepul foydalanuvchi hech narsa
+        # olmasdi. Endi qolgan limit qancha bo'lsa, shuncha qismi qayta
+        # ishlanadi va qolgani /davom bilan ertaga davom ettiriladi.
+        qisman_matn = None
         if not is_admin(update) and actual_duration > 0:
             user_id = update.effective_user.id
-            used = get_user_usage_sec(user_id)
-            limit = get_user_limit_sec(user_id)
-            tariff = TARIFFS[get_user_tariff(user_id)]
-            if used + actual_duration > limit:
-                rem = max(0, limit - used) / 60
+            jami_sek = actual_duration
+            mos = await asyncio.to_thread(
+                limitga_moslash, user_id, audio_path, jami_sek, 0,
+                "havola", url, url[:100])
+            if mos.get("sabab"):
                 await msg.edit_text(
-                    f"⚠️ *Bu video limitga sig'maydi!*\n\n"
-                    f"🌸 Tarif: {tariff['name']}\n"
-                    f"📊 Ishlatilgan: {used/60:.1f} / {tariff['minutes']} daqiqa\n"
-                    f"⏳ Bu video: {actual_duration/60:.1f} daqiqa\n"
-                    f"📉 Qoldiq: {rem:.1f} daqiqa\n\n"
-                    f"💎 Yuqori tarif: /tariflar",
-                    parse_mode="Markdown"
-                )
+                    limit_rad_xabari(mos["sabab"], user_id, mos.get("qolgan", 0)),
+                    parse_mode="Markdown")
                 return
+            audio_path = mos["path"]
+            actual_duration = mos["uzunlik"]
+            qisman_matn = qisman_xabar(mos, jami_sek, 0)
 
         await msg.edit_text("✅ Yuklanidi! 🎙 Matn tanilmoqda...")
 
         await _transcribe_flow(update, msg, audio_path, language, actual_duration)
+        if qisman_matn:
+            # Matn yetkazilgandan KEYIN aytamiz — foydalanuvchi avval
+            # natijani ko'rsin, keyin davomi haqida bilsin
+            try:
+                await update.message.reply_text(qisman_matn,
+                                                parse_mode="Markdown")
+            except Exception as e:
+                logging.warning("Qisman xabar yuborilmadi: %s", e)
     except Exception as e:
         logging.error(f"URL xato: {e}")
         await msg.edit_text(f"❌ Xato: {str(e)[:300]}")
@@ -6467,6 +6483,94 @@ async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "✅ Limitlar tiklandi." + chr(10)
         + "• Umumiy hisob: " + str(n) + " ta foydalanuvchi" + chr(10)
         + "• Kunlik hisob: " + str(kunlik) + " ta foydalanuvchi")
+
+
+@busy_guard
+async def davom_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/davom — limitga sig'magan audioning QOLGAN qismini davom ettiradi.
+
+    Bepul tarifda kunlik 60 daqiqa, institut ma'ruzasi esa 2-3 soat.
+    Birinchi kuni qolgan limit qancha bo'lsa shuncha qismi qayta ishlanadi
+    va aynan to'xtagan joyi saqlanadi. Ertaga bu buyruq o'sha joydan
+    davom ettiradi — foydalanuvchi faylni qayta yuborishi shart emas.
+    """
+    user_id = update.effective_user.id
+    holat = davom_holati.get(int(user_id))
+    if not holat:
+        await update.message.reply_text(
+            "ℹ️ Davom ettiriladigan audio yo'q.\n\n"
+            "Bu buyruq faqat limitga sig'magan uzun audiodan keyin ishlaydi: "
+            "o'shanda men to'xtagan joyni eslab qolaman."
+        )
+        return
+
+    boshi = int(holat.get("keyingi") or 0)
+    jami = int(holat.get("jami") or 0)
+    if boshi >= jami:
+        davom_ochirish(user_id)
+        await update.message.reply_text("✅ Bu audio to'liq qayta ishlangan.")
+        return
+
+    qolgan = qolgan_limit_sec(user_id)
+    if qolgan < DAVOM_MIN_SEK:
+        await update.message.reply_text(
+            limit_rad_xabari("juda_kam" if qolgan > 0 else "limit_tugadi",
+                             user_id, qolgan),
+            parse_mode="Markdown")
+        return
+
+    msg = await update.message.reply_text(
+        "🔄 " + _vaqt_matni(boshi) + " dan davom ettirilmoqda...")
+
+    manba = holat.get("manba")
+    qiymat = holat.get("qiymat")
+    vaqtinchalik = None
+    try:
+        if manba == "havola":
+            await msg.edit_text("📥 Audio qaytadan yuklanmoqda...")
+            asos = await _run_heavy(download_audio_from_url, qiymat)
+            vaqtinchalik = os.path.dirname(asos)
+        else:
+            asos = qiymat
+            if not asos or not os.path.exists(asos):
+                davom_ochirish(user_id)
+                await msg.edit_text(
+                    "⚠️ Saqlangan audio topilmadi (muddati o'tgan bo'lishi "
+                    "mumkin). Iltimos, faylni qaytadan yuboring.")
+                return
+
+        mos = await asyncio.to_thread(
+            limitga_moslash, user_id, asos, jami, boshi, manba, qiymat,
+            holat.get("nom", ""))
+        if mos.get("sabab"):
+            await msg.edit_text(
+                limit_rad_xabari(mos["sabab"], user_id, mos.get("qolgan", 0)),
+                parse_mode="Markdown")
+            return
+
+        await msg.edit_text("🎙 Matn tayyorlanmoqda...")
+        await _transcribe_flow(update, msg, mos["path"], "uz", mos["uzunlik"])
+
+        tayyor = boshi + int(mos["uzunlik"])
+        if mos.get("qisman") and tayyor < jami:
+            # Hali ham qolgan qismi bor — holat yangilandi (limitga_moslash
+            # ichida), foydalanuvchiga aytamiz
+            await update.message.reply_text(
+                qisman_xabar(mos, jami, boshi), parse_mode="Markdown")
+        else:
+            davom_ochirish(user_id)
+            await update.message.reply_text(
+                "✅ *Audio to'liq tayyor.*\n\n"
+                "Jami: " + _vaqt_matni(jami), parse_mode="Markdown")
+    except Exception as e:
+        logging.error("Davom xato: %s", e)
+        try:
+            await msg.edit_text("❌ Davom ettirib bo'lmadi: " + str(e)[:200])
+        except Exception:
+            pass
+    finally:
+        if vaqtinchalik:
+            shutil.rmtree(vaqtinchalik, ignore_errors=True)
 
 
 async def tariflar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -8985,6 +9089,255 @@ def _is_admin_id(user_id):
     return ADMIN_CHAT_ID["id"] is not None and uid == ADMIN_CHAT_ID["id"]
 
 
+# ── QISMAN QAYTA ISHLASH VA DAVOM ETTIRISH ──────────────────────────────
+# MUAMMO: bepul tarifda kunlik 60 daqiqa, institut ma'ruzasi esa 2-3 soat.
+# Ilgari bunday fayl BUTUNLAY rad etilardi — foydalanuvchi hech narsa
+# olmasdi. Endi qolgan limit qancha bo'lsa, shuncha qismi qayta ishlanadi,
+# qayerda to'xtagani aytiladi va ertasi kuni AYNAN o'sha joydan davom
+# ettirish mumkin.
+#
+# Audio nusxasi saqlanadi (siqilgan, 64kbps mono — 3 soatlik ma'ruza ~85 MB).
+# Havoladan kelgan bo'lsa faqat HAVOLA saqlanadi: qayta yuklab olish
+# 85 MB diskdan arzonroq.
+DAVOM_DIR = os.path.join(os.path.dirname(os.path.abspath(DATA_FILE)), "davomi")
+DAVOM_TTL_KUN = 7          # shuncha kundan keyin fayl o'chiriladi
+DAVOM_MIN_SEK = 300        # 5 daqiqadan kam qolgan bo'lsa boshlash ma'nosiz
+DAVOM_MAX_MB = 2000        # papka shundan oshsa eng eskilari o'chiriladi
+
+# {user_id: {"manba": "fayl"|"havola", "qiymat": path/url,
+#            "keyingi": sek, "jami": sek, "nom": str, "vaqt": ts}}
+davom_holati = {}
+
+
+def _davom_papka():
+    try:
+        os.makedirs(DAVOM_DIR, exist_ok=True)
+    except Exception as e:
+        logging.warning("davomi papkasini yaratib bo'lmadi: %s", e)
+    return DAVOM_DIR
+
+
+def davom_tozalash():
+    """Eski va ortiqcha fayllarni o'chiradi — disk to'lib qolmasin."""
+    if not os.path.isdir(DAVOM_DIR):
+        return 0
+    endi = time.time()
+    ochirildi = 0
+    fayllar = []
+    for nom in os.listdir(DAVOM_DIR):
+        yol = os.path.join(DAVOM_DIR, nom)
+        try:
+            st = os.stat(yol)
+        except OSError:
+            continue
+        if endi - st.st_mtime > DAVOM_TTL_KUN * 86400:
+            try:
+                os.remove(yol)
+                ochirildi += 1
+            except OSError:
+                pass
+        else:
+            fayllar.append((st.st_mtime, st.st_size, yol))
+    # Hajm chegarasi: eng eskilaridan o'chiramiz
+    jami = sum(f[1] for f in fayllar)
+    fayllar.sort()
+    while jami > DAVOM_MAX_MB * 1024 * 1024 and fayllar:
+        _, hajm, yol = fayllar.pop(0)
+        try:
+            os.remove(yol)
+            jami -= hajm
+            ochirildi += 1
+        except OSError:
+            break
+    if ochirildi:
+        logging.info("🧹 davomi: %d ta eski fayl o'chirildi", ochirildi)
+    return ochirildi
+
+
+def davom_kesish(path, start_sec, length_sec):
+    """[start, start+length] oralig'ini kesib, yangi fayl yo'lini qaytaradi.
+
+    Qayta kodlanadi (copy emas): copy stream kalit kadrga tekislaydi va
+    boshlanish nuqtasi bir necha soniyaga siljib ketishi mumkin — davom
+    ettirishda bu so'zlarni yo'qotardi yoki takrorlardi.
+    """
+    if start_sec <= 0 and length_sec <= 0:
+        return path
+    chiqish = os.path.join(
+        tempfile.mkdtemp(prefix="davom_"),
+        "qism_" + str(int(start_sec)) + ".mp3")
+    cmd = ["ffmpeg", "-y", "-v", "error",
+           "-ss", str(int(start_sec)), "-i", path]
+    if length_sec and length_sec > 0:
+        cmd += ["-t", str(int(length_sec))]
+    cmd += ["-vn", "-ac", "1", "-ar", "16000",
+            "-acodec", "libmp3lame", "-b:a", WHISPER_CHUNK_BITRATE, chiqish]
+    subprocess.run(cmd, check=True, capture_output=True, timeout=1800)
+    if not os.path.exists(chiqish) or os.path.getsize(chiqish) < 1000:
+        raise Exception("kesilgan qism bo'sh chiqdi")
+    return chiqish
+
+
+def qolgan_limit_sec(user_id):
+    """Foydalanuvchida bugun qancha soniya qolgan."""
+    if _is_admin_id(user_id):
+        return 10 ** 9
+    return max(0, get_user_limit_sec(user_id) - get_user_usage_sec(user_id))
+
+
+def davom_saqlash(user_id, manba_turi, qiymat, keyingi_sek, jami_sek, nom=""):
+    """Davom holatini yozadi. manba_turi: 'fayl' yoki 'havola'."""
+    davom_holati[int(user_id)] = {
+        "manba": manba_turi,
+        "qiymat": qiymat,
+        "keyingi": int(keyingi_sek),
+        "jami": int(jami_sek),
+        "nom": (nom or "")[:120],
+        "vaqt": int(time.time()),
+    }
+    try:
+        _save_user_data()
+    except Exception:
+        pass
+
+
+def davom_ochirish(user_id):
+    h = davom_holati.pop(int(user_id), None)
+    if h and h.get("manba") == "fayl":
+        try:
+            os.remove(h.get("qiymat") or "")
+        except OSError:
+            pass
+    try:
+        _save_user_data()
+    except Exception:
+        pass
+    return h
+
+
+def _vaqt_matni(sek):
+    """Soniyani '1 soat 5 daqiqa' ko'rinishiga o'giradi."""
+    sek = int(sek)
+    s, d = sek // 3600, (sek % 3600) // 60
+    if s and d:
+        return str(s) + " soat " + str(d) + " daqiqa"
+    if s:
+        return str(s) + " soat"
+    return str(max(1, d)) + " daqiqa"
+
+
+def limitga_moslash(user_id, audio_path, jami_sek, boshlanish_sek=0,
+                    manba_turi="fayl", manba_qiymati=None, nom=""):
+    """Audioni foydalanuvchining QOLGAN limitiga moslaydi.
+
+    Ilgari limitga sig'magan fayl BUTUNLAY rad etilardi — 3 soatlik
+    ma'ruza yuborgan bepul foydalanuvchi hech narsa olmasdi. Endi qolgan
+    daqiqa qancha bo'lsa, shuncha qismi qayta ishlanadi va qolgani
+    ertaga /davom bilan davom ettiriladi.
+
+    Returns dict:
+      {"path": ishlatiladigan fayl, "uzunlik": qayta ishlanadigan sekund,
+       "qisman": bool, "keyingi": qolgan qismning boshlanishi yoki None,
+       "sabab": None yoki rad etish sababi}
+    """
+    qolgan = qolgan_limit_sec(user_id)
+    qoladi = max(0, int(jami_sek) - int(boshlanish_sek))
+
+    if qoladi <= 0:
+        return {"sabab": "audio tugagan"}
+
+    if qolgan <= 0:
+        return {"sabab": "limit_tugadi"}
+
+    # Hammasi sig'adi — kesish shart emas (boshlanish bo'lsa ham kesamiz)
+    if qoladi <= qolgan:
+        yol = (davom_kesish(audio_path, boshlanish_sek, 0)
+               if boshlanish_sek > 0 else audio_path)
+        return {"path": yol, "uzunlik": qoladi, "qisman": False,
+                "keyingi": None, "sabab": None}
+
+    # Sig'maydi — qolgan limit yetarlimi?
+    if qolgan < DAVOM_MIN_SEK:
+        return {"sabab": "juda_kam", "qolgan": qolgan}
+
+    yol = davom_kesish(audio_path, boshlanish_sek, qolgan)
+    keyingi = int(boshlanish_sek) + int(qolgan)
+    # Manba saqlanadi: havola bo'lsa faqat havola (disk tejaladi),
+    # fayl bo'lsa nusxa DAVOM_DIR ga ko'chiriladi
+    saqlangan = manba_qiymati
+    # Manba ALLAQACHON davomi papkasida bo'lsa (ya'ni bu /davom chaqiruvi),
+    # qayta nusxa OLMAYMIZ. Aks holda ffmpeg faylni O'Z USTIGA yozmoqchi
+    # bo'lib yiqilardi va davom holati saqlanmay qolardi — foydalanuvchi
+    # ikkinchi kundan keyin davom ettira olmasdi.
+    _allaqachon = False
+    try:
+        _allaqachon = (os.path.dirname(os.path.abspath(audio_path))
+                       == os.path.abspath(DAVOM_DIR))
+    except Exception:
+        pass
+    if manba_turi == "fayl" and _allaqachon:
+        saqlangan = audio_path
+    elif manba_turi == "fayl":
+        try:
+            _davom_papka()
+            davom_tozalash()
+            saqlangan = os.path.join(DAVOM_DIR, str(int(user_id)) + ".mp3")
+            # Siqilgan nusxa: 3 soatlik ma'ruza ~85 MB
+            subprocess.run(
+                ["ffmpeg", "-y", "-v", "error", "-i", audio_path,
+                 "-vn", "-ac", "1", "-ar", "16000", "-acodec", "libmp3lame",
+                 "-b:a", WHISPER_CHUNK_BITRATE, saqlangan],
+                check=True, capture_output=True, timeout=1800)
+        except Exception as e:
+            logging.error("Davom uchun nusxa saqlanmadi: %s", e)
+            saqlangan = None
+
+    if saqlangan:
+        davom_saqlash(user_id, manba_turi, saqlangan, keyingi, jami_sek, nom)
+    return {"path": yol, "uzunlik": qolgan, "qisman": True,
+            "keyingi": keyingi if saqlangan else None, "sabab": None}
+
+
+def qisman_xabar(natija, jami_sek, boshlanish_sek=0):
+    """Qisman qayta ishlash haqida foydalanuvchiga xabar."""
+    if not natija.get("qisman"):
+        return None
+    tayyor = int(boshlanish_sek) + int(natija["uzunlik"])
+    # boshlanish 0 bo'lsa "1 daqiqadan" emas, "boshidan" deb aytamiz
+    _boshi = ("boshidan" if int(boshlanish_sek) <= 0
+              else _vaqt_matni(boshlanish_sek) + " dan")
+    matn = ("✂️ *Kunlik limitingiz shu qismga yetdi.*" + chr(10) + chr(10)
+            + "✅ Tayyor: " + _boshi + " "
+            + _vaqt_matni(tayyor) + " gacha" + chr(10)
+            + "⏳ Qolgani: " + _vaqt_matni(int(jami_sek) - tayyor) + chr(10) + chr(10))
+    if natija.get("keyingi") is not None:
+        matn += ("🔄 Ertaga limit yangilanganda */davom* buyrug'ini yuboring — "
+                 "aynan " + _vaqt_matni(tayyor) + " dan davom etadi.")
+    else:
+        matn += "⚠️ Davom ettirish uchun faylni ertaga qaytadan yuboring."
+    return matn
+
+
+def limit_rad_xabari(sabab, user_id, qolgan=0):
+    """Rad etish sababiga qarab tushunarli xabar."""
+    tariff = TARIFFS.get(get_user_tariff(user_id), TARIFFS["free"])
+    kunlik = tariff.get("daily")
+    if sabab == "limit_tugadi":
+        m = ("⚠️ *Limit tugadi.*" + chr(10) + chr(10)
+             + "🌸 Tarifingiz: " + tariff["name"] + chr(10))
+        m += ("🔄 Limit ertaga yangilanadi." if kunlik
+              else "💎 Tarif sotib olish: /tariflar")
+        return m
+    if sabab == "juda_kam":
+        return ("⚠️ *Bugungi limitdan atigi " + _vaqt_matni(qolgan)
+                + " qoldi.*" + chr(10) + chr(10)
+                + "Bu qism boshlash uchun juda kam ("
+                + _vaqt_matni(DAVOM_MIN_SEK) + " kerak)." + chr(10)
+                + ("🔄 Ertaga limit yangilanadi." if kunlik
+                   else "💎 Tarif sotib olish: /tariflar"))
+    return "⚠️ Audio qayta ishlanmadi."
+
+
 def check_limit_by_user_id(user_id, duration_seconds=0):
     """user_id uchun tarif limitini tekshiradi.
     Returns: (ok: bool) — agar limit oshib ketgan bo'lsa Telegram'ga xabar yuborib False qaytaradi."""
@@ -9113,15 +9466,31 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
     typing = TypingPing(user_id)
     typing.start()
     try:
-        # Audio davomiyligini avval aniqlaymiz va limitni tekshiramiz
-        actual_duration = 0
+        # LIMITGA MOSLASH — Web ilova orqali kelgan uzun ma'ruza uchun
+        # HAL QILUVCHI: 3 soatlik yozuv Telegram'ning 20 MB chegarasidan
+        # oshadi, ya'ni aynan shu yo'ldan keladi. Ilgari u butunlay rad
+        # etilardi.
+        qisman_matn = None
         if not _is_admin_id(user_id):
             try:
                 actual_duration = int(get_duration_or_estimate(file_path))
             except Exception:
                 actual_duration = 0
-            # Limit (davomiylik bilan)
-            if not check_limit_by_user_id(user_id, actual_duration):
+            if actual_duration > 0:
+                jami_sek = actual_duration
+                mos = limitga_moslash(user_id, file_path, jami_sek, 0,
+                                      "fayl", file_path, "")
+                if mos.get("sabab"):
+                    telegram_send_message(
+                        user_id,
+                        limit_rad_xabari(mos["sabab"], user_id,
+                                         mos.get("qolgan", 0)),
+                        parse_mode="Markdown")
+                    return
+                file_path = mos["path"]
+                actual_duration = mos["uzunlik"]
+                qisman_matn = qisman_xabar(mos, jami_sek, 0)
+            elif not check_limit_by_user_id(user_id, 0):
                 return
 
         status_msg_id = telegram_send_message_returning_id(user_id, "🎙 Matn tayyorlanmoqda...")
@@ -9159,6 +9528,10 @@ def process_audio_for_user(user_id, file_path, language="uz", output_alphabet="l
                 # Manba o'zbekcha bo'lmasa tarjima shu yerda bajariladi.
                 text = ensure_uzbek_text(user_id, text)
                 success = _send_text_and_pdf(user_id, text)
+                if qisman_matn:
+                    # Matn yetkazilgandan KEYIN — avval natija, keyin davomi
+                    telegram_send_message(user_id, qisman_matn,
+                                          parse_mode="Markdown")
         else:
             telegram_send_message(
                 user_id,
@@ -9638,16 +10011,31 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
                 telegram_send_message(user_id, f"❌ Video yuklanmadi: {str(e)[:200]}")
             return
 
-        # Yuklab olingach real davomiylikni aniqlaymiz
-        actual_duration = 0
+        # LIMITGA MOSLASH — Web ilova orqali kelgan uzun ma'ruza uchun
+        # HAL QILUVCHI: 3 soatlik yozuv Telegram'ning 20 MB chegarasidan
+        # oshadi, ya'ni aynan shu yo'ldan keladi. Ilgari u butunlay rad
+        # etilardi.
+        qisman_matn = None
         if not _is_admin_id(user_id):
             try:
                 actual_duration = int(get_duration_or_estimate(audio_path))
             except Exception:
                 actual_duration = 0
-            if not check_limit_by_user_id(user_id, actual_duration):
-                if status_msg_id:
-                    telegram_edit_message(user_id, status_msg_id, "❌ Limit yetmadi.")
+            if actual_duration > 0:
+                jami_sek = actual_duration
+                mos = limitga_moslash(user_id, audio_path, jami_sek, 0,
+                                      "havola", url, "")
+                if mos.get("sabab"):
+                    telegram_send_message(
+                        user_id,
+                        limit_rad_xabari(mos["sabab"], user_id,
+                                         mos.get("qolgan", 0)),
+                        parse_mode="Markdown")
+                    return
+                audio_path = mos["path"]
+                actual_duration = mos["uzunlik"]
+                qisman_matn = qisman_xabar(mos, jami_sek, 0)
+            elif not check_limit_by_user_id(user_id, 0):
                 return
 
         if status_msg_id:
@@ -9673,6 +10061,10 @@ def process_url_for_user(user_id, url, language="uz", output_alphabet="latin"):
             # Manba o'zbekcha bo'lmasa tarjima shu yerda bajariladi.
             text = ensure_uzbek_text(user_id, text)
             success = _send_text_and_pdf(user_id, text)
+            if qisman_matn:
+                # Matn yetkazilgandan KEYIN — avval natija, keyin davomi
+                telegram_send_message(user_id, qisman_matn,
+                                      parse_mode="Markdown")
         else:
             telegram_send_message(
                 user_id,
@@ -10322,6 +10714,7 @@ def main():
     app.add_handler(CommandHandler("lang", lang_command))
     app.add_handler(CommandHandler("balance", balance_cmd))
     app.add_handler(CommandHandler("tariflar", tariflar_cmd))
+    app.add_handler(CommandHandler("davom", davom_cmd))
     app.add_handler(CommandHandler("buy", buy_cmd))
     app.add_handler(CommandHandler("tavsiya", tavsiya_cmd))
     app.add_handler(CommandHandler("openai", openai_cmd))
