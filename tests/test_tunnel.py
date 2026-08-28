@@ -275,6 +275,26 @@ if os.path.exists(_sh):
     check("kalitlar kodga yozilmagan",
           "gsk_" not in _matn and "AIza" not in _matn
           and ":AAE" not in _matn, "sir kodga tushib qolgan!")
+    # Telegram Web ilovasi FAQAT https ni ochadi. http://IP:8000 bo'lsa
+    # tugma bosilganda oq ekran chiqadi va bot buzuq deb tushuniladi.
+    check("HTTPS uchun Caddy ko'tariladi", "caddy:2" in _matn,
+          "sertifikatsiz Web ilova ochilmaydi")
+    check("domen sotib olmasdan HTTPS (sslip.io)", "sslip.io" in _matn)
+    check("80 va 443 ochiladi (Let's Encrypt shu portlarni tekshiradi)",
+          "-p 80:80 -p 443:443" in _matn)
+    check("Caddy botga tarmoq orqali yetadi",
+          "reverse_proxy ${NOM}:8000" in _matn)
+    # Bot porti tashqariga ochiq qolsa shifrsiz http ham javob berardi.
+    check("bot porti faqat localhost'ga bog'lanadi",
+          '-p "127.0.0.1:${PORT}:8000"' in _matn,
+          "tashqariga faqat Caddy chiqarishi kerak")
+    # Xato sahifasi HTML qaytarsa u domen nomiga aylanib ketardi.
+    check("IP formati tekshiriladi", "grep -Eq " in _matn and "{1,3}" in _matn)
+    # Qo'lda yozilsa xato bo'ladi, eski ngrok manzili esa o'lik havola.
+    check("WEBAPP_URL avtomatik to'ldiriladi",
+          'env_yoz "WEBAPP_URL"' in _matn)
+    check("eski ngrok/railway manzili almashtiriladi",
+          "*ngrok*" in _matn and "*railway*" in _matn)
 _ga = open(os.path.join(ROOT, ".gitattributes"), encoding="utf-8").read()
 check(".gitattributes .sh ni LF da ushlab turadi", "*.sh text eol=lf" in _ga)
 
