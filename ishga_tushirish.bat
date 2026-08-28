@@ -124,11 +124,13 @@ goto :env_tekshir
 
 :kalit_yoq
 echo(
-echo     Busiz audio/video matnga aylanmaydi (asosiy xizmat).
-echo     Kalit olish: https://platform.openai.com/api-keys
+echo     Busiz audio matnga aylanmaydi (asosiy xizmat).
+echo     Kamida bittasi kerak - ikkalasi ham BEPUL, kartasiz:
+echo       GROQ_API_KEY   - console.groq.com
+echo       GEMINI_API_KEY - aistudio.google.com/apikey
 echo(
 set "JAVOB="
-set /p "JAVOB=Kalitni hozir kiritasizmi? (h/y): "
+set /p "JAVOB=Kalit kiritasizmi? (h/y): "
 if /I not "%JAVOB%"=="h" goto :env_bor
 notepad ".env"
 goto :env_tekshir

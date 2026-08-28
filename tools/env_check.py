@@ -10,8 +10,8 @@ bo'lishi shart. Ular ajralib ketsa tekshiruv yolg'on gapiradi
 
 Chiqish kodi:
   0 - hammasi joyida
-  2 - BOT_TOKEN yo'q/bo'sh   (bot UMUMAN ishlamaydi)
-  3 - OPENAI_API_KEY yo'q/bo'sh (audio -> matn ishlamaydi)
+  2 - BOT_TOKEN yo'q/bo'sh          (bot UMUMAN ishlamaydi)
+  3 - AI provayderi yo'q            (audio matnga aylanmaydi)
   4 - .env fayli umuman yo'q
 """
 import os
@@ -61,14 +61,35 @@ def main(argv):
     if not val("BOT_TOKEN"):
         print("[!] BOT_TOKEN bo'sh yoki yo'q.")
         return 2
-    if not val("OPENAI_API_KEY"):
-        print("[!] OPENAI_API_KEY bo'sh yoki yo'q.")
+
+    # AI PROVAYDERLARI — OpenAI endi MAJBURIY EMAS.
+    # Ilgari bu yerda faqat OPENAI_API_KEY tekshirilardi va bepul
+    # provayderlar sozlangan bo'lsa ham skript keraksiz savol berardi.
+    stt = [k for k in ("GROQ_API_KEY", "OPENAI_API_KEY") if val(k)]
+    matn = [k for k in ("GEMINI_API_KEY", "GROQ_API_KEY", "OPENAI_API_KEY")
+            if val(k)]
+
+    if not stt:
+        print("[!] Audio matnga aylantiruvchi provayder YO'Q.")
+        print("    Kamida bittasi kerak:")
+        print("      GROQ_API_KEY   - bepul, kartasiz: console.groq.com")
+        print("      OPENAI_API_KEY - pullik")
+        return 3
+    if not matn:
+        print("[!] Matn modeli (tarjima va imlo tozalash) YO'Q.")
+        print("    Kamida bittasi kerak:")
+        print("      GEMINI_API_KEY - bepul: aistudio.google.com/apikey")
+        print("      GROQ_API_KEY   - bepul: console.groq.com")
         return 3
 
-    print("[OK] .env tekshirildi: BOT_TOKEN va OPENAI_API_KEY joyida.")
+    print("[OK] Sozlamalar joyida.")
+    print("     audio -> matn : " + ", ".join(stt))
+    print("     matn modeli   : " + ", ".join(matn))
+    if not val("MUXLISA_KEY"):
+        print("     (MUXLISA_KEY yo'q - Premium tarif oddiy STT bilan ishlaydi)")
     if not val("WEBAPP_URL"):
         print("     (WEBAPP_URL yo'q - Web ilova tugmasi berkitiladi, "
-              "qolgan hamma narsa ishlaydi)")
+              "qolgani ishlaydi)")
     return 0
 
 

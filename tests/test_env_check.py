@@ -92,8 +92,13 @@ _chk = os.path.join(ROOT, "tools", "env_check.py")
 
 def run_check(path):
     env = dict(os.environ)
-    # Haqiqiy env qiymatlari natijani buzmasin
-    for k in ("BOT_TOKEN", "OPENAI_API_KEY", "WEBAPP_URL"):
+    # Haqiqiy env qiymatlari natijani buzmasin.
+    # MUHIM: `import bot` loyihaning .env faylini os.environ ga YUKLAYDI,
+    # ya'ni bola jarayon GROQ_API_KEY/GEMINI_API_KEY ni meros qilib oladi
+    # va tekshiruv "provayder bor" deb noto'g'ri xulosa chiqaradi.
+    # Aynan shu sabab test yiqilgan edi.
+    for k in ("BOT_TOKEN", "OPENAI_API_KEY", "WEBAPP_URL",
+              "GROQ_API_KEY", "GEMINI_API_KEY", "MUXLISA_KEY"):
         env.pop(k, None)
     r = subprocess.run([sys.executable, _chk, path], capture_output=True,
                        text=True, encoding="utf-8", errors="replace", env=env)
@@ -102,12 +107,26 @@ def run_check(path):
 
 check("to'liq .env -> 0",
       run_check(write_env("ok.env", "BOT_TOKEN=t\nOPENAI_API_KEY=sk-x\n")) == 0)
+# OpenAI endi MAJBURIY EMAS — Groq/Gemini uni almashtiradi. Ilgari
+# faqat OPENAI_API_KEY tekshirilar va bepul provayderlar sozlangan
+# bo'lsa ham skript keraksiz savol berardi.
+check("faqat BEPUL provayderlar bilan ham -> 0",
+      run_check(write_env("bepul.env",
+                          "BOT_TOKEN=t\nGROQ_API_KEY=gsk-x\nGEMINI_API_KEY=AIza-x\n")) == 0,
+      "Groq+Gemini yetarli")
+check("faqat Groq bilan ham -> 0 (STT ham, matn ham beradi)",
+      run_check(write_env("groq.env",
+                          "BOT_TOKEN=t\nGROQ_API_KEY=gsk-x\n")) == 0)
 check("BOT_TOKEN bo'sh -> 2",
       run_check(write_env("notok.env", "BOT_TOKEN=\nOPENAI_API_KEY=sk-x\n")) == 2)
 check("BOT_TOKEN yo'q -> 2",
       run_check(write_env("yoq.env", "OPENAI_API_KEY=sk-x\n")) == 2)
-check("OPENAI kalit bo'sh -> 3",
+check("birorta AI provayderi yo'q -> 3",
       run_check(write_env("nokey.env", "BOT_TOKEN=t\nOPENAI_API_KEY=\n")) == 3)
+check("faqat Gemini bo'lsa -> 3 (u audio o'qimaydi)",
+      run_check(write_env("faqatgem.env",
+                          "BOT_TOKEN=t\nGEMINI_API_KEY=AIza-x\n")) == 3,
+      "STT uchun Groq yoki OpenAI kerak")
 check("fayl yo'q -> 4", run_check(os.path.join(_tmp, "umuman_yoq.env")) == 4)
 check("BOM'li to'liq .env -> 0",
       run_check(write_env("okbom.env", "BOT_TOKEN=t\nOPENAI_API_KEY=sk-x\n",
