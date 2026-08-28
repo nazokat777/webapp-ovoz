@@ -74,6 +74,46 @@ Telegram ichidagi hamma narsa (audio, video, PDF, tarjima) joyida qoladi.
 > yuklab ola oladi. Uzun ma'ruza (2-3 soat) uchun **Web ilova** orqali
 > yuboring — u botning o'z serveriga boradi, chegara `MAX_UPLOAD_MB` (300).
 
+## 1c. Tariflar va kunlik limit
+
+**Bepul tarif KUNLIK:** har kuni 60 daqiqa qaytadan beriladi
+(`TARIFFS["free"]["daily"] = True`). Hisob `user_daily_usage`
+`{user_id: [kun, soniya]}` shaklida yuritiladi — kechagi sarf bugungi
+limitni yemaydi.
+
+**Pullik (Premium) tariflar bir martalik:** daqiqalar tugaguncha amal
+qiladi, umrbod jamlanadi. Faqat ular Muxlisa AI (o'zbekka maxsus STT)
+ga kirish beradi.
+
+**Standart tariflar sotuvdan olindi** (`"hidden": True`). Kalitlar
+ATAYLAB qoldirilgan: kod `TARIFFS[...]` ni 32 joyda to'g'ridan-to'g'ri
+indekslaydi va kalit o'chirilsa eski xaridorlarda `KeyError` bo'lib bot
+yiqilardi.
+
+> **Bonus daqiqalar kunlik tarifga QO'SHILMAYDI.** Bonus (referral +
+> carryover) bir martalik. Kunlik tarifda qo'shilsa, bir martalik sovg'a
+> cheksiz obunaga aylanardi — Premium'dan qolgan 500 daqiqa har kuni
+> qayta berilardi. Bonus pooli saqlanadi va Premium olinganda ishlaydi.
+
+### Uzun audio: qisman ishlash va davom ettirish
+
+3 soatlik ma'ruza 60 daqiqalik kunlik limitga sig'maydi. Ilgari bunday
+fayl **butunlay rad etilardi**. Endi:
+
+1. Qolgan limit qancha bo'lsa, audioning shuncha qismi qayta ishlanadi
+2. To'xtagan nuqta `davom_holati` da saqlanadi (`user_data.json` ichida)
+3. Foydalanuvchi ertaga **`/davom`** yuboradi — aynan o'sha joydan davom etadi
+
+| Sozlama | Qiymat | Izoh |
+|---|---|---|
+| `DAVOM_MIN_SEK` | 300 | 5 daqiqadan kam qolgan bo'lsa boshlanmaydi |
+| `DAVOM_TTL_KUN` | 7 | saqlangan audio shuncha kundan keyin o'chadi |
+| `DAVOM_MAX_MB` | 2000 | papka chegarasi, eng eskilari o'chiriladi |
+
+Havoladan kelgan audio uchun faqat **havola** saqlanadi (qayta yuklab
+olish ~85 MB diskdan arzon). Fayl uchun siqilgan nusxa `davomi/`
+papkasida turadi — u `.gitignore` da.
+
 ## 2. Doimiy saqlash (MUHIM)
 
 Kod Railway'ni aniqlasa `DATA_FILE` ni `/data/user_data.json` ga qo'yadi.
@@ -134,7 +174,9 @@ adminga Telegram orqali yuboradi va `/debug` da ko'rsatadi:
 
 | Tekshiruv | Daraja | Nima bo'ladi sozlanmasa |
 |---|---|---|
-| `OPENAI_API_KEY` | jiddiy | STT, tarjima, premium TTS ishlamaydi |
+| STT provayderi (Groq **yoki** OpenAI) | jiddiy | audio matnga aylanmaydi |
+| Matn modeli (Gemini / Groq / OpenAI) | jiddiy | tarjima va imlo tozalash ishlamaydi |
+| `OPENAI_API_KEY` | ogohlantirish | faqat premium OpenAI TTS ishlamaydi (Edge TTS zaxira) |
 | `ffmpeg` | jiddiy | audio/video umuman qayta ishlanmaydi |
 | `/data` MOUNT qilinganmi | jiddiy | **tariflar har deploy'da yo'qoladi** |
 | `ADMIN_USER_ID` | ogohlantirish | admin faqat username bo'yicha (xavfli) |
@@ -145,23 +187,20 @@ Volume tekshiruvi `os.path.ismount()` orqali: yo'l NOMI hech narsani
 isbotlamaydi, chunki kod Railway'da uni majburan `/data` qiladi. Mount
 qilinmagan `/data` — konteyner ichidagi vaqtinchalik disk.
 
-## 4.7 Shu kompyuterda ishga tushirish (Railway'siz)
+## 4.7 Lokal ishga tushirish
 
-Deploy ishlamayotgan bo'lsa ham bot lokalda to'liq ishlaydi:
+To'liq yo'riqnoma yuqorida: **[1b. Lokal ishga tushirish](#1b-lokal-ishga-tushirish-serversiz)**.
 
-1. `.env.example` dan `.env` nusxa oling, `BOT_TOKEN` va `OPENAI_API_KEY` yozing
-2. **`ishga_tushirish.bat`** faylini ikki marta bosing
+Qisqacha: `.env` ni to'ldiring va `ishga_tushirish.bat` ni bosing. Skript
+takroriy nusxadan saqlaydi, sozlamani tekshiradi, tunnelni ko'taradi va
+botni nazoratchi ostida ishga tushiradi.
 
-Skript kutubxonalarni tekshiradi, ffmpeg bor-yo'qligini aytadi va botni
-ishga tushiradi. Holat: `http://localhost:8000/health`
+> `OPENAI_API_KEY` **majburiy emas** — Groq va Gemini uni almashtiradi.
+> `.env` ni bot O'ZI o'qiydi (tashqi kutubxonasiz), haqiqiy env
+> o'zgaruvchilari har doim ustun turadi.
 
-Eslatma: `.env` faylini bot endi O'ZI o'qiydi (tashqi kutubxonasiz).
-Haqiqiy env o'zgaruvchilari HAR DOIM ustun turadi — ya'ni Railway'dagi
-sozlamalar repodagi fayl bilan hech qachon almashib ketmaydi.
-
-WebApp Telegram'dan ochilishi uchun HTTPS domen kerak (Railway yoki ngrok).
-Telegram tomonidagi barcha xizmatlar (audio, video, PDF, matn) lokalda
-domensiz ham ishlayveradi.
+WebApp Telegram'dan ochilishi uchun HTTPS domen kerak (ngrok yoki server).
+Telegram tomonidagi barcha xizmatlar domensiz ham ishlayveradi.
 
 ## 5. Sinovlar
 
