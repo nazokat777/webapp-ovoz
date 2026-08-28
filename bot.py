@@ -8787,20 +8787,182 @@ class ProgressIndicator:
         self.stop()
 
 
-def telegram_send_document(chat_id, file_path, filename=None, caption=None):
-    """Returns True — hujjat haqiqatan yetkazilgan bo'lsa."""
+def telegram_send_document(chat_id, file_path, filename=None, caption=None,
+                           mime="application/pdf", parse_mode=None):
+    """Returns True — hujjat haqiqatan yetkazilgan bo'lsa.
+
+    mime — sukut bo'yicha PDF (chaqiruvchilarning aksariyati PDF yuboradi).
+    JSON zaxira uchun "application/json" beriladi, aks holda Telegram faylni
+    PDF deb ko'rsatadi va telefonda ochib bo'lmaydi."""
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
         with open(file_path, 'rb') as f:
-            files = {"document": (filename or os.path.basename(file_path), f, "application/pdf")}
+            files = {"document": (filename or os.path.basename(file_path), f, mime)}
             data = {"chat_id": chat_id}
             if caption:
                 data["caption"] = caption
+            if parse_mode:
+                data["parse_mode"] = parse_mode
             resp = requests.post(url, data=data, files=files, timeout=120)
         return _tg_ok(resp, "sendDocument")
     except Exception as e:
         logging.error(f"Telegram document send error: {e}")
         return False
+
+
+# === [AVTOMATIK KUNLIK ZAXIRA] ==========================================
+# NEGA BU BOR: 2026-08-29 da DigitalOcean droplet to'lanmagan $5.38 qarz
+# uchun BUTUNLAY o'chirildi va u bilan birga foydalanuvchi bazasi ham ketdi.
+# Hosting provayderining "Backups" xizmati bu holatda YORDAM BERMAYDI —
+# u droplet bilan birga o'chadi (va oyiga $1.20 turadi).
+#
+# Botning butun ma'lumoti esa bitta ~2 KB lik JSON. Uni har kuni adminning
+# Telegramiga yuborsak, nusxa TELEFONDA qoladi — server, hosting, hisob,
+# to'lov — hech biri unga tegolmaydi. Narxi nol.
+#
+# Tiklash: kelgan faylga reply qilib /restore yozish (allaqachon bor).
+ZAXIRA_AVTO = os.getenv("ZAXIRA_AVTO", "1").strip().lower() not in (
+    "0", "false", "no", "off", "yoq", "yo'q")
+# Necha kunda bir marta. 1 = har kuni.
+try:
+    ZAXIRA_KUN = max(1, int(os.getenv("ZAXIRA_KUN", "1") or 1))
+except ValueError:
+    ZAXIRA_KUN = 1
+# Loop qancha tez-tez "vaqti keldimi" deb qaraydi. Yarim soat — kompyuter
+# uxlab-uyg'onsa ham kunni o'tkazib yubormaydi, lekin CPU ni ham bezovta qilmaydi.
+ZAXIRA_TEKSHIRUV_SEK = 1800
+# Ishga tushgach darrov yubormaydi: nazoratchi botni qayta-qayta ko'tarsa
+# admin har safar fayl olmasin.
+ZAXIRA_BOSHLANISH_KUTISH = 60
+
+# Fayl yozib bo'lmasa ham bitta ishga tushishda takror yubormaslik uchun.
+_zaxira_holat = {"kun": None}
+
+
+def _zaxira_holat_fayli():
+    """Oxirgi zaxira sanasi DATA_FILE yonida turadi — serverda /data volume
+    ichida bo'ladi, ya'ni qayta deploy'da ham saqlanadi."""
+    papka = os.path.dirname(os.path.abspath(DATA_FILE))
+    return os.path.join(papka, "zaxira_oxirgi.txt")
+
+
+def _zaxira_oxirgi_kun():
+    if _zaxira_holat["kun"]:
+        return _zaxira_holat["kun"]
+    try:
+        with open(_zaxira_holat_fayli(), "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except Exception:
+        return ""
+
+
+def _zaxira_kun_belgila(kun):
+    _zaxira_holat["kun"] = kun          # diskka yozilmasa ham spam bo'lmaydi
+    try:
+        with open(_zaxira_holat_fayli(), "w", encoding="utf-8") as f:
+            f.write(kun)
+    except Exception as e:
+        logging.warning(f"Zaxira sanasini yozib bo'lmadi: {e}")
+
+
+def _zaxira_kunlar_farqi(oldingi, bugun):
+    """Ikki YYYY-MM-DD orasidagi kun. Sana buzuq bo'lsa juda katta son —
+    ya'ni 'zaxira kerak'. Nusxa yo'qligidan ko'ra ortiqchasi yaxshi."""
+    try:
+        t1 = time.mktime(time.strptime(oldingi, "%Y-%m-%d"))
+        t2 = time.mktime(time.strptime(bugun, "%Y-%m-%d"))
+        return int(round((t2 - t1) / 86400.0))
+    except Exception:
+        return 10 ** 6
+
+
+def zaxira_kerakmi(bugun=None):
+    bugun = bugun or bugungi_kun()
+    oxirgi = _zaxira_oxirgi_kun()
+    if not oxirgi:
+        return True
+    return _zaxira_kunlar_farqi(oxirgi, bugun) >= ZAXIRA_KUN
+
+
+def _zaxira_adminlar():
+    """Kimga yuboriladi. ADMIN_USER_ID (env) asosiy manba; u yo'q bo'lsa
+    ish vaqtida aniqlangan admin chat'i ishlatiladi."""
+    kimga = set(ADMIN_USER_IDS)
+    agar_chat = ADMIN_CHAT_ID.get("id")
+    if agar_chat:
+        try:
+            kimga.add(int(agar_chat))
+        except (TypeError, ValueError):
+            pass
+    return sorted(kimga)
+
+
+def zaxira_yubor(sabab="avto"):
+    """DATA_FILE ni adminlarning Telegramiga yuboradi.
+    True — kamida bitta adminga yetkazilgan bo'lsa."""
+    if not BOT_TOKEN:
+        return False
+    kimga = _zaxira_adminlar()
+    if not kimga:
+        logging.warning("Zaxira yuborilmadi: admin aniqlanmagan (ADMIN_USER_ID yo'q)")
+        return False
+    try:
+        hajm = os.path.getsize(DATA_FILE)
+    except OSError:
+        logging.warning(f"Zaxira yuborilmadi: {DATA_FILE} topilmadi")
+        return False
+    if hajm <= 0:
+        logging.warning("Zaxira yuborilmadi: fayl bo'sh")
+        return False
+
+    bugun = bugungi_kun()
+    pullik = sum(1 for t in user_tariffs.values() if t and t != "free")
+    caption = (
+        f"💾 Kunlik zaxira — {bugun}\n"
+        f"👥 Foydalanuvchi: {len(user_uzbek_usage)}\n"
+        f"💎 Pullik tarif: {pullik}\n"
+        f"📏 {hajm:,} bayt\n\n"
+        f"Bu xabarni o'chirmang. Ma'lumot yo'qolsa shu faylga reply qilib "
+        f"/restore yozing — bot hammasini tiklaydi."
+    )
+    yetdi = 0
+    for uid in kimga:
+        if telegram_send_document(
+            uid, DATA_FILE,
+            filename=f"zaxira_{bugun}.json",
+            caption=caption,
+            mime="application/json",
+        ):
+            yetdi += 1
+    if yetdi:
+        logging.info(f"💾 Zaxira yuborildi ({sabab}) — {yetdi}/{len(kimga)} admin")
+    else:
+        logging.error(f"Zaxira HECH KIMGA yetmadi ({sabab}) — {len(kimga)} admin sinaldi")
+    return yetdi > 0
+
+
+def _zaxira_loop():
+    time.sleep(ZAXIRA_BOSHLANISH_KUTISH)
+    while True:
+        try:
+            bugun = bugungi_kun()
+            if zaxira_kerakmi(bugun) and zaxira_yubor("avto"):
+                _zaxira_kun_belgila(bugun)
+        except Exception as e:
+            # Zaxira botni HECH QACHON o'ldirmasligi kerak — u yordamchi vazifa.
+            logging.error(f"Avto-zaxira xatosi: {e}")
+        time.sleep(ZAXIRA_TEKSHIRUV_SEK)
+
+
+def zaxira_oqimini_boshla():
+    if not ZAXIRA_AVTO:
+        logging.info("Avto-zaxira o'chirilgan (ZAXIRA_AVTO=0)")
+        return None
+    oqim = threading.Thread(target=_zaxira_loop, daemon=True, name="zaxira")
+    oqim.start()
+    logging.info(f"💾 Avto-zaxira yoqildi — har {ZAXIRA_KUN} kunda adminga yuboriladi")
+    return oqim
+# === [/AVTOMATIK KUNLIK ZAXIRA] =========================================
 
 
 def telegram_send_voice(chat_id, file_path, caption=None):
@@ -10789,6 +10951,10 @@ def main():
 
     http_thread = threading.Thread(target=run_http_server_thread, daemon=True)
     http_thread.start()
+
+    # Ma'lumot bazasini har kuni adminning Telegramiga yuboradi. Server
+    # o'chsa ham nusxa foydalanuvchining telefonida qoladi.
+    zaxira_oqimini_boshla()
 
     print(f"✅ MNSM bot ishga tushdi... (HTTP: {HTTP_PORT}, WebApp: {WEBAPP_URL})")
     app.run_polling()
