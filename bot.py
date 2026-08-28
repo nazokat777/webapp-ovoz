@@ -3382,6 +3382,32 @@ def _is_output_quality_acceptable(text, audio_duration_sec=0):
     return True
 
 
+def _is_short_repetitive(text):
+    """QISQA, lekin takroriy axlatni aniqlaydi.
+
+    _is_chunk_hallucinated kamida 5 so'z va 30 belgi talab qiladi —
+    ya'ni "Al-Fatiha. Al-Fatiha. Al Al" kabi mayda axlat undan O'TIB
+    KETADI va "toza qisqa matn" deb qabul qilinadi. Natijada 3 daqiqalik
+    bo'lak o'rniga bir necha so'z yetkaziladi va foydalanuvchi hech
+    qanday ogohlantirish olmaydi (amalda shunday bo'ldi).
+
+    Bu yerda XILMA-XILLIK tekshiriladi: haqiqiy nutqda qisqa jumlada ham
+    so'zlar turlicha bo'ladi, hallutsinatsiyada esa bir-ikki so'z
+    aylanaveradi.
+    """
+    if not text:
+        return False
+    w = [x.lower().strip(".,!?:;-—") for x in text.split()]
+    w = [x for x in w if x and not x.startswith("[")]   # vaqt belgilarisiz
+    if len(w) < 2 or len(w) > 60:
+        return False
+    noyob = len(set(w))
+    # 2-3 so'zli matn tabiiy bo'lishi mumkin, undan uzunida takror shubhali
+    if len(w) <= 3:
+        return noyob == 1
+    return noyob <= max(2, len(w) // 4)
+
+
 def _is_chunk_hallucinated(text, chunk_duration_sec=600):
     """Bo'lak natijasi hallucination ekanini aniqlash.
     10 daqiqa audio uchun normal 800-1500 so'z bo'ladi.
@@ -4571,6 +4597,11 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
                 return False
             # Noto'g'ri YOZUV ham axlat: tovushlar to'g'ri bo'lsa ham
             # foydalanuvchi o'qiy olmaydi.
+            if _is_short_repetitive(text):
+                logging.warning("Bo'lak %s/%s: QISQA TAKRORIY axlat "
+                                "(%s) — yaroqsiz", idx, total,
+                                repr(text[:50]))
+                return True
             if _is_wrong_script(text, source_lang):
                 logging.warning("Bo'lak %s/%s: NOTO'G'RI YOZUV (arab) — "
                                 "yaroqsiz deb belgilandi", idx, total)
@@ -4673,9 +4704,20 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
                 except Exception:
                     pass
             if _olingan:
-                logging.info("🩹 Bo'lak %s/%s QUTQARILDI (%s/%s qism)",
-                             idx, total, len(_olingan), len(_qismlar))
-                return idx, " ".join(_olingan), None
+                _birlashgan = " ".join(_olingan)
+                # QUTQARUV NATIJASI HAM TEKSHIRILADI. Aks holda mayda
+                # axlat ("Al-Fatiha.") qutqarilgan deb qabul qilinar,
+                # bo'lak MUVAFFAQIYATLI hisoblanar va foydalanuvchi
+                # 3 daqiqalik bo'lak o'rniga bir necha so'z olib,
+                # HECH QANDAY ogohlantirish ko'rmasdi.
+                if not _is_junk(_birlashgan) and len(_birlashgan.split()) >= 5:
+                    logging.info("🩹 Bo'lak %s/%s QUTQARILDI (%s/%s qism)",
+                                 idx, total, len(_olingan), len(_qismlar))
+                    return idx, _birlashgan, None
+                logging.warning("Bo'lak %s/%s: qutqaruv natijasi ham "
+                                "yaroqsiz (%s so'z) — yiqilgan deb "
+                                "belgilanadi", idx, total,
+                                len(_birlashgan.split()))
 
         # Faqat axlat chiqdi yoki umuman javob yo'q — JIM YETKAZMAYMIZ.
         # Bo'lak "yiqilgan" deb belgilanadi va foydalanuvchiga QAYSI daqiqalar

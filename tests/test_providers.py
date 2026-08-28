@@ -497,5 +497,43 @@ check("qayta urinish bor", "qayta urinamiz" in _chb)
 check("baribir yaroqsiz bo'lsa ASL matn qaytadi", "return text" in _chb)
 
 
+print("[15] QISQA takroriy axlat — hallutsinatsiyaning ikkinchi turi")
+# _is_chunk_hallucinated kamida 5 so'z va 30 belgi talab qiladi, ya'ni
+# "Al-Fatiha. Al-Fatiha. Al Al" kabi MAYDA axlat undan o'tib ketardi va
+# "toza qisqa matn" deb qabul qilinardi. Natijada 3 daqiqalik bo'lak
+# o'rniga bir necha so'z yetkazilar, ogohlantirish esa BERILMASDI.
+check("haqiqiy axlat aniqlanadi",
+      bot._is_short_repetitive(
+          "[03:00] Al-Fatiha. [03:30] Al-Fatiha. [04:00] [04:30] Al Al") is True)
+check("bir so'z takrori aniqlanadi",
+      bot._is_short_repetitive("rahmat rahmat rahmat rahmat") is True)
+check("qisqa TABIIY jumlaga tegilmaydi",
+      bot._is_short_repetitive("Assalomu alaykum, hurmatli talabalar.") is False)
+check("qisqa javobga tegilmaydi",
+      bot._is_short_repetitive("Ha, albatta.") is False)
+check("uzun xilma-xil matnga tegilmaydi",
+      bot._is_short_repetitive(" ".join("soz" + str(i) for i in range(40)))
+      is False)
+check("bo'sh matn xavfsiz", bot._is_short_repetitive("") is False)
+check("None xavfsiz", bot._is_short_repetitive(None) is False)
+check("vaqt belgilari hisobga olinmaydi",
+      bot._is_short_repetitive("[00:00] salom [00:30] xayr [01:00] rahmat")
+      is False, "har xil so'zlar — axlat emas")
+
+print("[16] Qutqaruv natijasi ham TEKSHIRILADI")
+# Aks holda mayda axlat "qutqarildi" deb qabul qilinar, bo'lak
+# MUVAFFAQIYATLI hisoblanar va foydalanuvchi ogohlantirilmasdi.
+_bp = open(os.path.join(ROOT, "bot.py"), encoding="utf-8").read()
+_i_tw = _bp.index("def transcribe_whisper(")
+_j_tw = _bp.find(chr(10) + "def ", _i_tw + 10)
+_tw2 = [_bp[_i_tw:_j_tw if _j_tw > 0 else _i_tw + 40000]]
+check("qutqaruv natijasi axlatga tekshiriladi",
+      bool(_tw2) and "_is_junk(_birlashgan)" in _tw2[0])
+check("qutqaruv natijasiga eng kam hajm talabi bor",
+      bool(_tw2) and "_birlashgan.split()) >= 5" in _tw2[0])
+check("yaroqsiz qutqaruv YIQILGAN deb belgilanadi",
+      bool(_tw2) and "yiqilgan deb" in _tw2[0])
+
+
 print("\nNatija: " + str(ok) + " pass, " + str(fail) + " fail")
 sys.exit(1 if fail else 0)
