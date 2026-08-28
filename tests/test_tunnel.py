@@ -182,5 +182,78 @@ check("to'xtash sababi tushuntiriladi",
       ":allaqachon" in _bat and "TO'XTATILDI" in _bat)
 
 
+print("[9] Nazoratchi — vaqtinchalik nosozlikdan tiklanish")
+# Bot Telegram bilan aloqa uzilganda BUTUNLAY o'lib qolardi:
+#     telegram.error.TimedOut -> exited with code 1
+# Tarmoq nosozligi o'tkinchi, lekin jarayon o'lgani uchun xizmat
+# nazoratsiz to'xtardi va buni faqat mijoz shikoyat qilganda bilinardi.
+sys.path.insert(0, os.path.join(ROOT, "tools"))
+import nazoratchi as nz  # noqa: E402
+
+_asl_ishga = nz.ishga_tushir
+_asl_kutish = nz.KUTISH
+nz.KUTISH = [0, 0, 0, 0, 0]   # sinov tez bo'lsin
+try:
+    # Normal to'xtash (Ctrl+C yoki toza chiqish) — qayta urinmaydi
+    _n = {"soni": 0}
+
+    def _normal():
+        _n["soni"] += 1
+        return 0, 5.0
+
+    nz.ishga_tushir = _normal
+    check("normal to'xtashda qayta urinilmaydi",
+          nz.main() == 0 and _n["soni"] == 1, _n)
+
+    # Doim TEZ yiqilsa — sozlama xatosi, cheksiz aylanmaslik kerak
+    _t = {"soni": 0}
+
+    def _tez():
+        _t["soni"] += 1
+        return 1, 2.0
+
+    nz.ishga_tushir = _tez
+    _kod = nz.main()
+    check("tez yiqilishlar CHEKLANADI (cheksiz aylanish yo'q)",
+          _t["soni"] == nz.MAX_TEZ_YIQILISH, _t)
+    check("sozlama xatosida nolga teng bo'lmagan kod", _kod == 1, _kod)
+
+    # UZOQ ishlab keyin yiqilsa — o'tkinchi nosozlik, hisob TOZALANADI
+    # va bot chegaradan ko'p marta tiklanaveradi
+    _u = {"soni": 0}
+
+    def _uzoq():
+        _u["soni"] += 1
+        if _u["soni"] >= 12:
+            return 0, 100.0
+        return 1, 300.0
+
+    nz.ishga_tushir = _uzoq
+    nz.main()
+    check("uzoq ishlagandan keyingi yiqilish CHEGARAGA kirmaydi",
+          _u["soni"] > nz.MAX_TEZ_YIQILISH, _u)
+finally:
+    nz.ishga_tushir = _asl_ishga
+    nz.KUTISH = _asl_kutish
+
+print("[10] Skript nazoratchi orqali ishga tushiradi")
+_bat2 = open(os.path.join(ROOT, "ishga_tushirish.bat"), encoding="utf-8").read()
+check("nazoratchi chaqiriladi", "nazoratchi.py" in _bat2)
+check("bot.py TO'G'RIDAN-TO'G'RI chaqirilmaydi",
+      "%PYEXE% bot.py" not in _bat2,
+      "to'g'ridan-to'g'ri chaqirilsa TimedOut'da xizmat to'xtaydi")
+
+print("[11] Skriptdagi HAMMA yo'l haqiqatan mavjud")
+# Bu tekshiruv teskari slash buzilishini ushlaydi: heredoc orqali
+# yozilganda "tools\tunnel_start.py" dagi \t TABULYATSIYAGA aylanib
+# ketgan va qator jimgina buzilgan edi. Endi avtomatik ushlanadi.
+import re as _re2
+_yollar = _re2.findall(r'"(tools[\\\\/][A-Za-z_0-9]+\.py)"', _bat2)
+check("skriptda kamida 4 ta vosita chaqiriladi", len(_yollar) >= 4, _yollar)
+_yoq = [y for y in _yollar
+        if not os.path.exists(os.path.join(ROOT, y.replace("\\", os.sep)))]
+check("har bir yo'l mavjud faylga ishora qiladi", not _yoq, _yoq)
+_tab = [l for l in _bat2.split("\n") if "\t" in l]
+check("skriptda yashirin TAB yo'q (buzilgan yo'l belgisi)", not _tab, _tab[:2])
 print("\nNatija: " + str(ok) + " pass, " + str(fail) + " fail")
 sys.exit(1 if fail else 0)

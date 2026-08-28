@@ -83,7 +83,12 @@ echo  Holat sahifasi:   http://localhost:8000/health
 echo ------------------------------------------------------------
 echo(
 
-%PYEXE% bot.py
+REM Bot to'g'ridan-to'g'ri emas, NAZORATCHI orqali ishga tushiriladi.
+REM Sabab: Telegram bilan aloqa vaqtinchalik uzilganda bot butunlay
+REM o'lib qolardi (telegram.error.TimedOut -> exited with code 1) va
+REM xizmat nazoratsiz to'xtardi. Nazoratchi uni qayta ko'taradi,
+REM lekin sozlama xato bo'lsa cheksiz aylanmaydi.
+%PYEXE% "tools\nazoratchi.py"
 
 echo(
 echo Bot to'xtadi. Sabab yuqorida yozilgan.
