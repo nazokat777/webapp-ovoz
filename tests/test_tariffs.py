@@ -124,6 +124,39 @@ try:
     check("matnda buzuq tirnoq yo'q (uch tirnoq)", "'''" not in matn)
     check("matnda literal \\n yo'q", chr(92) + "n" not in matn)
 
+    print("[8] BONUS daqiqalar kunlik tarifda QAYTA BERILMAYDI")
+    # Bonus (referral + carryover) BIR MARTALIK sovg'a. Kunlik tarifda
+    # limit har kuni tiklanadi — bonus ham qo'shilsa, bir martalik sovg'a
+    # CHEKSIZ obunaga aylanardi. Eng xavflisi carryover: Premium'dan
+    # qolgan 500 daqiqa bepul tarifga o'tganda HAR KUNI +500 bo'lardi.
+    bot.user_bonus_minutes[U] = 500      # Premium'dan qolgan
+    bot.user_referral_minutes[U] = 15    # do'st taklif
+    bot.user_tariffs[U] = "free"
+    check("bonus pooli joyida", bot.get_user_bonus_min(U) == 515,
+          bot.get_user_bonus_min(U))
+    check("KUNLIK limitga bonus QO'SHILMAYDI",
+          bot.get_user_limit_sec(U) == 60 * 60, bot.get_user_limit_sec(U) // 60)
+
+    bot.user_tariffs[U] = "pro_max"
+    check("PULLIK tarifda bonus ISHLAYDI (600+515)",
+          bot.get_user_limit_sec(U) == (600 + 515) * 60,
+          bot.get_user_limit_sec(U) // 60)
+    check("bonus pooli o'chirilmagan — Premium olganda tiklanadi",
+          bot.get_user_bonus_min(U) == 515)
+    bot.user_bonus_minutes.pop(U, None)
+    bot.user_referral_minutes.pop(U, None)
+    bot.user_tariffs[U] = "free"
+
+    print("[9] /reset KUNLIK hisobni ham tozalaydi")
+    # Faqat umumiy hisob tozalansa, admin "hammaning limitini tikladim"
+    # deb o'ylar, bepul foydalanuvchilar esa bloklangan qolardi.
+    _src_t = open(os.path.join(ROOT, "bot.py"), encoding="utf-8").read()
+    _i = _src_t.index("async def reset_cmd")
+    _reset = _src_t[_i:_i + 1400]
+    check("umumiy hisob tozalanadi", "user_uzbek_usage.clear()" in _reset)
+    check("KUNLIK hisob ham tozalanadi", "user_daily_usage.clear()" in _reset)
+
+
     print("[8] Kunlik hisob SAQLANADI")
     bot.user_tariffs[U] = "free"
     bot.user_daily_usage[U] = [bot.bugungi_kun(), 777]

@@ -1635,6 +1635,20 @@ def get_user_bonus_min(user_id):
 def get_user_limit_sec(user_id):
     tariff = get_user_tariff(user_id)
     base_min = TARIFFS[tariff]["minutes"]
+
+    # KUNLIK tarifda bonus daqiqalar QO'SHILMAYDI.
+    #
+    # NEGA: bonus (referral + carryover) BIR MARTALIK berilgan qiymat.
+    # Kunlik tarifda limit har kuni tiklanadi, ya'ni bonus ham har kuni
+    # qayta berilib, bir martalik sovg'a CHEKSIZ obunaga aylanardi.
+    # Eng xavflisi carryover: Premium'dan qolgan 500 daqiqa bepul
+    # tarifga o'tganda HAR KUNI +500 daqiqa bo'lib qolardi.
+    #
+    # Bonus pooli O'CHIRILMAYDI — foydalanuvchi keyinchalik Premium
+    # sotib olsa, o'sha daqiqalari joyida turadi va ishlaydi.
+    if TARIFFS.get(tariff, {}).get("daily"):
+        return base_min * 60
+
     bonus_min = get_user_bonus_min(user_id)
     return (base_min + bonus_min) * 60
 
@@ -6322,9 +6336,18 @@ async def reset_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Bu buyruq faqat admin uchun.")
         return
     n = len(user_uzbek_usage)
+    kunlik = len(user_daily_usage)
     user_uzbek_usage.clear()
+    # KUNLIK hisob ham tozalanishi SHART: bepul tarifdagi foydalanuvchi
+    # limiti aynan shundan hisoblanadi. Faqat user_uzbek_usage tozalansa,
+    # admin "hammaning limitini tikladim" deb o'ylab turar, bepul
+    # foydalanuvchilar esa bloklangan qolardi.
+    user_daily_usage.clear()
     _save_user_data()
-    await update.message.reply_text(f"✅ {n} ta foydalanuvchining limiti tiklandi.")
+    await update.message.reply_text(
+        "✅ Limitlar tiklandi." + chr(10)
+        + "• Umumiy hisob: " + str(n) + " ta foydalanuvchi" + chr(10)
+        + "• Kunlik hisob: " + str(kunlik) + " ta foydalanuvchi")
 
 
 async def tariflar_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
