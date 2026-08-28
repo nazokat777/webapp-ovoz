@@ -4432,6 +4432,45 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
         chunk_dir_to_cleanup = os.path.dirname(chunks_to_process[0])
         logging.info(f"   → {len(chunks_to_process)} ta bo'lak tayyor")
 
+    # ── MANBA TILINI ANIQLASH ────────────────────────────────────────
+    # Nega kerak: language=uz majburlansa, RUS audiosi ham qayta ishlanadi,
+    # lekin Whisper uni INGLIZCHAGA o'girib beradi (amalda o'lchandi).
+    # Keyin u o'zbekchaga tarjima qilinsa — rus -> ingliz -> o'zbek,
+    # ya'ni IKKI KARRA tarjima va aniqlik yo'qoladi.
+    #
+    # Boshqa tomondan, tilni umuman bermasa o'zbek nutqi "Fors" deb
+    # aniqlanib ARAB YOZUVIDA qaytadi — bu butunlay yaroqsiz.
+    #
+    # Yechim: BITTA bo'lakda tilni aniqlaymiz.
+    #   arab yozuvi yoki fors/arab/tojik deb aniqlansa -> aslida O'ZBEK
+    #   aks holda -> aniqlangan tilni ishlatamiz (to'g'ridan-to'g'ri tarjima)
+    # Narxi: bitta qo'shimcha so'rov (bo'lak boshiga emas, JOB boshiga).
+    if source_lang == "uz" and chunks_to_process:
+        _probe = [a for a in _stt_attempts() if a[1] == "form"]
+        if _probe:
+            _pn, _, _pm, _purl, _phdr, _pts, _plg = _probe[0]
+            try:
+                _ptext, _perr = _try_transcribe(
+                    chunks_to_process[0], _pm, "auto", _purl, _phdr,
+                    want_timestamps=False, supported_langs=set())
+                if _ptext:
+                    _pdet = detect_text_lang(_ptext)
+                    _arab = _is_wrong_script(_ptext, "uz")
+                    if _arab or _pdet in ("uz", "other"):
+                        # Arab yozuvi = o'zbek noto'g'ri aniqlangan.
+                        # "other" ham o'zbek deb qabul qilinadi: bot
+                        # asosan o'zbek auditoriyasi uchun.
+                        source_lang = "uz"
+                        logging.info("🌐 Manba tili: o'zbek (yozuv=%s)",
+                                     "arab" if _arab else "lotin")
+                    else:
+                        source_lang = _pdet
+                        logging.info("🌐 Manba tili aniqlandi: %s — "
+                                     "to'g'ridan-to'g'ri shu tilda o'qiladi",
+                                     _pdet)
+            except Exception as _e:
+                logging.warning("Til aniqlash o'tkazib yuborildi: %s", _e)
+
     # Audio MAX_AUDIO_CHUNKS chegarasiga tegib kesilganmi? Agar shunday bo'lsa,
     # kesilgan oraliqni failed_ranges'ga qo'shamiz — foydalanuvchi qaysi
     # daqiqadan keyingi qism yo'qligini aniq ko'radi. Ilgari bu JIMGINA

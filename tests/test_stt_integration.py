@@ -133,9 +133,20 @@ else:
     txt = bot.transcribe_whisper(a1, "uz")
     check("matn qaytdi", bool(txt and txt.strip()), repr(txt)[:80])
     check("API chaqirildi", _calls["n"] >= 1, _calls["n"])
-    check("bir bo'lak = BIR chaqiruv (ortiqcha xarajat yo'q)",
-          _calls["n"] == 1, f'{_calls["n"]} chaqiruv: {_calls["models"]}')
-    check("bo'lak matni natijada bor", "Bolak 1 boshlanishi" in txt, txt[:120])
+    # 2 = 1 ta TIL ANIQLASH (job boshiga bir marta) + 1 ta bo'lak.
+    # Til aniqlash zarur: usiz o'zbek nutqi arab yozuvida qaytadi, rus
+    # audiosi esa ingliz orqali ikki karra tarjima qilinardi.
+    check("bir bo'lak = aniqlash + BIR chaqiruv (ortiqcha xarajat yo'q)",
+          _calls["n"] == 2, f'{_calls["n"]} chaqiruv: {_calls["models"]}')
+    check("til aniqlash JOB boshiga bir marta",
+          _calls["models"].count("whisper-large-v3") == 1, _calls["models"])
+    # Indeks QATTIQ yozilmaydi: birinchi chaqiruv til aniqlash uchun
+    # ketadi, ya'ni bo'lakning o'zi 2-raqamni oladi. Qattiq "1" yozilsa
+    # test aniqlash bosqichi qo'shilishi bilan yiqilardi.
+    _chunk_matn = _calls["texts"][1] if len(_calls["texts"]) > 1 else ""
+    _idx = _chunk_matn.split()[1] if _chunk_matn else "?"
+    check("bo'lak matni natijada bor",
+          ("Bolak " + _idx + " boshlanishi") in txt, txt[:120])
 
 print("\n[S2] Uzun audio — KO'P bo'lak, TARTIB va TO'LIQLIK")
 a2 = os.path.join(_tmp, "uzun.mp3")
@@ -147,10 +158,17 @@ else:
     prog = []
     txt = bot.transcribe_whisper(a2, "uz", progress_cb=lambda c, t: prog.append((c, t)))
     check("matn qaytdi", bool(txt and txt.strip()))
-    check("3 bo'lak uchun ANIQ 3 chaqiruv", _calls["n"] == 3,
+    # 4 = 1 ta til aniqlash + 3 ta bo'lak. Aniqlash bo'lak soniga
+    # QARAB O'SMAYDI — bu narx uchun hal qiluvchi (60 bo'lakli
+    # ma'ruzada ham bitta qo'shimcha chaqiruv).
+    check("3 bo'lak uchun aniqlash + ANIQ 3 chaqiruv", _calls["n"] == 4,
           f'{_calls["n"]} chaqiruv: {_calls["models"]}')
+    check("aniqlash bo'lak soniga qarab o'smaydi",
+          _calls["models"].count("whisper-large-v3") == 1, _calls["models"])
     # HAR BO'LAK natijada bo'lishi SHART — biri yo'qolsa matn yo'qoladi
-    idxs = sorted({int(t.split()[1]) for t in _calls["texts"]})
+    # texts[0] — TIL ANIQLASH natijasi, u yakuniy matnga kirmaydi
+    # (faqat qaysi tilda o'qishni hal qilish uchun ishlatiladi)
+    idxs = sorted({int(t.split()[1]) for t in _calls["texts"][1:]})
     for i in idxs:
         check(f"{i}-bo'lak natijada bor", f"Bolak {i} " in txt, txt[:150])
     # HECH BIR bo'lak matni yo'qolmasligi shart (tartibga bog'liq emas)

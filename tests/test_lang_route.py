@@ -162,5 +162,28 @@ _tf = [k for n, k in _bloklar if n == "_transcribe_flow"]
 check("async oqimda tarjima alohida oqimda bajariladi",
       bool(_tf) and "run_in_executor" in _tf[0],
       "bloklovchi HTTP so'rov event loop'da bajarilmasin")
+print("[8] Manba tilini ANIQLASH bosqichi (ikki karra tarjimaga qarshi)")
+# O'LCHANGAN XATTI-HARAKAT:
+#   rus audio + language=uz  -> Whisper uni INGLIZCHAGA o'giradi
+#      keyin o'zbekchaga tarjima => rus -> ingliz -> o'zbek (ikki karra,
+#      aniqlik yo'qoladi)
+#   o'zbek audio, til berilmagan -> "Fors" deb ARAB yozuvida
+# Shuning uchun BITTA bo'lakda til aniqlanadi, keyin to'g'ri til
+# majburlanadi. Arab yozuvi = o'zbek noto'g'ri aniqlangan degani.
+_tw = [k for n, k in _bloklar if n == "transcribe_whisper"]
+check("transcribe_whisper til aniqlash bosqichiga ega",
+      bool(_tw) and "MANBA TILINI ANIQLASH" in _tw[0])
+check("aniqlashda til MAJBURLANMAYDI (supported_langs=set())",
+      bool(_tw) and "supported_langs=set()" in _tw[0],
+      "aks holda aniqlash ma'nosiz bo'ladi")
+check("arab yozuvi o'zbek deb qabul qilinadi",
+      bool(_tw) and "_is_wrong_script" in _tw[0])
+check("aniqlash JOB boshiga bir marta (bo'lak boshiga emas)",
+      bool(_tw) and _tw[0].count("MANBA TILINI ANIQLASH") == 1)
+check("aniqlash yiqilsa transkripsiya TO'XTAMAYDI",
+      bool(_tw) and "o'tkazib yuborildi" in _tw[0],
+      "til aniqlanmasa ham matn olinishi kerak")
+
+
 print("\nNatija: " + str(ok) + " pass, " + str(fail) + " fail")
 sys.exit(1 if fail else 0)
