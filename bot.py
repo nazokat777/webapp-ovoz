@@ -32,7 +32,7 @@ from telegram.ext import (
     Application, CommandHandler, MessageHandler, CallbackQueryHandler,
     PreCheckoutQueryHandler, TypeHandler, filters, ContextTypes,
 )
-from telegram.error import BadRequest
+from telegram.error import BadRequest, NetworkError
 from aiohttp import web
 import edge_tts
 import pypdf
@@ -10734,6 +10734,46 @@ def run_http_server_thread():
         traceback.print_exc()
 
 
+# === [TARMOQ CHIDAMLILIGI] ==============================================
+# Ishga tushish lahzasidagi tarmoq nosozligi botni O'LDIRMASLIGI uchun.
+# python-telegram-bot 21.11 dan boshlab bootstrap_retries sukut bo'yicha 0:
+# ya'ni Wi-Fi hali ulanmagan paytda ishga tushgan bot DARROV yiqiladi.
+# Nazoratchi qayta ko'taradi, lekin ketma-ket 5 ta tez yiqilishdan keyin
+# butunlay to'xtaydi — kompyuter uyqudan uyg'onganda aynan shunday bo'lardi.
+#
+# 20 urinish PTB ning o'suvchi kutishi bilan ~7 daqiqa beradi — tarmoq
+# tiklanishiga yetadi.
+#
+# Cheksiz (-1) ATAYLAB qilinmadi: haqiqiy nosozlikda bot abadiy "yarim
+# tirik" qolib, /health esa "ok" deb turaverardi va nosozlik yashirilardi.
+# (Token buzuq bo'lsa PTB baribir darrov to'xtaydi — InvalidToken qayta
+# urinishdan istisno qilingan.)
+BOOTSTRAP_URINISH = 20
+
+
+def _polling_xato_cb(exc):
+    """Xatoni QANCHA baland ovozda yozishni hal qiladi.
+
+    Tarmoq uzilishi (httpx.ReadError -> NetworkError) o'tkinchi hodisa:
+    PTB polling xatosini cheksiz qayta uradi (max_retries=-1) va bot
+    o'lmaydi. Lekin 40 qatorlik traceback konsolni to'ldirib, egasini
+    "bot buzildi" deb qo'rqitadi — amalda aynan shunday bo'ldi.
+
+    TUZOQ: BadRequest ham NetworkError MEROSXO'RI. Uni ham jimgina yutish
+    haqiqiy xatolarni yashirardi, shuning uchun ataylab ajratilgan."""
+    try:
+        otkinchi = isinstance(exc, NetworkError) and not isinstance(exc, BadRequest)
+    except Exception:
+        otkinchi = False
+    if otkinchi:
+        logging.warning("Tarmoq uzildi (%s) — qayta ulanmoqda, bot ishlayapti.",
+                        type(exc).__name__)
+    else:
+        logging.error("Xato: %s", exc,
+                      exc_info=exc if isinstance(exc, BaseException) else None)
+# === [/TARMOQ CHIDAMLILIGI] =============================================
+
+
 def main():
     global bot_app
 
@@ -10932,7 +10972,10 @@ def main():
     # Global error handler — barcha qaydqilinmagan xatolarni log + userga xabar
     async def _error_handler(update, context):
         err = context.error
-        logging.error(f"Handler xatosi: {err}", exc_info=err)
+        # Polling xatolari ham SHU YERGA keladi: run_polling() ichida
+        # error_callback -> process_error -> shu handler. Shuning uchun
+        # o'tkinchi tarmoq uzilishi bilan haqiqiy xato ajratiladi.
+        _polling_xato_cb(err)
         try:
             if update and getattr(update, "effective_message", None):
                 await update.effective_message.reply_text(
@@ -10957,7 +11000,7 @@ def main():
     zaxira_oqimini_boshla()
 
     print(f"✅ MNSM bot ishga tushdi... (HTTP: {HTTP_PORT}, WebApp: {WEBAPP_URL})")
-    app.run_polling()
+    app.run_polling(bootstrap_retries=BOOTSTRAP_URINISH)
 
 
 if __name__ == "__main__":
