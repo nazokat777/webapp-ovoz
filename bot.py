@@ -1958,8 +1958,20 @@ def convert_to_wav(input_path):
     return wav_path
 
 
+# Cookies qidiriladigan standart joylar, TARTIB BILAN.
+# /data BIRINCHI: serverda faqat shu papka doimiy (Docker volume). Ilgari
+# yagona joy /root edi — u konteyner ichida, ya'ni har qayta qurishda
+# cookies YO'QOLARDI va YouTube yana bloklardi. Sabab esa ko'rinmasdi.
+COOKIES_JOYLARI = ("/data/youtube_cookies.txt", "/root/youtube_cookies.txt")
+
+
 def _prepare_cookies_file():
-    """YOUTUBE_COOKIES env'dan yoki /root/youtube_cookies.txt fayldan cookies oladi."""
+    """YouTube cookies faylini topadi. Yo'q bo'lsa None.
+
+    Manbalar tartib bilan: YOUTUBE_COOKIES env -> YOUTUBE_COOKIES_FILE ->
+    COOKIES_JOYLARI. Topilgani logga yoziladi (mazmuni EMAS, faqat yo'li) —
+    aks holda "cookies qo'ydim, baribir ishlamadi" holatini tekshirib
+    bo'lmaydi."""
     # 1) Env'dan tekshirish
     cookies_text = os.getenv("YOUTUBE_COOKIES", "").strip()
     if cookies_text:
@@ -1967,17 +1979,20 @@ def _prepare_cookies_file():
         try:
             with open(cookies_path, "w", encoding="utf-8") as f:
                 f.write(cookies_text)
+            logging.info("🍪 Cookies YOUTUBE_COOKIES env'dan olindi")
             return cookies_path
         except Exception as e:
             logging.warning(f"Cookies fayl yaratishda xato: {e}")
     # 2) Tashqi fayl yo'lidan tekshirish
     file_path = os.getenv("YOUTUBE_COOKIES_FILE", "").strip()
     if file_path and os.path.exists(file_path):
+        logging.info(f"🍪 Cookies YOUTUBE_COOKIES_FILE'dan: {file_path}")
         return file_path
-    # 3) Standart joydan
-    default_path = "/root/youtube_cookies.txt"
-    if os.path.exists(default_path):
-        return default_path
+    # 3) Standart joylardan
+    for default_path in COOKIES_JOYLARI:
+        if os.path.exists(default_path):
+            logging.info(f"🍪 Cookies topildi: {default_path}")
+            return default_path
     return None
 
 
@@ -2124,9 +2139,27 @@ def download_audio_from_url(url):
             stderr = last_stderr
             low = stderr.lower()
             if "sign in" in low or "not a bot" in low or "confirm" in low:
+                # MUHIM: bu vaqtinchalik nosozlik EMAS. YouTube ma'lumot
+                # markazi IP'larini butunlay bloklaydi va hech qanday
+                # player_client uni chetlab o'tolmaydi (2026-08-29 da
+                # 8 tasi ham sinaldi). Ilgari bu yerda "keyinroq urining"
+                # deyilardi — foydalanuvchi soatlab qayta urinardi va
+                # hech qachon ishlamasdi. Yolg'on umid bermaymiz.
+                if _prepare_cookies_file():
+                    raise Exception(
+                        "YouTube bu havolani bermadi — saqlangan cookies "
+                        "eskirgan bo'lishi mumkin.\n\n"
+                        "Hozircha: videoni telefoningizga yuklab, "
+                        "faylning o'zini menga yuboring."
+                    )
                 raise Exception(
-                    "YouTube cloud serverni bot deb bloklayapti. "
-                    "Iltimos boshqa havola yuborib ko'ring yoki keyinroq urining."
+                    "YouTube serverdan yuklashga ruxsat bermayapti.\n\n"
+                    "Sabab: YouTube ma'lumot markazlaridan kelgan "
+                    "so'rovlarni bloklaydi. Bu vaqtinchalik emas — "
+                    "qayta urinish yordam bermaydi.\n\n"
+                    "✅ Ishlaydigan yo'l: videoni telefoningizga yuklab, "
+                    "faylning O'ZINI menga yuboring. Yoki audio yozuvni "
+                    "to'g'ridan-to'g'ri tashlang."
                 )
             if "instagram" in url.lower():
                 if "login" in low or "rate" in low or "cookies" in low or "private" in low:
