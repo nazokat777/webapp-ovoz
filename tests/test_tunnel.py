@@ -272,9 +272,17 @@ if os.path.exists(_sh):
           "server qayta yuklansa bot o'zi ko'tarilishi kerak")
     check("doimiy disk ulanadi", "-v /data:/data" in _matn,
           "busiz tariflar har deploy'da yo'qoladi")
-    check("kalitlar kodga yozilmagan",
-          "gsk_" not in _matn and "AIza" not in _matn
-          and ":AAE" not in _matn, "sir kodga tushib qolgan!")
+    # Prefiksning O'ZI ("gsk_") endi skriptda bor — u tekshiruv naqshi.
+    # Shuning uchun HAQIQIY kalitni qidiramiz: prefiks + uzun tana.
+    import re as _re  # noqa: E402
+    _sir = _re.compile(
+        r"gsk_[A-Za-z0-9]{20,}"
+        r"|AIza[A-Za-z0-9_-]{20,}"
+        r"|[0-9]{8,}:AA[A-Za-z0-9_-]{20,}")
+    _topildi = _sir.search(_matn)
+    check("kalitlar kodga yozilmagan", _topildi is None,
+          "sir kodga tushib qolgan: "
+          + (_topildi.group()[:8] + "..." if _topildi else ""))
     # Telegram Web ilovasi FAQAT https ni ochadi. http://IP:8000 bo'lsa
     # tugma bosilganda oq ekran chiqadi va bot buzuq deb tushuniladi.
     check("HTTPS uchun Caddy ko'tariladi", "caddy:2" in _matn,
@@ -310,6 +318,21 @@ if os.path.exists(_sh):
     check("kam xotirali serverda swap yaratiladi", "mkswap" in _matn)
     check("swap qayta yuklashdan keyin ham qoladi", "/etc/fstab" in _matn)
     check("swap ikki marta yaratilmaydi", "[ -f /swapfile ]" in _matn)
+    # AMALDA BO'LGAN XATO: foydalanuvchi qo'llanmadagi kutilayotgan UZUNLIKNI
+    # ("56") kalit deb kiritdi. Skript jimgina qabul qildi, bot ko'tarildi,
+    # health "ok" dedi — lekin hech narsa ishlamadi va sabab yashirin qoldi.
+    check("kalit shakli tekshiriladi", "grep -Eq" in _matn,
+          "har qanday axlatni qabul qilmasin")
+    check("noto'g'ri kalit QAYTA so'raladi", "while true" in _matn)
+    check("Telegram tokeni shakli bo'yicha tekshiriladi",
+          "[0-9]{5,}:" in _matn)
+    check("Groq kaliti gsk_ bilan boshlanishi shart",
+          "^gsk_" in _matn)
+    check("xato xabari nima qilishni aytadi",
+          "uzunligini emas" in _matn)
+    # Kalit xato tushsa faylni o'chirmasdan qayta kiritish yo'li bo'lishi kerak.
+    check("kalitlarni qayta kiritish mumkin", "QAYTA_SOZLA" in _matn)
+    check("qayta kiritishda eski nusxa saqlanadi", "/data/.env.eski" in _matn)
 _ga = open(os.path.join(ROOT, ".gitattributes"), encoding="utf-8").read()
 check(".gitattributes .sh ni LF da ushlab turadi", "*.sh text eol=lf" in _ga)
 

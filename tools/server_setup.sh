@@ -129,9 +129,16 @@ env_yoz() {   # kalit qiymat — bor bo'lsa almashtiradi, yo'q bo'lsa qo'shadi
   fi
 }
 
-if [ -f /data/.env ]; then
+if [ -f /data/.env ] && [ "${QAYTA_SOZLA:-0}" != "1" ]; then
   yashil "[4/7] Mavjud /data/.env ishlatiladi"
+  echo "     Kalitlarni qayta kiritish uchun:  QAYTA_SOZLA=1 bash $0"
 else
+  # Eski nusxa saqlanadi: yangi kiritish yarim qolsa qaytish mumkin bo'lsin.
+  if [ -f /data/.env ]; then
+    cp /data/.env "/data/.env.eski"
+    chmod 600 "/data/.env.eski"
+    sariq "[4/7] Kalitlar QAYTA kiritilmoqda (eskisi /data/.env.eski da saqlandi)"
+  fi
   sariq "[4/7] Sozlamalar kerak. Kalitlarni kiriting (bo'sh qoldirsa ham bo'ladi)."
   echo "     Kalitlar EKRANDA KO'RINMAYDI — joylashtirib Enter bosavering."
   echo
@@ -140,22 +147,40 @@ else
   # ekran rasmi tez-tez olinadi va bitta rasm butun botni begonaga beradi.
   # read -rs joylashtirishga ham ishlaydi, faqat hech narsa chizilmaydi —
   # shuning uchun uzunligini qaytarib, kiritilganini tasdiqlaymiz.
+  #
+  # TEKSHIRUV NEGA BOR: ilgari skript HAR QANDAY matnni qabul qilardi.
+  # Amalda foydalanuvchi qo'llanmadagi "56" (kutilayotgan UZUNLIK) ni
+  # kalit deb kiritdi va skript uni jimgina yozdi. Bot ko'tarildi, health
+  # "ok" dedi, lekin hech narsa ishlamadi va sabab yashirin qoldi.
+  # Endi shakli mos kelmasa QAYTA so'raydi.
   sir_sora() {
-    local nom="$1" savol="$2" qiymat=""
-    read -rsp "  $savol" qiymat
-    echo
-    if [ -n "$qiymat" ]; then
-      echo "     ✓ qabul qilindi (${#qiymat} belgi)"
-    else
-      echo "     — bo'sh qoldirildi"
-    fi
+    local nom="$1" savol="$2" naqsh="$3" izoh="$4" qiymat=""
+    while true; do
+      read -rsp "  $savol" qiymat
+      echo
+      if [ -z "$qiymat" ]; then
+        echo "     — bo'sh qoldirildi"
+        break
+      fi
+      if printf '%s' "$qiymat" | grep -Eq "$naqsh"; then
+        echo "     ✓ qabul qilindi (${#qiymat} belgi)"
+        break
+      fi
+      qizil "     ✗ Bu $izoh ga o'xshamaydi (${#qiymat} belgi kiritildi)."
+      echo  "        Kalitning O'ZINI kiriting — uzunligini emas."
+      echo  "        Manba: kompyuteringizdagi .env faylida, = belgisidan keyingi qism."
+    done
     printf -v "$nom" '%s' "$qiymat"
   }
 
-  sir_sora V_BOT  "BOT_TOKEN (majburiy)      : "
-  sir_sora V_GROQ "GROQ_API_KEY (bepul)      : "
-  sir_sora V_GEM  "GEMINI_API_KEY (bepul)    : "
-  sir_sora V_MUX  "MUXLISA_KEY (premium)     : "
+  sir_sora V_BOT  "BOT_TOKEN (majburiy)      : " \
+    '^[0-9]{5,}:[A-Za-z0-9_-]{25,}$' "Telegram tokeni (raqamlar:harflar)"
+  sir_sora V_GROQ "GROQ_API_KEY (bepul)      : " \
+    '^gsk_[A-Za-z0-9]{20,}$' "Groq kaliti (gsk_ bilan boshlanadi)"
+  sir_sora V_GEM  "GEMINI_API_KEY (bepul)    : " \
+    '^[A-Za-z0-9_.-]{25,}$' "Gemini kaliti (25+ belgi)"
+  sir_sora V_MUX  "MUXLISA_KEY (premium)     : " \
+    '^[A-Za-z0-9_.-]{20,}$' "Muxlisa kaliti (20+ belgi)"
   # Bu sir emas — oddiy raqam, ko'rinib tursa xavf yo'q va xatoni sezish oson.
   read -rp "  ADMIN_USER_ID             : " V_ADM
   cat > /data/.env <<EOF
