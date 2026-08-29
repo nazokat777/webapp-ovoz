@@ -110,11 +110,30 @@ if [ -f /data/.env ]; then
   yashil "[4/7] Mavjud /data/.env ishlatiladi"
 else
   sariq "[4/7] Sozlamalar kerak. Kalitlarni kiriting (bo'sh qoldirsa ham bo'ladi)."
+  echo "     Kalitlar EKRANDA KO'RINMAYDI — joylashtirib Enter bosavering."
   echo
-  read -rp "  BOT_TOKEN (majburiy)      : " V_BOT
-  read -rp "  GROQ_API_KEY (bepul)      : " V_GROQ
-  read -rp "  GEMINI_API_KEY (bepul)    : " V_GEM
-  read -rp "  MUXLISA_KEY (premium)     : " V_MUX
+
+  # Kalit yozilayotganda ekranda ko'rinmasligi kerak: server konsolining
+  # ekran rasmi tez-tez olinadi va bitta rasm butun botni begonaga beradi.
+  # read -rs joylashtirishga ham ishlaydi, faqat hech narsa chizilmaydi —
+  # shuning uchun uzunligini qaytarib, kiritilganini tasdiqlaymiz.
+  sir_sora() {
+    local nom="$1" savol="$2" qiymat=""
+    read -rsp "  $savol" qiymat
+    echo
+    if [ -n "$qiymat" ]; then
+      echo "     ✓ qabul qilindi (${#qiymat} belgi)"
+    else
+      echo "     — bo'sh qoldirildi"
+    fi
+    printf -v "$nom" '%s' "$qiymat"
+  }
+
+  sir_sora V_BOT  "BOT_TOKEN (majburiy)      : "
+  sir_sora V_GROQ "GROQ_API_KEY (bepul)      : "
+  sir_sora V_GEM  "GEMINI_API_KEY (bepul)    : "
+  sir_sora V_MUX  "MUXLISA_KEY (premium)     : "
+  # Bu sir emas — oddiy raqam, ko'rinib tursa xavf yo'q va xatoni sezish oson.
   read -rp "  ADMIN_USER_ID             : " V_ADM
   cat > /data/.env <<EOF
 BOT_TOKEN=$V_BOT

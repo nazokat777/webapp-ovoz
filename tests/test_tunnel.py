@@ -295,6 +295,17 @@ if os.path.exists(_sh):
           'env_yoz "WEBAPP_URL"' in _matn)
     check("eski ngrok/railway manzili almashtiriladi",
           "*ngrok*" in _matn and "*railway*" in _matn)
+    # Server konsolining ekran rasmi tez-tez olinadi. Bitta rasmda ko'ringan
+    # BOT_TOKEN butun botni begonaga beradi.
+    check("kalitlar yozilganda ekranda KO'RINMAYDI", "read -rsp" in _matn,
+          "ekran rasmi orqali sir oshkor bo'lardi")
+    for _sir in ("V_BOT", "V_GROQ", "V_GEM", "V_MUX"):
+        check(_sir + " ko'rinadigan read bilan so'ralmaydi",
+              ("read -rp" not in _matn.split(_sir)[0].rsplit("\n", 1)[-1]
+               if _sir in _matn else False)
+              and "sir_sora " + _sir in _matn, _sir)
+    check("kiritilgani tasdiqlanadi (ko'rinmasa ham bilinsin)",
+          "belgi)" in _matn)
 _ga = open(os.path.join(ROOT, ".gitattributes"), encoding="utf-8").read()
 check(".gitattributes .sh ni LF da ushlab turadi", "*.sh text eol=lf" in _ga)
 
