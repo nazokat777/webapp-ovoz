@@ -94,6 +94,29 @@ SAYT_URL="https://${SAYT}"
 echo "     IP: $IP"
 echo "     Manzil: $SAYT_URL"
 
+# ── 3b. Swap ────────────────────────────────────────────────────────────────
+# 1 GB RAM li serverda Ubuntu o'zi ~300 MB oladi. 3 soatlik ma'ruzani qayta
+# ishlashda yuklab olish + ffmpeg 300-500 MB talab qiladi — chegara juda yaqin.
+# Swap bo'lmasa Linux OOM killer botni JIMGINA o'ldiradi: xato xabari yo'q,
+# logda sabab ko'rinmaydi, foydalanuvchi esa "bot yana o'chdi" deydi.
+# 2 GB swap 25 GB diskdan joy oladi va sekinroq ishlaydi — lekin o'lishdan
+# ko'ra sekin ishlagan yaxshi.
+if [ -f /swapfile ]; then
+  yashil "[3b/7] Swap allaqachon bor"
+elif [ "$(free -m 2>/dev/null | awk '/^Mem:/{print $2}')" -ge 2048 ] 2>/dev/null; then
+  yashil "[3b/7] Xotira yetarli, swap kerak emas"
+else
+  yashil "[3b/7] Swap yaratilmoqda (2 GB)..."
+  fallocate -l 2G /swapfile 2>/dev/null \
+    || dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
+  chmod 600 /swapfile
+  mkswap /swapfile >/dev/null
+  swapon /swapfile
+  # Server qayta yuklansa swap o'zi qaytishi uchun
+  grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+  echo "     swap: $(free -m | awk '/^Swap:/{print $2}') MB"
+fi
+
 # ── 4. Sozlamalar ───────────────────────────────────────────────────────────
 mkdir -p /data
 

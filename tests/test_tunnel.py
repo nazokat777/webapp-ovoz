@@ -306,6 +306,10 @@ if os.path.exists(_sh):
               and "sir_sora " + _sir in _matn, _sir)
     check("kiritilgani tasdiqlanadi (ko'rinmasa ham bilinsin)",
           "belgi)" in _matn)
+    # 1 GB serverda ffmpeg ishlaganda OOM killer botni JIMGINA o'ldiradi.
+    check("kam xotirali serverda swap yaratiladi", "mkswap" in _matn)
+    check("swap qayta yuklashdan keyin ham qoladi", "/etc/fstab" in _matn)
+    check("swap ikki marta yaratilmaydi", "[ -f /swapfile ]" in _matn)
 _ga = open(os.path.join(ROOT, ".gitattributes"), encoding="utf-8").read()
 check(".gitattributes .sh ni LF da ushlab turadi", "*.sh text eol=lf" in _ga)
 
