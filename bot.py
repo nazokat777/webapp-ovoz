@@ -2007,11 +2007,16 @@ def _run_yt_dlp(url, output_template, use_cookies=True, player_client=None):
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                         "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     ]
-    # YouTube imzolarini yechish uchun JS runtime. Docker image'da nodejs bor
-    # (Dockerfile'ga qo'shildi); lokal mashinada node bo'lmasa flag'ni
-    # bermaymiz — yt-dlp o'zi topganini ishlatadi yoki runtime'siz urinadi.
-    if have_cmd("node"):
-        cmd.extend(["--js-runtimes", "node"])
+    # YouTube "n challenge" ni yechish uchun JS runtime.
+    # TARTIB MUHIM: deno birinchi. Node'ni yt-dlp "unsupported" deb rad etadi
+    # (serverda o'lchangan: node-20.19.2 -> "n challenge solving failed" ->
+    # YouTube HECH QANDAY format bermadi; deno-2.9.6 bilan darrov ishladi).
+    # Node faqat zaxira sifatida qoldi: yangiroq versiyasi bo'lsa ishlashi
+    # mumkin, bo'lmasa yt-dlp o'zi rad etadi va zarar qilmaydi.
+    for _js in ("deno", "node"):
+        if have_cmd(_js):
+            cmd.extend(["--js-runtimes", _js])
+            break
     if use_cookies:
         cookies_path = _prepare_cookies_file()
         if cookies_path:

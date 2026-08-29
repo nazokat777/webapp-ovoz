@@ -5,3 +5,6 @@ fpdf2>=2.7
 edge-tts>=7.0
 pypdf>=4.0
 yt-dlp>=2026.1.1
+# YouTube "n challenge" solver scripts. Deno bilan BIRGA kerak:
+# ikkisidan biri yetishmasa YouTube hech qanday format bermaydi.
+yt-dlp-ejs>=0.8

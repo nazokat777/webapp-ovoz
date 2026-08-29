@@ -119,6 +119,57 @@ print("[4] COOKIES DOIMIY DISKDA QOLADI")
 check("qidiruv yo'llarida /data bor",
       any(j.startswith("/data") for j in bot.COOKIES_JOYLARI))
 
+print("[5] JS RUNTIME — deno birinchi, node zaxira")
+# Serverda o'lchangan: node-20.19.2 ni yt-dlp "unsupported" deydi va
+# "n challenge solving failed" beradi -> YouTube HECH QANDAY format
+# qaytarmaydi. deno-2.9.6 bilan o'sha video darrov ochildi.
+_asl_have = bot.have_cmd
+_asl_run = bot.subprocess.run
+_tutildi = {}
+
+
+class _SoxtaNatija:
+    returncode = 0
+    stdout = ""
+    stderr = ""
+
+
+def _tut_run(cmd, **kw):
+    _tutildi["cmd"] = list(cmd)
+    return _SoxtaNatija()
+
+
+bot.subprocess.run = _tut_run
+try:
+    for mavjud, kutilgan in [({"deno", "node"}, "deno"),
+                             ({"node"}, "node"),
+                             ({"deno"}, "deno"),
+                             (set(), None)]:
+        bot.have_cmd = lambda n, _m=mavjud: n in _m
+        _tutildi.clear()
+        bot._run_yt_dlp("https://y.be/x", "/tmp/out.%(ext)s")
+        _cmd = _tutildi.get("cmd", [])
+        _olindi = (_cmd[_cmd.index("--js-runtimes") + 1]
+                   if "--js-runtimes" in _cmd else None)
+        check("mavjud=" + (",".join(sorted(mavjud)) or "yo'q")
+              + " -> " + str(kutilgan), _olindi == kutilgan, _olindi)
+finally:
+    bot.have_cmd = _asl_have
+    bot.subprocess.run = _asl_run
+
+print("[6] MUHIT — uchala shart ham o'rnatilgan bo'lishi kerak")
+_df = open(os.path.join(ROOT, "Dockerfile"), encoding="utf-8").read()
+check("Dockerfile deno o'rnatadi", "deno" in _df.lower())
+check("deno bajariladigan qilinadi", "chmod +x /usr/local/bin/deno" in _df)
+check("o'rnatilgani build paytida tekshiriladi", "deno --version" in _df)
+# Node 20 foydasiz edi va ~100 MB joy olardi.
+check("eski nodejs paketi olib tashlandi",
+      "\n    nodejs" not in _df, "yt-dlp uni baribir rad etadi")
+_rq = open(os.path.join(ROOT, "requirements.txt"), encoding="utf-8").read()
+check("requirements'da yt-dlp-ejs bor", "yt-dlp-ejs" in _rq)
+check("requirements sof ASCII (kodlash muammosi bo'lmasin)",
+      all(ord(c) < 128 for c in _rq))
+
 import shutil  # noqa: E402
 shutil.rmtree(_tmp, ignore_errors=True)
 
