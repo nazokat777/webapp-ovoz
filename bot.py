@@ -3515,6 +3515,35 @@ _WHISPER_BOILERPLATE = [
     "спасибо за просмотр",
 ]
 
+# Uydirma OILALARI — regex. Aniq iboralar ro'yxati YETARLI EMAS ekan:
+# 2026-09-01 da 43 daqiqalik videoda "Субтитры создавал DimaTorzok" o'chdi,
+# lekin "Субтитры сделал/делал/подготовил ..." variantlari o'tib ketdi.
+# Bundan ham yomoni: ular TARJIMADAN keyin o'zbekchaga aylanardi
+# ("Subtitrlarni DimaTorzok tayyorladi") va ro'yxat ularni umuman ko'rmasdi.
+#
+# Bu naqshlar gap ICHIDA ham qidiriladi (yuqoridagi ro'yxatdan farqli):
+# uydirma ko'pincha haqiqiy gapning ORTIDAN yopishib keladi.
+# FAQAT SHUBHASIZ IMZOLAR. "Kanalga obuna bo'ling" yoki "ko'rganingiz uchun
+# rahmat" kabi iboralar ham qo'shilgan edi — sinov ularni darrov rad etdi:
+# ustoz ma'ruzada aynan shunday gapirishi mumkin va gap kesilib ketardi.
+# Gap ichida qidiriladigan naqsh haqiqiy nutqda UCHRAMASLIGI shart.
+# Umumiy outro iboralari ("продолжение следует", "спасибо за просмотр")
+# yuqoridagi ro'yxatda qoldi — ular faqat BUTUN GAP bo'lsa o'chadi.
+_WHISPER_UYDIRMA_NAQSHLARI = [
+    # Whisper o'rgangan subtitr muallifi — qaysi tilga tarjima qilinsa ham
+    # bu ism qoladi, ya'ni eng ishonchli imzo.
+    r"dimatorzok",
+    r"субтитр\w*\s+(создав|сдела|дела|подготов|редакт|коррект|перев)",
+    r"(редактор|корректор)\s+субтитров",
+    r"subtitles?\s+by\b",
+    r"amara\.?org",
+    # Tarjimadan keyingi shakli: "Subtitrlarni ... tayyorladi".
+    # "Videoga subtitr qo'shish kerak" kabi gap TEGILMAYDI — fe'l boshqa.
+    r"subtitr\w*\s+\S*\s*(tayyorla|yaratil|tarjima qil)",
+]
+_WHISPER_UYDIRMA_RE = re.compile("|".join(_WHISPER_UYDIRMA_NAQSHLARI),
+                                 re.IGNORECASE)
+
 
 def _strip_whisper_boilerplate(text):
     """Whisper o'ylab topgan shablon iboralarni olib tashlaydi.
@@ -3539,6 +3568,12 @@ def _strip_whisper_boilerplate(text):
                 probe == b or (len(probe) <= 90 and probe.startswith(b))
                 for b in _WHISPER_BOILERPLATE
             )
+            # Oila naqshlari gap ICHIDA ham qidiriladi: uydirma ko'pincha
+            # haqiqiy gapning ortidan yopishib keladi ("...deb hisoblaydi.
+            # Subtitrlarni DimaTorzok tayyorladi"). Uzunlik chegarasi —
+            # butun paragrafni tasodifan yo'qotib qo'ymaslik uchun.
+            if not is_boiler and probe and len(probe) <= 120:
+                is_boiler = bool(_WHISPER_UYDIRMA_RE.search(probe))
             if is_boiler:
                 removed.append(part.strip())
                 continue
@@ -3549,6 +3584,45 @@ def _strip_whisper_boilerplate(text):
         logging.info("🧹 Whisper shablon iboralari olib tashlandi: %s",
                      "; ".join(removed[:3])[:160])
     return result.strip()
+
+
+_VAQT_BELGISI_RE = re.compile(r"\[\d{1,3}:\d{2}\]")
+
+
+def _yolgiz_vaqt_belgilarini_olib_tashla(matn):
+    """Ortidan matn qolmagan vaqt belgilarini o'chiradi.
+
+    Uydirma tozalangach "[04:30]" yolg'iz qolib qolardi va PDF'da bo'sh
+    qator bo'lib chiqardi. Foydalanuvchi buni "matn yo'qolgan" deb
+    o'qiydi — aslida u yerda hech qachon matn bo'lmagan (sukunat edi)."""
+    if not matn:
+        return matn
+    natija = []
+    for qator in matn.split("\n"):
+        boklar = _VAQT_BELGISI_RE.split(qator)
+        belgilar = _VAQT_BELGISI_RE.findall(qator)
+        yigil = []
+        if boklar and boklar[0].strip():
+            yigil.append(boklar[0].strip())
+        for belgi, keyingi in zip(belgilar, boklar[1:]):
+            if keyingi.strip():
+                yigil.append(belgi + " " + keyingi.strip())
+        natija.append(" ".join(yigil))
+    return "\n".join(natija).strip()
+
+
+def yakuniy_tozalash(matn):
+    """Foydalanuvchiga BERISHDAN OLDINGI oxirgi tozalash.
+
+    NEGA ALOHIDA: uydirma filtri faqat Whisper natijasiga qo'llanardi.
+    Tarjimadan keyin uydirma o'zbekchaga aylanib ("Subtitrlarni DimaTorzok
+    tayyorladi") tekshiruvsiz o'tib ketardi va PDF'da o'nlab marta
+    takrorlanardi. Endi tarjimadan KEYIN ham o'tkaziladi."""
+    if not matn:
+        return matn
+    matn = _strip_whisper_boilerplate(matn)
+    matn = _yolgiz_vaqt_belgilarini_olib_tashla(matn)
+    return matn
 
 
 def _clean_whisper_hallucination(text):
@@ -9142,6 +9216,16 @@ _LANG_NOMLARI = {"ru": "rus", "en": "ingliz", "other": "boshqa"}
 
 
 def ensure_uzbek_text(user_id, text, notify=True):
+    """Tarjima + FOYDALANUVCHIGA BERISHDAN OLDINGI oxirgi tozalash.
+
+    O'ram ATAYLAB: ichki funksiyada 5 ta `return` yo'li bor (o'zbekcha
+    kelgan, tarjima bo'lgan, qisqargan, bo'sh qaytgan, xato). Ilgari
+    shunga o'xshash holatda bitta yo'l unutilgan va foydalanuvchi
+    tozalanmagan matn olgan edi. O'ram bilan yo'l unutib bo'lmaydi."""
+    return yakuniy_tozalash(_ensure_uzbek_text_ichki(user_id, text, notify))
+
+
+def _ensure_uzbek_text_ichki(user_id, text, notify=True):
     """Transkript o'zbekcha bo'lmasa — o'zbekchaga tarjima qiladi.
 
     NEGA KERAK: bot "har qanday tildagi audio/video -> O'ZBEK matn" deb
