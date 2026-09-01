@@ -3243,16 +3243,31 @@ def split_audio_for_whisper(file_path, chunk_seconds=WHISPER_CHUNK_SECONDS):
     # Faqat normalizatsiya va highpass shovqin filtri qoldi.
     tmp_dir = tempfile.mkdtemp(prefix="whisper_recode_")
     recoded_path = os.path.join(tmp_dir, "recoded.mp3")
-    # Yaxshilangan audio filter:
+    # Audio filter zanjiri:
     # - highpass=80Hz — past chastotali shovqin (vibratsiya, electric hum)
     # - lowpass=12000Hz — yuqori chastotali shovqin (whistle, hiss)
-    # - afftdn=nr=12 — FFT noise reduction (shovqin pasaytirish)
-    # - loudnorm — normallashtirish (jim/baland ovozni tenglashtirish)
+    # - afftdn=nr=12 — FFT shovqin pasaytirish
+    # - speechnorm — normallashtirish (jim/baland ovozni tenglashtirish)
+    #
+    # NEGA loudnorm EMAS (1 yadroli serverda o'lchangan, 2026-09-01):
+    #   loudnorm .............. 10.8x realtime   <- butun sekinlikning 90%
+    #   afftdn ................ 42.2x realtime
+    #   highpass+lowpass ..... 118.8x realtime
+    #   speechnorm ............ 47.5x realtime
+    # loudnorm ichida true-peak uchun audioni 192 kHz ga ko'taradi — biz esa
+    # Whisper uchun baribir 16 kHz ga tushiramiz, ya'ni bu aniqlik behuda.
+    #
+    # SIFAT TEKSHIRILDI, taxmin qilinmadi. Uchta turli parcha Groq Whisper
+    # orqali o'tkazildi (so'z soni):
+    #   loudnorm   313 + 296 + 327 = 936
+    #   speechnorm 307 + 278 + 390 = 975  (104%)
+    # Normalizatsiyani BUTUNLAY olib tashlash esa 20% so'z yo'qotdi
+    # (313 -> 252), shuning uchun u kerak — faqat arzonrog'i.
     audio_filter = (
         "highpass=f=80,"
         "lowpass=f=12000,"
         "afftdn=nr=12,"
-        "loudnorm=I=-16:LRA=11:TP=-1.5"
+        "speechnorm=e=6.25:r=0.00001:l=1"
     )
     cmd = [
         "ffmpeg", "-y", "-v", "error",

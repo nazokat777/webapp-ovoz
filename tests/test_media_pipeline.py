@@ -134,6 +134,30 @@ check("fontTools WARNING darajasida",
       logging.getLogger("fontTools").level == logging.WARNING)
 check("httpx bo'g'ilgan", logging.getLogger("httpx").level == logging.WARNING)
 
+print("")
+print("[AUDIO FILTRI] tezlik va sifat muvozanati")
+# 1 yadroli serverda loudnorm butun sekinlikning ~90% ini yeyardi
+# (10.8x realtime; speechnorm 47.5x). Sifat uchta parchada Groq Whisper
+# bilan tekshirilgan: speechnorm loudnorm'ning 104% so'zini bergan.
+_ildiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_manba = open(os.path.join(_ildiz, "bot.py"), encoding="utf-8").read()
+_boshi = _manba.find("audio_filter = (")
+check("audio_filter topildi", _boshi > 0)
+_zanjir = _manba[_boshi:_boshi + 260]
+check("speechnorm ishlatiladi", "speechnorm" in _zanjir, _zanjir[:80])
+check("loudnorm ishlatilmaydi (10x sekin)", "loudnorm" not in _zanjir)
+# Normalizatsiyani BUTUNLAY olib tashlash 20% so'z yo'qotgan edi.
+check("normalizatsiya baribir bor",
+      "speechnorm" in _zanjir or "dynaudnorm" in _zanjir,
+      "busiz 313 -> 252 so'z")
+check("shovqin filtrlari saqlandi",
+      "highpass" in _zanjir and "lowpass" in _zanjir and "afftdn" in _zanjir)
+# O'lchov izohi kodda qolsin: keyingi safar kimdir "loudnorm yaxshiroq" deb
+# qaytarib qo'ymasin.
+check("tanlov sababi kodda yozilgan",
+      "realtime" in _manba[max(0, _boshi - 1400):_boshi],
+      "o'lchov izohi yo'qolgan")
+
 try:
     import shutil
     shutil.rmtree(_tmp, ignore_errors=True)
