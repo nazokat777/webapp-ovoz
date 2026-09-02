@@ -85,6 +85,28 @@ natija = bot._strip_whisper_boilerplate(xom)
 check("uydirma qismi o'chdi", "DimaTorzok" not in natija, natija)
 check("haqiqiy gap qoldi", "bema'nilik" in natija, natija)
 
+print("[3b] REGRESSIYA (2026-09-02, jonli logdan): butun gap o'chib ketardi")
+# Uydirma haqiqiy gapga NUQTASIZ yopishib kelganda butun parcha bitta
+# bo'lak sanalib, DARSNING MAZMUNI uydirma bilan birga o'chgan edi.
+xom = ("Имам Раббани говорит, что сила, Субтитры делал DimaTorzok")
+natija = bot._strip_whisper_boilerplate(xom)
+check("uydirma o'chdi (yopishgan)", "DimaTorzok" not in natija, natija)
+check("DARS MAZMUNI SAQLANDI (regressiya edi!)",
+      "Имам Раббани говорит" in natija, repr(natija))
+
+xom = ("Субтитры делал DimaTorzok [06:59] Субтитры делал DimaTorzok "
+       "[07:29] Я был муридом для человека, который назывался Абдул-Азиз.")
+natija = bot.yakuniy_tozalash(xom)
+check("ketma-ket uydirmalar o'chdi", "DimaTorzok" not in natija, natija)
+check("haqiqiy gap saqlandi", "Я был муридом" in natija, repr(natija))
+check("gap oldidagi [07:29] belgisi ham saqlandi", "[07:29]" in natija, natija)
+check("bo'shab qolgan [06:59] o'chdi", "[06:59]" not in natija, natija)
+
+# Kesikdan keyin qoldiq harf qolmasin ("Субтитры сдела" kesilib "л" qolishi)
+xom = "Субтитры сделал DimaTorzok"
+natija = bot._strip_whisper_boilerplate(xom)
+check("kesikdan qoldiq harf qolmadi", natija.strip() in ("",), repr(natija))
+
 print("[4] YOLG'IZ VAQT BELGILARI")
 xom = "[00:00] Salom dunyo. [04:30] [05:10] Davom etamiz. [07:00]"
 natija = bot._yolgiz_vaqt_belgilarini_olib_tashla(xom)

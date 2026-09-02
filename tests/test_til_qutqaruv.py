@@ -150,5 +150,25 @@ check("tuslash shakllari saqlanadi",
       bot._dedupe_repeated_words(mashq).strip() == mashq,
       bot._dedupe_repeated_words(mashq))
 
+print("[5] SIFAT KUTISHI — limitda turbo'ga tushmaslik")
+# Jonli natijada ko'rildi (2026-09-02): large-v3 5s limitga urildi va
+# deyarli hamma bo'lak turbo bilan o'qildi ("мюрид" -> "муром", nomlar
+# buzuq). Endi eng sifatli provayder qisqa limitda bo'lsa KUTILADI.
+check("eng sifatli provayder qisqa limitda -> kutiladi",
+      bot._sifat_uchun_kutiladimi(0, 5) is True)
+check("chegara ichida ham kutiladi",
+      bot._sifat_uchun_kutiladimi(0, bot.STT_SIFAT_KUTISH_MAKS) is True)
+check("juda uzoq limit -> kutilmaydi (haqiqiy kvota tugashi)",
+      bot._sifat_uchun_kutiladimi(0, bot.STT_SIFAT_KUTISH_MAKS + 1) is False)
+check("pastroq provayder uchun kutilmaydi",
+      bot._sifat_uchun_kutiladimi(1, 5) is False)
+check("cooldown yo'q bo'lsa kutilmaydi",
+      bot._sifat_uchun_kutiladimi(0, 0) is False)
+_m = open(os.path.join(ROOT, "bot.py"), encoding="utf-8").read()
+check("chunk loopi kutish funksiyasini ishlatadi",
+      "_sifat_uchun_kutiladimi(i_att, _qoldi)" in _m)
+check("kutishdan keyin cooldown QAYTA o'qiladi",
+      "boshqa oqim uzaytirgan" in _m)
+
 print(f"\nJami: {ok} PASS, {fail} FAIL")
 sys.exit(1 if fail else 0)

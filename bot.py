@@ -3205,6 +3205,23 @@ WHISPER_CHUNK_OVERLAP = 30     # Har bo'lak oxirgi 30 sek keyingisi bilan birlas
 # Sifat nazorati: butun provayder zanjiri necha marta takrorlansin.
 # Sifatsiz natija yetkazilmaydi — o'rniga qayta urinib ko'riladi.
 STT_QUALITY_ROUNDS = max(1, int(os.getenv("STT_QUALITY_ROUNDS", "3")))
+
+# ENG SIFATLI provayder limitda bo'lsa, shuncha soniyagacha KUTAMIZ —
+# pastroq modelga tushmaymiz. JONLI NATIJADA KO'RILDI (2026-09-02):
+# whisper-large-v3 5 soniyalik limitga urildi va 15 bo'lakning deyarli
+# hammasi turbo bilan o'qildi. Natijada "мюрид" -> "муром", nomlar buzuq —
+# foydalanuvchi "sifati juda yomon" dedi. 5-25 soniya kutish arzon,
+# yo'qolgan sifat esa qaytmaydi. Foydalanuvchi talabi: sifat > tezlik.
+STT_SIFAT_KUTISH_MAKS = max(0, int(os.getenv("STT_SIFAT_KUTISH", "25")))
+
+
+def _sifat_uchun_kutiladimi(provayder_indeksi, cooldown_qoldi):
+    """Limitdagi provayderni KUTIB chaqiramizmi, yoki tashlab ketamizmi?
+
+    Faqat zanjirning BIRINCHI (eng sifatli) provayderi uchun va faqat
+    qoldiq qisqa bo'lsa kutamiz. Pastdagilar uchun kutish ma'nosiz:
+    ularning o'rnini bosuvchi baribir sifatliroq emas."""
+    return provayder_indeksi == 0 and 0 < cooldown_qoldi <= STT_SIFAT_KUTISH_MAKS
 STT_ROUND_WAITS = [5, 20, 45]   # turlar orasidagi kutish (soniya)
 
 # OpenAI Whisper API qo'llab-quvvatlovchi tillar (ISO 639-1).
@@ -3561,17 +3578,28 @@ _WHISPER_BOILERPLATE = [
 # Gap ichida qidiriladigan naqsh haqiqiy nutqda UCHRAMASLIGI shart.
 # Umumiy outro iboralari ("продолжение следует", "спасибо за просмотр")
 # yuqoridagi ro'yxatda qoldi — ular faqat BUTUN GAP bo'lsa o'chadi.
+# Bu naqshlar topilgan SPAN O'RNIDA kesiladi (butun gap emas!).
+# REGRESSIYA SABOG'I (2026-09-02, jonli natijada ko'rildi): avval naqsh
+# topilganda butun bo'lak o'chirilardi. Uydirma haqiqiy gapga NUQTASIZ
+# yopishib kelganda ("Имам Раббани говорит, что сила, Субтитры делал
+# DimaTorzok") gap tugamagani uchun butun parcha bitta bo'lak sanaldi va
+# DARSNING HAQIQIY MAZMUNI uydirma bilan birga o'chib ketdi.
+# Endi faqat mos kelgan qism kesiladi, qolgani saqlanadi.
+# Har naqsh to'liq so'zni yutishi shart (\w* dumlari) — aks holda
+# "Субтитры сдела" kesilib "л DimaTorzok" qoldig'i qolardi.
 _WHISPER_UYDIRMA_NAQSHLARI = [
-    # Whisper o'rgangan subtitr muallifi — qaysi tilga tarjima qilinsa ham
-    # bu ism qoladi, ya'ni eng ishonchli imzo.
-    r"dimatorzok",
-    r"субтитр\w*\s+(создав|сдела|дела|подготов|редакт|коррект|перев)",
-    r"(редактор|корректор)\s+субтитров",
-    r"subtitles?\s+by\b",
-    r"amara\.?org",
+    # "Субтитры делал DimaTorzok" — fe'l va ismgacha bir butun kesiladi
+    r"субтитр\w*\s+(?:создав|сдела|дела|подготов|редакт|коррект|перев)\w*"
+    r"(?:\s+dimatorzok\w*)?",
+    r"(?:редактор\w*|корректор\w*)\s+субтитров",
+    # Yolg'iz qolgan ism ham ketadi — bu Whisper'ning yodlangan imzosi,
+    # qaysi tilga tarjima qilinsa ham o'zgarmaydi.
+    r"dimatorzok\w*",
+    r"subtitles?\s+by(?:\s+the)?(?:\s+amara\.?org)?(?:\s+community)?",
+    r"amara\.?org(?:\s+community)?",
     # Tarjimadan keyingi shakli: "Subtitrlarni ... tayyorladi".
     # "Videoga subtitr qo'shish kerak" kabi gap TEGILMAYDI — fe'l boshqa.
-    r"subtitr\w*\s+\S*\s*(tayyorla|yaratil|tarjima qil)",
+    r"subtitr\w*\s+\S+\s+(?:tomonidan\s+)?(?:tayyorla\w*|yaratil\w*|tarjima\s+qil\w*)",
 ]
 _WHISPER_UYDIRMA_RE = re.compile("|".join(_WHISPER_UYDIRMA_NAQSHLARI),
                                  re.IGNORECASE)
@@ -3600,15 +3628,19 @@ def _strip_whisper_boilerplate(text):
                 probe == b or (len(probe) <= 90 and probe.startswith(b))
                 for b in _WHISPER_BOILERPLATE
             )
-            # Oila naqshlari gap ICHIDA ham qidiriladi: uydirma ko'pincha
-            # haqiqiy gapning ortidan yopishib keladi ("...deb hisoblaydi.
-            # Subtitrlarni DimaTorzok tayyorladi"). Uzunlik chegarasi —
-            # butun paragrafni tasodifan yo'qotib qo'ymaslik uchun.
-            if not is_boiler and probe and len(probe) <= 120:
-                is_boiler = bool(_WHISPER_UYDIRMA_RE.search(probe))
             if is_boiler:
                 removed.append(part.strip())
                 continue
+            # Oila naqshlari: topilgan SPAN kesiladi, gapning qolgani
+            # SAQLANADI. Butun bo'lakni o'chirish jonli natijada haqiqiy
+            # dars mazmunini yo'qotgan edi (yuqoridagi regressiya izohi).
+            yangi, soni = _WHISPER_UYDIRMA_RE.subn(" ", part)
+            if soni:
+                removed.extend(m.group(0) for m in
+                               _WHISPER_UYDIRMA_RE.finditer(part))
+                part = re.sub(r"\s{2,}", " ", yangi).strip(" \t,;:-—")
+                if not re.search(r"\w", part.replace("_", "")):
+                    continue      # faqat uydirmadan iborat edi
             keep.append(part)
         out_lines.append(" ".join(x for x in keep if x.strip()))
     result = "\n".join(out_lines)
@@ -4847,11 +4879,20 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
         # nosozlik yoki limit tufayli sifat pasaygan bo'lsa, kutib qayta
         # urinamiz. Bir marta urinib taslim bo'lish sifatni pasaytirardi.
         for rnd in range(1, STT_QUALITY_ROUNDS + 1):
-            for nom, kind, model, a_url, a_headers, want_ts, a_langs in attempts:
+            for i_att, (nom, kind, model, a_url, a_headers, want_ts, a_langs) \
+                    in enumerate(attempts):
                 # Limitga urilgan provayderni umuman chaqirmaymiz — boshqa
                 # bo'laklar allaqachon aniqlagan. Ilgari har bo'lak buni
                 # QAYTADAN kashf etardi (120s behuda kutish x 60 bo'lak).
+                # ISTISNO — eng sifatli provayder: qoldiq qisqa bo'lsa uni
+                # KUTAMIZ, turbo'ga tushmaymiz (sifat > tezlik).
                 _qoldi = _cooldown_qoldi(nom)
+                if _qoldi and _sifat_uchun_kutiladimi(i_att, _qoldi):
+                    logging.info("⏳ Bo'lak %s/%s: %s limitda, sifat uchun "
+                                 "%ss kutamiz (turbo'ga tushmaymiz)",
+                                 idx, total, nom, _qoldi)
+                    time.sleep(_qoldi + 0.5)
+                    _qoldi = _cooldown_qoldi(nom)   # boshqa oqim uzaytirgan bo'lishi mumkin
                 if _qoldi:
                     errors.append(nom + ": limitda (" + str(_qoldi) + "s qoldi)")
                     continue
