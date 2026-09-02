@@ -3163,6 +3163,23 @@ def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges
     # 1) STT — progress_cb ni transcribe_whisper'ga uzatamiz
     text = transcribe_whisper(file_path, language, progress_cb, failed_ranges_out) or ""
 
+    # 1b) TIL QUTQARUVI. Foydalanuvchi bot tilini ruscha qilib qo'yib
+    # o'zbekcha audio yuborsa, Whisper language=ru bilan nutqni tovushiga
+    # qarab ruscha harflarda yozadi ("Менге битте сноу постыны...") —
+    # amalda 2026-09-01 da shunday bo'ldi va PDF butunlay yaroqsiz chiqdi.
+    # Bunday natija aniqlansa butun audio uz bilan QAYTA o'qiladi.
+    # STT arzon va parallel (bo'lak ~1-2 soniya); qimmat bosqich (audio
+    # tayyorlash) takrorlanmaydi — sifat uchun to'lanadigan narx kichik.
+    if language == "ru" and text and _fonetik_ozbek_shubhasi(text):
+        logging.warning("🔁 TIL QUTQARUVI: language=ru natijasi fonetik "
+                        "o'zbekka o'xshaydi — uz bilan qayta o'qilmoqda")
+        qayta_failed = []
+        qayta = transcribe_whisper(file_path, "uz", progress_cb, qayta_failed) or ""
+        if qayta.strip():
+            text, language = qayta, "uz"
+            if failed_ranges_out is not None:
+                failed_ranges_out[:] = qayta_failed
+
     # 2) O'zbek matn — HAR DOIM GPT-4o bilan tozalash (TAK! TEXT darajasidagi sifat)
     if language == "uz" and text:
         text = _cleanup_uzbek_transcript(text)
@@ -4010,11 +4027,35 @@ def _cleanup_uzbek_transcript_chunk(text):
         "   • 'الله اكبر' → 'Allohu akbar', 'سبحان الله' → 'Subhanalloh'\n"
         "   • 'الحمد لله' → 'Alhamdulillah'\n"
         "   If an Arabic passage is NOT a well-known formula, KEEP IT AS IS.\n"
+        "3b) ARABIC QUOTATIONS INSIDE THE LECTURE. The lecturer quotes the "
+        "Qur'an, hadith texts and nahv/sarf (Arabic grammar) examples as "
+        "EVIDENCE (dalil). Whisper writes these phonetically in Latin or "
+        "Cyrillic letters. These fragments are ARABIC, not broken Uzbek:\n"
+        "   • KEEP the phonetic rendering exactly as transcribed. Fix only "
+        "the letter-mapping issues of rule 1 (ş→sh etc.).\n"
+        "   • NEVER 'correct' an Arabic word into a similar-looking Uzbek "
+        "word. 'qola' (قال — he said) must NOT become 'qara' or 'qoladi'.\n"
+        "   • NEVER complete, extend or fix a Qur'an verse FROM MEMORY, even "
+        "if you recognise it and the transcription seems imperfect. The "
+        "transcript must reflect what was HEARD, not the canonical text. "
+        "If a quote is clearly garbled, keep it and mark [?].\n"
+        "   • Typical signs of an Arabic quote: qola/qolallohu ta'alo, "
+        "innal/inna, alladzina/allazina, va-, bi-, li- prefixes, -un/-in/-an "
+        "endings (tanwin), words after 'oyatda', 'hadisda', 'masalan arabchada'.\n"
         "4) RELIGIOUS NAMES/TERMS — fix only the SPELLING to the Uzbek standard, "
         "never swap one name for another:\n"
         "   payg'ambar, sallallohu alayhi va sallam, Imom Buxoriy, Imom Muslim, "
         "Imom Shofiy, Imom Abu Hanifa, sahobalar, ulamolar, shariat, hadis, "
         "tafsir, fiqh, aqida, Allohu taolo, inshalloh, alhamdulillah.\n"
+        "4b) NAHV/SARF (Arabic grammar lesson) TERMS — the lecturer uses them "
+        "constantly; Whisper mangles them. Restore the standard Uzbek "
+        "madrasa spelling (spelling fix of the same term, not a replacement):\n"
+        "   nahv, sarf, mubtado, xabar, fe'l, foil, maf'ul, mafulun bihi, "
+        "mansub, marfu', majrur, majzum, i'rob, e'rob→i'rob, zamma, fatha, "
+        "kasra, sukun, tanvin, masdar, vazn, bob, sig'a, zamir, ismi ishora, "
+        "harfi jar, muzofun ilayh, sifat-mavsuf, jumlai ismiya, jumlai fe'liya.\n"
+        "   Example: 'mubtada xabar bo'lib e'rob olindi' → "
+        "'mubtado xabar bo'lib i'rob olindi'.\n"
         "5) PUNCTUATION and paragraph breaks where sentences clearly end.\n"
         "6) If the SAME phrase repeats 3+ times in a row (a known Whisper glitch), "
         "keep ONE copy.\n\n"
@@ -4030,7 +4071,10 @@ def _cleanup_uzbek_transcript_chunk(text):
         "10) NEVER add sentences that are not in the input. Do not pad the text to "
         "make it longer.\n"
         "11) NEVER change numbers, dates, names, quantities or Qur'an/hadith "
-        "quotations in any way.\n\n"
+        "quotations in any way. This includes nahv/sarf example sentences the "
+        "lecturer conjugates aloud (zaraba, zarabaa, zarabuu...) — repetitive "
+        "conjugation drills are the LESSON CONTENT, not a Whisper glitch; "
+        "rule 6 (dedupe) does NOT apply to them.\n\n"
 
         "═══ EXAMPLES ═══\n"
         "INPUT:  'Şu kişi muhalifni dushman ko'rmaydi'\n"
@@ -4041,6 +4085,13 @@ def _cleanup_uzbek_transcript_chunk(text):
         "  ('ediskanlar' is garbled — marked, NOT replaced with a guess)\n\n"
         "INPUT:  'ele saham dedi'\n"
         "OUTPUT: 'ele saham[?] dedi'\n\n"
+        "INPUT:  'Oyatda qolallohu taolo innama amaluhum bin niyat deyilgan'\n"
+        "OUTPUT: 'Oyatda qolallohu taolo innama amaluhum bin niyat deyilgan'\n"
+        "  (Arabic dalil kept EXACTLY as heard — even though the canonical "
+        "hadith wording differs, we must not fix it from memory)\n\n"
+        "INPUT:  'zaraba zarabaa zarabuu zarabat zarabataa'\n"
+        "OUTPUT: 'zaraba zarabaa zarabuu zarabat zarabataa'\n"
+        "  (sarf conjugation drill — repetition is the lesson, not a glitch)\n\n"
 
         "OUTPUT ONLY the corrected text. No commentary, no preamble, no notes."
     )
@@ -4516,6 +4567,45 @@ def _is_wrong_script(text, expect_lang="uz"):
         return False
     arab = len(_ARAB_RE.findall(text))
     return arab > max(10, len(text) * 0.10)
+
+
+# Rus tilining eng tez-tez uchraydigan yordamchi so'zlari. Haqiqiy ruscha
+# nutq transkriptida ular so'zlarning kamida 15-40% ini tashkil qiladi.
+# O'zbekcha nutq ruscha harflar bilan yozib olinganda esa ("Менге битте
+# сноу постыны ботке юбор") ular deyarli uchramaydi — shu farq o'lchanadi.
+_RUSCHA_STOPWORDLAR = frozenset((
+    "и в не на я что с он то а как это вы мы но они у же бы по из за для о "
+    "так вот если или до при был была было были есть нет да ну там его ее её "
+    "их мне меня нас вас них когда только уже еще ещё чтобы может очень все "
+    "всё этот эта эти тот кто где надо будет можно нужно потом здесь теперь "
+    "который которая почему тоже даже после через без более между собой ним "
+    "ней них себя тебе тебя том чем этом всех сам сама например значит "
+    "давайте сейчас просто конечно поэтому итак хорошо"
+).split())
+
+
+def _fonetik_ozbek_shubhasi(text):
+    """language=ru bilan chiqqan matn ASLIDA o'zbekcha nutqmi?
+
+    AMALDA BO'LGAN XATO (2026-09-01): foydalanuvchi bot tilini ruscha
+    qilib qo'ygan, audio esa o'zbekcha edi. Whisper'ga language=ru
+    majburlangach u o'zbek nutqini tovushiga qarab ruscha harflar bilan
+    yozib chiqdi: "Менге битте сноу постыны ботке юбор баттенлары бленд".
+    detect_text_lang buni kirill deb "ru" tasnifladi, tarjimon esa
+    axlatdan "ma'no" to'qishga majbur bo'ldi. Foydalanuvchi PDF'da
+    ma'nosiz matn oldi va nima buzilganini bilmasdi.
+
+    Farq o'lchanadigan: haqiqiy ruscha nutqda yordamchi so'zlar (и, в,
+    не, что...) ulushi baland, fonetik o'zbekda nolga yaqin.
+    Deterministik, API chaqiruvisiz."""
+    if not text:
+        return False
+    sozlar = re.findall(r"[а-яё]+", text.lower())
+    # Kalta matnda hukm chiqarmaymiz — noto'g'ri qutqaruv ham zarar.
+    if len(sozlar) < 30:
+        return False
+    ulush = sum(1 for s in sozlar if s in _RUSCHA_STOPWORDLAR) / len(sozlar)
+    return ulush < 0.08
 
 
 def detect_text_lang(text):
