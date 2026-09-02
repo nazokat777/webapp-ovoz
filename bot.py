@@ -5149,18 +5149,34 @@ def _gpt_translate_one(text, source_lang, target_lang="uz"):
     target_rule = target_strict_rules.get(target_lang, "")
     target_eng = target_english_name.get(target_lang, tgt_name)
 
+    # QOIDALAR TARIXI: ilgari 3-qoida "NATURAL FLOW — use literary style,
+    # not word-by-word" va 4-qoida "IDIOMS — use equivalent expressions"
+    # edi. Bu modelga gapni QAYTA YOZISHGA ochiq ruxsat berardi va
+    # foydalanuvchi "gaplarini o'zgartirib tashlagan" deb qaytardi (2026-09-02).
+    # Bu bot MA'RUZA TRANSKRIPTINI tarjima qiladi — ustozning gapi hujjat,
+    # uni "chiroyli" qilish vazifa emas, buzish esa jiddiy xato.
     base_system = (
-        f"You are a HIGHLY PRECISE professional translator specializing in religious, "
-        f"academic, and technical texts. Your job is ACCURATE translation into {target_eng}.\n\n"
+        f"You are translating a VERBATIM TRANSCRIPT of a live lecture into "
+        f"{target_eng}. The transcript is a RECORD of what the lecturer said — "
+        f"your job is faithful transfer of meaning, NOT literary rewriting.\n\n"
         f"STRICT RULES:\n"
         f"1) PRESERVE EXACT MEANING — every fact, name, number, date must be accurate.\n"
         f"2) TRANSLATE COMPLETELY — do not skip, summarize, or omit any sentence.\n"
-        f"3) NATURAL FLOW — use literary style of target language, not word-by-word.\n"
-        f"4) IDIOMS — use equivalent expressions in target language.\n"
-        f"5) PROPER NOUNS — keep names as is (e.g., Muhammad, London, Tashkent).\n"
-        f"6) NUMBERS — preserve exactly (numbers, dates, statistics).\n"
-        f"7) RELIGIOUS TERMS — keep Quranic verses in original Arabic.\n"
-        f"8) OUTPUT FORMAT — ONLY the translation, no preamble, no notes, no apologies.\n\n"
+        f"3) SENTENCE-BY-SENTENCE — keep the same sentence order and structure. "
+        f"Do NOT merge, split, reorder or paraphrase sentences. Translate each "
+        f"sentence as directly as the target grammar allows.\n"
+        f"4) GARBLED INPUT STAYS GARBLED — the transcript comes from speech "
+        f"recognition and some sentences are incoherent or broken. Translate "
+        f"them literally as they are. NEVER 'repair' an incoherent sentence "
+        f"into something that sounds sensible — inventing meaning the lecturer "
+        f"did not say is the WORST possible error. Never add content.\n"
+        f"5) SPOKEN-LANGUAGE FEATURES — repetitions, self-corrections and "
+        f"filler phrases are part of the record; keep them.\n"
+        f"6) PROPER NOUNS — keep names as is (e.g., Muhammad, London, Tashkent).\n"
+        f"7) NUMBERS — preserve exactly (numbers, dates, statistics).\n"
+        f"8) RELIGIOUS TERMS — keep Quranic verses in original Arabic.\n"
+        f"9) TIMESTAMPS like [05:40] — copy them unchanged, in place.\n"
+        f"10) OUTPUT FORMAT — ONLY the translation, no preamble, no notes.\n\n"
         f"{target_rule}"
     )
 
@@ -9438,6 +9454,21 @@ def _ensure_uzbek_text_ichki(user_id, text, notify=True):
                     except Exception:
                         pass
                 return text
+            # ASL MATN HAM YUBORILADI. Tarjima qanchalik yaxshi bo'lmasin,
+            # u ikkilamchi hujjat — ustozning gapi esa asl tilda hujjat.
+            # "Gaplarini o'zgartirib tashlagan" shikoyatining (2026-09-02)
+            # yagona ishonchli davosi: foydalanuvchi istalgan joyni ustoz
+            # o'z tilida qanday aytganini ko'ra olishi kerak.
+            if notify:
+                try:
+                    _send_pdf_variant(
+                        user_id, yakuniy_tozalash(text),
+                        "asl-matn.pdf",
+                        "📄 Asl matn (" + nom + ") — tarjimani "
+                        "solishtirib tekshirish uchun",
+                        title="Audio & Konspekt — Asl matn")
+                except Exception as _e:
+                    logging.warning("Asl matn PDF yuborilmadi: %s", _e)
             return tarjima
         logging.warning("Tarjima bo'sh qaytdi — asl matn yetkaziladi")
     except Exception as e:

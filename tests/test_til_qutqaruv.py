@@ -170,5 +170,58 @@ check("chunk loopi kutish funksiyasini ishlatadi",
 check("kutishdan keyin cooldown QAYTA o'qiladi",
       "boshqa oqim uzaytirgan" in _m)
 
+print("[6] TARJIMA — parafraza taqiqlandi, asl matn ham yuboriladi")
+# Foydalanuvchi shikoyati (2026-09-02): "gaplarini o'zgartirib tashlagan".
+# Eski promptdagi "literary style" va "IDIOMS" qoidalari modelga gapni
+# qayta yozishga ruxsat berardi.
+# Izohda eski qoidalar tarix sifatida eslatiladi — PROMPT matnining
+# o'zini tekshiramiz (izoh qatorlari chiqarib tashlanadi).
+_bs = _m.find("base_system = (")
+_prompt_kodi = "\n".join(q for q in _m[_bs:_bs + 2500].split("\n")
+                         if not q.lstrip().startswith("#"))
+check("'literary style' ruxsati promptdan olib tashlandi",
+      "literary style" not in _prompt_kodi)
+check("'IDIOMS' almashtirish ruxsati promptdan olib tashlandi",
+      "use equivalent expressions" not in _prompt_kodi)
+check("tarjima o'zini TRANSKRIPT tarjimoni deb biladi",
+      "VERBATIM TRANSCRIPT" in _m)
+check("gaplarni birlashtirish/parafraza taqiqlangan",
+      "Do NOT merge, split, reorder or paraphrase" in _m)
+check("buzuq gapni 'tuzatish' taqiqlangan (ma'no to'qish eng og'ir xato)",
+      "NEVER 'repair'" in _m)
+check("vaqt belgilari joyida qoladi",
+      "copy them unchanged" in _m)
+
+# Asl matn yetkazilishi — xulq darajasida
+_asl_tr = bot.translate_with_claude
+_asl_pdf = getattr(bot, "_send_pdf_variant")
+_asl_msg = bot.telegram_send_message
+_pdflar = []
+ruscha_matn = ("Сегодня мы говорим о важной теме. " * 40).strip()
+try:
+    bot.translate_with_claude = (
+        lambda text, source_lang, progress_cb=None, target_lang="uz",
+        lost_chunks_out=None: "Bugun muhim mavzu haqida gaplashamiz. " * 40)
+    bot._send_pdf_variant = (
+        lambda uid, matn, fayl, izoh, **k: _pdflar.append(
+            {"fayl": fayl, "matn": matn, "izoh": izoh}) or True)
+    bot.telegram_send_message = lambda *a, **k: True
+    natija = bot.ensure_uzbek_text(1, ruscha_matn, notify=True)
+    check("tarjima qaytdi", "Bugun muhim mavzu" in (natija or ""), natija)
+    check("asl matn PDF yuborildi", len(_pdflar) == 1, _pdflar)
+    if _pdflar:
+        check("asl matn o'z ichida (ustoz gapi)",
+              "Сегодня мы говорим" in _pdflar[0]["matn"])
+        check("izohda maqsad tushuntirilgan",
+              "solishtirib" in _pdflar[0]["izoh"], _pdflar[0]["izoh"])
+    # notify=False (ichki oqimlar) da PDF yuborilmaydi
+    _pdflar.clear()
+    bot.ensure_uzbek_text(1, ruscha_matn, notify=False)
+    check("notify=False da asl PDF yuborilmaydi", _pdflar == [], _pdflar)
+finally:
+    bot.translate_with_claude = _asl_tr
+    bot._send_pdf_variant = _asl_pdf
+    bot.telegram_send_message = _asl_msg
+
 print(f"\nJami: {ok} PASS, {fail} FAIL")
 sys.exit(1 if fail else 0)
