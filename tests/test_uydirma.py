@@ -119,6 +119,41 @@ check("matn buzilmadi",
 check("bo'sh matnda yiqilmaydi",
       bot._yolgiz_vaqt_belgilarini_olib_tashla("") == "")
 
+print("[4b] YONMA-YON TAKROR GAPLAR (overlap ulash joyidan)")
+# PDF'da ko'rildi (2026-09-02): bo'laklar 30s ustma-ust bilan ulanganda
+# bitta gap ikki marta chiqib qolgan.
+xom = ("Biz sizning huzurimizga kelganingizdan juda xursandmiz. "
+       "Biz sizning huzurimizga kelganingizdan juda xursandmiz. "
+       "Dars davom etadi.")
+natija = bot._yonma_yon_takror_gaplarni_yig(xom)
+check("aynan takror gap bittaga tushdi",
+      natija.count("huzurimizga kelganingizdan") == 1, natija)
+check("keyingi gap saqlandi", "Dars davom etadi." in natija, natija)
+
+# Vaqt belgisi bilan boshlangan nusxa ham taniladi
+xom = ("Bugun muhim mavzuni boshlaymiz, e'tibor bering. "
+       "[03:30] Bugun muhim mavzuni boshlaymiz, e'tibor bering.")
+natija = bot._yonma_yon_takror_gaplarni_yig(xom)
+check("vaqt belgili nusxa ham yig'ildi",
+      natija.count("muhim mavzuni boshlaymiz") == 1, natija)
+
+# HIMOYA: qisqa zikr va ta'kid takrorlari qonuniy — tegilmaydi
+for saqlanishi_kerak in [
+    "Allohu akbar. Allohu akbar. Allohu akbar.",
+    "Yo'q. Yo'q. Bu boshqa masala.",
+]:
+    natija = bot._yonma_yon_takror_gaplarni_yig(saqlanishi_kerak)
+    check("qisqa takror saqlandi: " + saqlanishi_kerak[:26],
+          natija.strip() == saqlanishi_kerak.strip(), natija)
+
+# HIMOYA: biroz FARQLI gaplar ta'kid bo'lishi mumkin — tegilmaydi
+xom = ("Bugun biz ta'limni o'zgartirish haqida gapiramiz albatta. "
+       "Bugun biz ta'limni o'zgartirish haqida gapirib beramiz albatta.")
+natija = bot._yonma_yon_takror_gaplarni_yig(xom)
+check("biroz farqli gaplar TEGILMAYDI",
+      natija.strip() == xom.strip(), natija)
+check("bo'sh matnda yiqilmaydi", bot._yonma_yon_takror_gaplarni_yig("") == "")
+
 print("[5] YAKUNIY TOZALASH — ikkalasi birga")
 xom = ("[00:00] Salom, do'stlar. Subtitrlarni DimaTorzok tayyorladi\n"
        "[00:54] Subtitrlarni DimaTorzok tayyorladi\n"

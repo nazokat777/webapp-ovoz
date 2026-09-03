@@ -3675,6 +3675,41 @@ def _yolgiz_vaqt_belgilarini_olib_tashla(matn):
     return "\n".join(natija).strip()
 
 
+def _yonma_yon_takror_gaplarni_yig(matn):
+    """AYNAN bir xil, KETMA-KET kelgan gaplardan bittasini qoldiradi.
+
+    Manba: bo'laklar 30 soniyalik ustma-ust (overlap) bilan o'qiladi va
+    ulash joyida bitta gap ikki marta chiqib qoladi — PDF'da ko'rildi:
+    "Biz sizning huzurimizga kelganingizdan juda xursandmiz." x2.
+    _clean_whisper_hallucination faqat 3+ takrorni yig'adi, 2 talik
+    aynan nusxa o'tib ketardi.
+
+    Himoyalar (matn yo'qotish takrordan yomonroq):
+      - faqat AYNAN mos gaplar (biroz farqlisi ustozning ta'kidi bo'lishi
+        mumkin — tegilmaydi)
+      - 30 belgidan kalta gap tegilmaydi ("Allohu akbar." kabi zikr va
+        ta'kidlar qonuniy takrorlanadi)
+      - solishtirishda bosh harf/vaqt belgisi farqi e'tiborga olinmaydi,
+        lekin QOLDIRILADIGAN nusxa asliday saqlanadi"""
+    if not matn:
+        return matn
+    natija_qatorlar = []
+    for qator in matn.split("\n"):
+        gaplar = re.split(r"(?<=[.!?])\s+", qator)
+        saqlangan = []
+        oldingi_kalit = None
+        for gap in gaplar:
+            kalit = _VAQT_BELGISI_RE.sub("", gap).strip().lower()
+            kalit = re.sub(r"\s+", " ", kalit)
+            if kalit and len(kalit) >= 30 and kalit == oldingi_kalit:
+                continue      # aynan takror — tashlanadi
+            saqlangan.append(gap)
+            if kalit:
+                oldingi_kalit = kalit
+        natija_qatorlar.append(" ".join(x for x in saqlangan if x.strip()))
+    return "\n".join(natija_qatorlar)
+
+
 def yakuniy_tozalash(matn):
     """Foydalanuvchiga BERISHDAN OLDINGI oxirgi tozalash.
 
@@ -3685,6 +3720,7 @@ def yakuniy_tozalash(matn):
     if not matn:
         return matn
     matn = _strip_whisper_boilerplate(matn)
+    matn = _yonma_yon_takror_gaplarni_yig(matn)
     matn = _yolgiz_vaqt_belgilarini_olib_tashla(matn)
     return matn
 
