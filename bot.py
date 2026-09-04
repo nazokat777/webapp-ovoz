@@ -3181,7 +3181,15 @@ def transcribe_unified(file_path, progress_cb=None, language="uz", failed_ranges
                 failed_ranges_out[:] = qayta_failed
 
     # 2) O'zbek matn — HAR DOIM GPT-4o bilan tozalash (TAK! TEXT darajasidagi sifat)
-    if language == "uz" and text:
+    # MATNGA QARAB, faqat so'ralgan tilga emas: transcribe_whisper ichidagi
+    # ishonch-probe tilni uz ga almashtirgan bo'lishi mumkin (ruscha
+    # so'ralgan, audio o'zbekcha). O'shanda ham imlo tozalash SHART —
+    # aks holda "Allah tamangi qadan basa" kabi xom yozuv o'tib ketardi.
+    if text and (language == "uz" or detect_text_lang(text) == "uz"):
+        if language != "uz":
+            logging.info("🧹 Matn o'zbekcha chiqdi (so'ralgan: %s) — o'zbek "
+                         "tozalash qo'llanadi", language)
+            language = "uz"
         text = _cleanup_uzbek_transcript(text)
 
     # 3) YAKUNIY xavfsizlik: takrorlarni yana tozalash (lekin matnni saqlab)
@@ -4652,6 +4660,68 @@ _RUSCHA_STOPWORDLAR = frozenset((
 ).split())
 
 
+# ── TIL ISHONCH PROBE'I ────────────────────────────────────────────────────
+# NEGA STOPWORD YETMADI (o'lchandi, 2026-09-03): o'zbek darsi (arabcha
+# matn + o'zbekcha sharh) ruscha rejimda o'qilganda Whisper fonetik axlat
+# EMAS, butunlay TO'QILGAN ravon ruscha matn berdi — yordamchi so'zlar
+# ulushi 44.7%, ya'ni haqiqiy ruschadan farqsiz. So'z statistikasi bilan
+# "ishonchli yolg'on"ni ushlab bo'lmaydi.
+#
+# Whisper'ning O'Z ISHONCHI esa yolg'on gapirmaydi (o'sha namunalar):
+#     ru: avg_logprob=-0.662  compression=2.21     uz: -0.515  1.75
+#     ru: avg_logprob=-1.183  compression=2.12     uz: -0.629  1.68
+# compression_ratio >= 2.0 — Whisper'ning o'z "uydirma" chegarasi.
+# Probe: bitta bo'lak ikki til bilan o'qiladi (ish boshiga 2 so'rov),
+# ishonchi yuqorisi butun ish uchun tanlanadi.
+TIL_PROBE_LOGPROB_FARQI = 0.10       # uz ishonchi shuncha yuqori bo'lsa
+TIL_PROBE_UYDIRMA_SIQILISH = 2.0     # Whisper'ning standart chegarasi
+
+
+def _til_ishonch_olchov(chunk_path, lang, model, url, headers):
+    """Bo'lakni verbose_json bilan o'qib Whisper'ning o'z ishonchini qaytaradi:
+    (o'rtacha avg_logprob, o'rtacha compression_ratio, so'z soni) yoki None."""
+    try:
+        with open(chunk_path, "rb") as f:
+            resp = requests.post(
+                url, headers=headers,
+                files={"file": (os.path.basename(chunk_path), f,
+                                "application/octet-stream")},
+                data={"model": model, "response_format": "verbose_json",
+                      "language": lang},
+                timeout=300)
+        if resp.status_code != 200:
+            return None
+        j = resp.json()
+        seg = j.get("segments") or []
+        if not seg:
+            return None
+        lp = sum(float(s.get("avg_logprob", 0) or 0) for s in seg) / len(seg)
+        cr = sum(float(s.get("compression_ratio", 0) or 0) for s in seg) / len(seg)
+        return (lp, cr, len((j.get("text") or "").split()))
+    except Exception as e:
+        logging.warning("Til probe (%s) o'tkazib yuborildi: %s", lang, e)
+        return None
+
+
+def _til_tanlash(sorogan, sorogan_olchov, uz_olchov):
+    """Qaysi til bilan butun audioni o'qiymiz? Sof qaror funksiyasi.
+
+    "uz" ga o'tish uchun IKKI shart: (a) uz ishonchliroq YOKI so'ralgan
+    tilda Whisper o'zini uydirma rejimida (siqilish >= 2.0) ko'rsatgan,
+    VA (b) uz natijasi so'z jihatdan kambag'al emas. Ikkalasi ham
+    bo'lmasa so'ralgan til qoladi — noto'g'ri almashtirish ham zarar."""
+    if sorogan == "uz" or not sorogan_olchov or not uz_olchov:
+        return sorogan
+    s_lp, s_cr, s_w = sorogan_olchov
+    u_lp, u_cr, u_w = uz_olchov
+    ishonchliroq = u_lp >= s_lp + TIL_PROBE_LOGPROB_FARQI
+    uydirma = s_cr >= TIL_PROBE_UYDIRMA_SIQILISH and u_cr < s_cr
+    kambagal_emas = u_w >= s_w * 0.8
+    if (ishonchliroq or uydirma) and kambagal_emas:
+        return "uz"
+    return sorogan
+
+
 def _fonetik_ozbek_shubhasi(text):
     """language=ru bilan chiqqan matn ASLIDA o'zbekcha nutqmi?
 
@@ -4835,6 +4905,30 @@ def transcribe_whisper(file_path, source_lang, progress_cb=None, failed_ranges_o
                                      _pdet)
             except Exception as _e:
                 logging.warning("Til aniqlash o'tkazib yuborildi: %s", _e)
+
+    # ISHONCH PROBE'I — foydalanuvchi ru/en tanlagan, audio esa o'zbekcha
+    # bo'lsa. Whisper noto'g'ri tilda ishonchli-ko'ringan uydirma yozadi
+    # (o'lchandi: 44.7% ruscha yordamchi so'z, mazmuni esa to'qima).
+    # Yagona ishonchli signal — Whisper'ning O'Z ishonchi. Bo'lak
+    # o'rtasidan olinadi: bosh qismi ko'pincha arabcha matn/musiqa.
+    elif source_lang in ("ru", "en") and chunks_to_process:
+        _form = [a for a in _stt_attempts() if a[1] == "form"]
+        if _form:
+            _pn, _, _pm, _purl, _phdr, _pts, _plg = _form[0]
+            _pchunk = chunks_to_process[len(chunks_to_process) // 3]
+            _s = _til_ishonch_olchov(_pchunk, source_lang, _pm, _purl, _phdr)
+            _u = _til_ishonch_olchov(_pchunk, "uz", _pm, _purl, _phdr)
+            _tanlov = _til_tanlash(source_lang, _s, _u)
+            if _s and _u:
+                logging.info("🌐 Til probe: %s(logprob=%.2f, siqilish=%.2f, %d so'z) "
+                             "vs uz(logprob=%.2f, siqilish=%.2f, %d so'z) -> %s",
+                             source_lang, _s[0], _s[1], _s[2],
+                             _u[0], _u[1], _u[2], _tanlov)
+            if _tanlov != source_lang:
+                logging.warning("🔁 TIL ALMASHTIRILDI: %s -> uz (audio o'zbekcha, "
+                                "so'ralgan tilda Whisper uydirma yozardi)",
+                                source_lang)
+                source_lang = _tanlov
 
     # Audio MAX_AUDIO_CHUNKS chegarasiga tegib kesilganmi? Agar shunday bo'lsa,
     # kesilgan oraliqni failed_ranges'ga qo'shamiz — foydalanuvchi qaysi

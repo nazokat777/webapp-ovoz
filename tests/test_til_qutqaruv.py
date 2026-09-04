@@ -170,6 +170,37 @@ check("chunk loopi kutish funksiyasini ishlatadi",
 check("kutishdan keyin cooldown QAYTA o'qiladi",
       "boshqa oqim uzaytirgan" in _m)
 
+print("[5b] ISHONCH PROBE'I — Whisper'ning o'z ishonchi bo'yicha til tanlash")
+# O'lchandi (2026-09-03): o'zbek darsi ruscha rejimda 44.7% yordamchi
+# so'z bilan TO'QILGAN ravon ruscha berdi — stopword tekshiruvi ojiz.
+# Whisper'ning o'z ishonchi esa aniq ajratdi:
+#     ru: logprob=-0.662 siqilish=2.21 (322 so'z)  uz: -0.515 1.75 (365)
+#     ru: logprob=-1.183 siqilish=2.12 (284 so'z)  uz: -0.629 1.68 (382)
+check("o'zbek dars, 1-namuna -> uz",
+      bot._til_tanlash("ru", (-0.662, 2.21, 322), (-0.515, 1.75, 365)) == "uz")
+check("o'zbek dars, 2-namuna -> uz",
+      bot._til_tanlash("ru", (-1.183, 2.12, 284), (-0.629, 1.68, 382)) == "uz")
+# Haqiqiy ruscha audio: ru ishonchliroq, siqilish normal -> ru qoladi
+check("haqiqiy ruscha -> ru qoladi",
+      bot._til_tanlash("ru", (-0.30, 1.50, 300), (-0.90, 1.60, 280)) == "ru")
+# Teng ishonch (farq chegaradan kichik) -> so'ralgan til qoladi
+check("farq kichik -> so'ralgan til qoladi",
+      bot._til_tanlash("ru", (-0.50, 1.50, 300), (-0.45, 1.55, 300)) == "ru")
+# uz ishonchli-yu, matni kambag'al (so'z 80% dan kam) -> almashtirilmaydi
+check("uz kambag'al bo'lsa almashtirilmaydi",
+      bot._til_tanlash("ru", (-0.70, 1.80, 300), (-0.40, 1.60, 150)) == "ru")
+# Siqilish uydirma chegarasida (>=2.0) va uz siqilishi past -> uz
+check("uydirma siqilishi -> uz",
+      bot._til_tanlash("en", (-0.55, 2.30, 300), (-0.60, 1.70, 290)) == "uz")
+check("o'lchov yo'q -> so'ralgan til", bot._til_tanlash("ru", None, (-0.5, 1.5, 300)) == "ru")
+check("uz so'ralganda probe tegmaydi", bot._til_tanlash("uz", (-0.5, 1.5, 3), (-0.9, 3.0, 1)) == "uz")
+check("probe transcribe_whisper'ga ulangan",
+      "_til_tanlash(source_lang, _s, _u)" in _m)
+check("probe bo'lak O'RTASIDAN oladi (boshi arabcha matn/musiqa bo'ladi)",
+      "chunks_to_process[len(chunks_to_process) // 3]" in _m)
+check("til almashsa o'zbek tozalash ham ishlaydi",
+      'detect_text_lang(text) == "uz"' in _m)
+
 print("[6] TARJIMA — parafraza taqiqlandi, asl matn ham yuboriladi")
 # Foydalanuvchi shikoyati (2026-09-02): "gaplarini o'zgartirib tashlagan".
 # Eski promptdagi "literary style" va "IDIOMS" qoidalari modelga gapni
