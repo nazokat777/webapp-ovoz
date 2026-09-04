@@ -366,8 +366,12 @@ def _chat_attempts():
     gq = _ensure_groq_key()
     out = []
     if gm:
+        # 32768, 8192 EMAS: Gemini "o'ylovchi" model — ichki fikrlash
+        # tokenlari ham max_tokens ga kiradi. O'lchandi: 2700 belgilik
+        # tozalashda ~7800 token fikrlashga ketib javob 8192 da kesildi.
+        # Gemini chiqish chegarasi 65536 — 32768 xavfsiz oraliq.
         out.append(("gemini-3.5-flash", "gemini-3.5-flash", GEMINI_CHAT_URL,
-                    _bearer(gm), 8192))
+                    _bearer(gm), 32768))
     if gq:
         # Modellar HAQIQIY Groq ro'yxatidan olingan va o'zbek matnida
         # o'lchangan (llama-3.3 endi mavjud emas — qattiq yozilgani 404
@@ -381,7 +385,7 @@ def _chat_attempts():
                     GROQ_CHAT_URL, _bearer(gq), 8192))
     if gm:
         out.append(("gemini-3.1-flash-lite", "gemini-3.1-flash-lite",
-                    GEMINI_CHAT_URL, _bearer(gm), 8192))
+                    GEMINI_CHAT_URL, _bearer(gm), 32768))
     if oa:
         out.append(("gpt-4o", "gpt-4o", OPENAI_CHAT_URL, _bearer(oa), 16000))
     if gq:
@@ -442,12 +446,27 @@ def _chat_request(payload, timeout=300, label=""):
                 resp = requests.post(url, headers=h, json=body, timeout=timeout)
                 if resp.status_code == 200:
                     try:
-                        txt = (resp.json()["choices"][0]["message"].get("content")
-                               or "").strip()
+                        _tanlov = resp.json()["choices"][0]
+                        txt = (_tanlov["message"].get("content") or "").strip()
+                        _finish = _tanlov.get("finish_reason")
                     except Exception as e:
                         errors.append(nom + ": javob shakli buzuq (" + str(e)[:60] + ")")
                         break
                     txt = _strip_think(txt)
+                    # KESILGAN JAVOB MUVAFFAQIYAT EMAS. O'lchandi (2026-09-04):
+                    # gemini-3.5-flash 2700 belgilik tozalashda finish_reason=
+                    # "length" qaytardi — total_tokens=10858, ko'rinadigan
+                    # javob 326 token: qolgan ~7800 token ichki "fikrlash"ga
+                    # ketib max_tokens ni yedi. Kesilgan matn qabul qilinib,
+                    # qayta urinish YANA O'SHA provayderga borardi va yana
+                    # kesilardi; oxirida xom matn yetkazilardi. Keyingi
+                    # provayder (qwen) esa 2 soniyada to'liq bajargan edi.
+                    if _finish == "length":
+                        errors.append(nom + ": javob kesildi (finish_reason=length, "
+                                      + str(len(txt)) + " belgi) — keyingisiga")
+                        logging.warning("%s: %s javobi KESILDI (length) — "
+                                        "keyingi provayderga o'tamiz", label, nom)
+                        break
                     if txt:
                         if errors:
                             logging.info("%s: %s bilan bajarildi (%d urinishdan keyin)",

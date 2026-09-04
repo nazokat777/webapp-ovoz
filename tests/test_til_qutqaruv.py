@@ -201,6 +201,59 @@ check("probe bo'lak O'RTASIDAN oladi (boshi arabcha matn/musiqa bo'ladi)",
 check("til almashsa o'zbek tozalash ham ishlaydi",
       'detect_text_lang(text) == "uz"' in _m)
 
+print("[5c] KESILGAN JAVOB (finish_reason=length) — keyingi provayderga o'tish")
+# O'lchandi (2026-09-04): gemini-3.5-flash 2700 belgilik tozalashda
+# total_tokens=10858, ko'rinadigan javob 326 token — qolgani ichki
+# "fikrlash". Javob 884 belgida gap o'rtasida kesildi, lekin MUVAFFAQIYAT
+# deb qabul qilindi; qayta urinish yana o'sha modelga borib yana kesildi.
+# Keyingi provayder (qwen) 2 soniyada to'liq bajargan edi.
+_asl_post = bot.requests.post
+_asl_att = bot._chat_attempts
+_chaqirilgan = []
+
+
+class _SoxtaJavob:
+    def __init__(self, nom, finish, matn):
+        self.status_code = 200
+        self._j = {"choices": [{"message": {"content": matn},
+                                "finish_reason": finish}]}
+        self.text = ""
+    def json(self):
+        return self._j
+
+
+def _soxta_post(url, headers=None, json=None, timeout=None, **kw):
+    model = (json or {}).get("model", "")
+    _chaqirilgan.append(model)
+    if "kesuvchi" in model:
+        return _SoxtaJavob(model, "length", "Kesilgan matn boshi...")
+    return _SoxtaJavob(model, "stop", "To'liq tozalangan matn. " * 20)
+
+
+bot.requests.post = _soxta_post
+bot._chat_attempts = lambda: [
+    ("kesuvchi-model", "kesuvchi-model", "http://x/1", {}, 8192),
+    ("toliq-model", "toliq-model", "http://x/2", {}, 8192)]
+try:
+    _chaqirilgan.clear()
+    out, err = bot._chat_request({"max_tokens": 16000, "messages": []}, label="sinov")
+    check("kesilgan javob QABUL QILINMADI, keyingisiga o'tildi",
+          _chaqirilgan == ["kesuvchi-model", "toliq-model"], _chaqirilgan)
+    check("to'liq javob qaytdi", out is not None and "To'liq tozalangan" in out, out)
+    check("xato yo'q (fallback muvaffaqiyatli)", err is None, err)
+
+    # Faqat kesuvchi provayder bo'lsa — xato qaytadi, kesilgan matn EMAS
+    bot._chat_attempts = lambda: [("kesuvchi-model", "kesuvchi-model", "http://x/1", {}, 8192)]
+    out, err = bot._chat_request({"max_tokens": 16000, "messages": []}, label="sinov")
+    check("yagona provayder kesilsa -> None + sabab",
+          out is None and err and "kesildi" in err, (out, err))
+finally:
+    bot.requests.post = _asl_post
+    bot._chat_attempts = _asl_att
+
+check("Gemini chegarasi fikrlash uchun ko'tarilgan (32768)",
+      _m.count("32768") >= 2 and '_bearer(gm), 8192' not in _m)
+
 print("[6] TARJIMA — parafraza taqiqlandi, asl matn ham yuboriladi")
 # Foydalanuvchi shikoyati (2026-09-02): "gaplarini o'zgartirib tashlagan".
 # Eski promptdagi "literary style" va "IDIOMS" qoidalari modelga gapni
