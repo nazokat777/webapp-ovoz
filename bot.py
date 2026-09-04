@@ -4087,8 +4087,36 @@ def _cleanup_uzbek_transcript(text):
     return _cleanup_uzbek_transcript_chunk(text)
 
 
-def _cleanup_uzbek_transcript_chunk(text):
-    """Bitta chunk uchun cleanup."""
+def _tozalash_segment_boyicha(text):
+    """Bo'lakni VAQT BELGILARI bo'yicha segmentlarga bo'lib, har birini
+    alohida tozalaydi va belgini o'z joyiga qaytaradi.
+
+    NEGA: model 2500 belgilik bo'lakni tozalaganda ba'zan [mm:ss]
+    belgilarini ko'chirmaydi — jonli natijada (2026-09-04) darsning
+    birinchi 6 daqiqasi belgisiz qoldi. Segment bo'yicha tozalashda belgi
+    modelga umuman berilmaydi, ya'ni yo'qotib bo'lmaydi. Qimmatroq
+    (segment soni x so'rov), shuning uchun faqat ZAXIRA yo'l sifatida —
+    belgilar yo'qolgani aniqlangandagina."""
+    qismlar = _VAQT_BELGISI_RE.split(text)
+    belgilar = _VAQT_BELGISI_RE.findall(text)
+    natija = []
+    if qismlar and qismlar[0].strip():
+        natija.append(_cleanup_uzbek_transcript_chunk(qismlar[0].strip(),
+                                                     _segment_rejimi=True))
+    for belgi, qism in zip(belgilar, qismlar[1:]):
+        qism = qism.strip()
+        if not qism:
+            continue
+        toza = _cleanup_uzbek_transcript_chunk(qism, _segment_rejimi=True)
+        natija.append(belgi + " " + (toza or qism).strip())
+    return " ".join(x for x in natija if x)
+
+
+def _cleanup_uzbek_transcript_chunk(text, _segment_rejimi=False):
+    """Bitta chunk uchun cleanup.
+
+    _segment_rejimi=True — _tozalash_segment_boyicha ichidan chaqirilgan:
+    belgi tekshiruvi o'tkazilmaydi (rekursiyani to'xtatadi)."""
     if not text or not _has_any_ai_key():
         return text
 
@@ -4248,6 +4276,19 @@ def _cleanup_uzbek_transcript_chunk(text):
         logging.warning("Tozalangan matn juda shishgan (%d->%d) — hallucination, "
                         "asl matnni qaytaramiz", len(text), len(cleaned))
     else:
+        # VAQT BELGILARI SAQLANDIMI? Jonli natijada (2026-09-04) model
+        # birinchi bo'lakning [00:00]..[05:40] belgilarini ko'chirmadi —
+        # matn to'liq, lekin 6 daqiqa belgisiz. Belgilarning 40% dan ko'pi
+        # yo'qolsa bo'lak segment bo'yicha qayta tozalanadi (belgi modelga
+        # berilmaydi, ya'ni yo'qolmaydi).
+        if not _segment_rejimi:
+            kir_b = _VAQT_BELGISI_RE.findall(text)
+            chiq_b = _VAQT_BELGISI_RE.findall(cleaned)
+            if len(kir_b) >= 2 and len(chiq_b) < len(kir_b) * 0.6:
+                logging.warning("Tozalashda vaqt belgilari yo'qoldi (%d -> %d) — "
+                                "segment bo'yicha qayta tozalanadi",
+                                len(kir_b), len(chiq_b))
+                return _tozalash_segment_boyicha(text)
         logging.info("✅ Uzbek matn tozalandi (%d -> %d belgi)", len(text), len(cleaned))
         return cleaned
     return text

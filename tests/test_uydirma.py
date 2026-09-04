@@ -164,6 +164,54 @@ check("bo'shab qolgan [00:54] ham o'chdi", "[00:54]" not in natija, natija)
 check("haqiqiy matn butun",
       "Salom, do'stlar." in natija and "blog haqida" in natija, natija)
 
+print("[5b] TOZALASHDA VAQT BELGILARI YO'QOLMASIN")
+# Jonli natija (2026-09-04): model birinchi bo'lakning [00:00]..[05:40]
+# belgilarini ko'chirmadi — 6 daqiqa belgisiz qoldi. Endi belgilar
+# yo'qolsa bo'lak segment bo'yicha qayta tozalanadi.
+_asl_chat = bot._chat_request
+_chaqiruv = []
+kirish = ("[00:00] Bugun darsimizni boshlaymiz aziz talabalar. "
+          "[00:30] Nafs istaklari haqida gaplashamiz bugun. "
+          "[01:00] Shayx Zarruq shunday deganlar bu haqda. "
+          "[01:30] Endi keyingi mavzuga o'tamiz do'stlar.")
+
+
+def _belgisiz_model(payload, **kw):
+    # Model matnni tozalaydi, lekin BELGILARNI TASHLAB YUBORADI
+    _chaqiruv.append(1)
+    matn = payload["messages"][-1]["content"].split("\n\n", 1)[-1]
+    toza = bot._VAQT_BELGISI_RE.sub("", matn)
+    toza = " ".join(toza.split()).replace("aziz", "aziz,")
+    return toza, None
+
+
+bot._chat_request = _belgisiz_model
+try:
+    _chaqiruv.clear()
+    natija = bot._cleanup_uzbek_transcript_chunk(kirish)
+    belgilar = bot._VAQT_BELGISI_RE.findall(natija)
+    check("barcha 4 belgi saqlandi", belgilar == ["[00:00]", "[00:30]", "[01:00]", "[01:30]"], belgilar)
+    check("segment rejimi ishga tushdi (1 + 4 so'rov)", len(_chaqiruv) == 5, len(_chaqiruv))
+    check("matn tozalangan (model o'zgarishi bor)", "aziz," in natija, natija[:80])
+    check("tartib buzilmadi", natija.index("[00:00]") < natija.index("[01:30]"))
+
+    # Belgilar SAQLANGAN bo'lsa — qo'shimcha so'rov YO'Q
+    def _yaxshi_model(payload, **kw):
+        _chaqiruv.append(1)
+        return payload["messages"][-1]["content"].split("\n\n", 1)[-1], None
+    bot._chat_request = _yaxshi_model
+    _chaqiruv.clear()
+    natija = bot._cleanup_uzbek_transcript_chunk(kirish)
+    check("belgilar saqlansa bitta so'rov kifoya", len(_chaqiruv) == 1, len(_chaqiruv))
+
+    # Belgisiz matn (1 ta yoki 0 ta) — tekshiruv aralashmaydi
+    bot._chat_request = _belgisiz_model
+    _chaqiruv.clear()
+    bot._cleanup_uzbek_transcript_chunk("[00:00] Faqat bitta belgi bor bu matnda.")
+    check("bitta belgili matnda segment rejimi YO'Q", len(_chaqiruv) == 1, len(_chaqiruv))
+finally:
+    bot._chat_request = _asl_chat
+
 print("[6] BARCHA YETKAZISH YO'LLARI TOZALANADI")
 # Ilgari filtr faqat Whisper natijasiga qo'llanardi. ensure_uzbek_text
 # ichida 5 ta return yo'li bor — bittasi unutilsa xato qaytadi.
