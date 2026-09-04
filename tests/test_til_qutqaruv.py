@@ -254,6 +254,41 @@ finally:
 check("Gemini chegarasi fikrlash uchun ko'tarilgan (32768)",
       _m.count("32768") >= 2 and '_bearer(gm), 8192' not in _m)
 
+# reasoning_effort FAQAT Gemini'ga, FAQAT env yoqilganda
+_yuborilgan = []
+def _post_yoz(url, headers=None, json=None, timeout=None, **kw):
+    _yuborilgan.append(dict(json or {}))
+    return _SoxtaJavob("x", "stop", "Javob matni. " * 10)
+_asl_fikr = bot.GEMINI_FIKRLASH
+bot.requests.post = _post_yoz
+bot._chat_attempts = lambda: [
+    ("gemini-3.5-flash", "gemini-3.5-flash", "http://g/1", {}, 32768),
+    ("groq/qwen3.8-27b", "qwen/qwen3.8-27b", "http://q/1", {}, 8192)]
+try:
+    bot.GEMINI_FIKRLASH = ""
+    _yuborilgan.clear(); bot._chat_request({"max_tokens": 100, "messages": []}, label="s")
+    check("env bo'sh -> reasoning_effort YUBORILMAYDI",
+          all("reasoning_effort" not in b for b in _yuborilgan), _yuborilgan)
+    bot.GEMINI_FIKRLASH = "low"
+    _yuborilgan.clear(); bot._chat_request({"max_tokens": 100, "messages": []}, label="s")
+    check("env=low -> Gemini so'rovida reasoning_effort=low",
+          _yuborilgan and _yuborilgan[0].get("reasoning_effort") == "low", _yuborilgan)
+    # Gemini kesilsa qwen'ga o'tadi — qwen'ga reasoning_effort BERILMAYDI
+    def _post_kes(url, headers=None, json=None, timeout=None, **kw):
+        _yuborilgan.append(dict(json or {}))
+        if "gemini" in (json or {}).get("model", ""):
+            return _SoxtaJavob("g", "length", "kesik")
+        return _SoxtaJavob("q", "stop", "To'liq. " * 10)
+    bot.requests.post = _post_kes
+    _yuborilgan.clear(); out, err = bot._chat_request({"max_tokens": 100, "messages": []}, label="s")
+    check("qwen so'rovida reasoning_effort YO'Q (Groq rad etardi)",
+          len(_yuborilgan) == 2 and "reasoning_effort" not in _yuborilgan[1], _yuborilgan)
+    check("Gemini kesilsa qwen to'liq javob beradi", out and "To'liq" in out, out)
+finally:
+    bot.GEMINI_FIKRLASH = _asl_fikr
+    bot.requests.post = _asl_post
+    bot._chat_attempts = _asl_att
+
 print("[6] TARJIMA — parafraza taqiqlandi, asl matn ham yuboriladi")
 # Foydalanuvchi shikoyati (2026-09-02): "gaplarini o'zgartirib tashlagan".
 # Eski promptdagi "literary style" va "IDIOMS" qoidalari modelga gapni

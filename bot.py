@@ -226,6 +226,9 @@ OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 OPENAI_STT_URL  = "https://api.openai.com/v1/audio/transcriptions"
 GROQ_CHAT_URL   = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_STT_URL    = "https://api.groq.com/openai/v1/audio/transcriptions"
+# Gemini fikrlash chuqurligi: "" (sukut, o'zgarishsiz) | "low" | "medium".
+# O'lchandi: low = 3x kam token, 46s -> 15s; sifat solishtiruvi alohida.
+GEMINI_FIKRLASH = os.getenv("GEMINI_FIKRLASH", "").strip().lower()
 GEMINI_CHAT_URL = ("https://generativelanguage.googleapis.com"
                    "/v1beta/openai/chat/completions")
 
@@ -439,6 +442,15 @@ def _chat_request(payload, timeout=300, label=""):
         # so'rov BUTUNLAY rad etiladi (400/413) va tozalash yiqiladi.
         if body.get("max_tokens"):
             body["max_tokens"] = min(int(body["max_tokens"]), max_out)
+        # Gemini "o'ylovchi" model uchun fikrlash chuqurligi. O'lchandi
+        # (2026-09-04, 2700 belgilik imlo tozalash):
+        #   sukut (to'liq fikrlash): total_tok=11352, 46s
+        #   reasoning_effort=low  : total_tok= 3789, 15s, kesilmaydi
+        # Imlo tozalash va gap-ba-gap tarjimaga chuqur fikrlash kerak
+        # emas. Sifat solishtiruvi tasdiqlangunicha env bilan boshqariladi
+        # (GEMINI_FIKRLASH=low); sukut — o'zgarishsiz.
+        if GEMINI_FIKRLASH and "gemini" in str(model).lower():
+            body["reasoning_effort"] = GEMINI_FIKRLASH
         h = dict(headers)
         h["Content-Type"] = "application/json"
         for attempt in range(3):
